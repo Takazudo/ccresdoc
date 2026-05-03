@@ -212,8 +212,8 @@ fn test_project_root_home_returns_err() {
     let result = walk_claude_dir(&home_path.join(".claude"), &home_path);
 
     match result {
-        Err(ResourceError::ProjectRootTooBoard(_)) => { /* expected */ }
-        other => panic!("expected ProjectRootTooBoard, got {:?}", other),
+        Err(ResourceError::ProjectRootTooBroad(_)) => { /* expected */ }
+        other => panic!("expected ProjectRootTooBroad, got {:?}", other),
     }
 }
 

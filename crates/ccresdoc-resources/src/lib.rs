@@ -17,20 +17,13 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum ResourceError {
     #[error("project_root is too broad: {0:?}. Pass a specific directory such as $HOME/.claude, not $HOME.")]
-    ProjectRootTooBoard(PathBuf),
+    ProjectRootTooBroad(PathBuf),
 
     #[error("I/O error reading {path:?}: {source}")]
     Io {
         path: PathBuf,
         #[source]
         source: std::io::Error,
-    },
-
-    #[error("YAML frontmatter parse error in {path:?}: {source}")]
-    Yaml {
-        path: PathBuf,
-        #[source]
-        source: serde_yaml::Error,
     },
 }
 
@@ -263,11 +256,9 @@ fn find_claude_md_files(dir: &Path, exclude_paths: &[PathBuf]) -> Vec<PathBuf> {
                     continue;
                 }
                 // Tolerate broken symlinks: if metadata fails, warn and continue
-                if e.path_is_symlink() {
-                    if e.metadata().is_err() {
-                        log::warn!("broken symlink, skipping: {}", e.path().display());
-                        continue;
-                    }
+                if e.path_is_symlink() && e.metadata().is_err() {
+                    log::warn!("broken symlink, skipping: {}", e.path().display());
+                    continue;
                 }
                 if e.file_name() == "CLAUDE.md" {
                     results.push(e.into_path());
@@ -604,7 +595,7 @@ fn collect_agents(agents_dir: &Path) -> Result<Vec<AgentItem>> {
 ///
 /// Both `claude_dir` and `project_root` must point to `$HOME/.claude` (not
 /// `$HOME` or some other broad directory).  Passing `project_root = $HOME`
-/// will return an [`ResourceError::ProjectRootTooBoard`] error.
+/// will return an [`ResourceError::ProjectRootTooBroad`] error.
 ///
 /// All I/O happens inside this function.  The returned struct and its nested
 /// types are pure data — their constructors perform no I/O.
@@ -616,7 +607,7 @@ pub fn walk_claude_dir(claude_dir: &Path, project_root: &Path) -> Result<Resourc
         let pr = project_root.canonicalize().unwrap_or_else(|_| project_root.to_owned());
         let home_canon = home_path.canonicalize().unwrap_or_else(|_| home_path.to_owned());
         if pr == home_canon {
-            return Err(ResourceError::ProjectRootTooBoard(project_root.to_owned()));
+            return Err(ResourceError::ProjectRootTooBroad(project_root.to_owned()));
         }
     }
 
