@@ -1,0 +1,17 @@
+# Worktrees (managed by /x-wt-teams; never tracked)
+worktrees/
+__inbox/
+
+# Rust
+target/
+src-tauri/target/
+
+# Node
+node_modules/
+app/dist/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
