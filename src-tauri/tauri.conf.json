@@ -1,0 +1,27 @@
+{
+  "productName": "CCResDoc",
+  "version": "0.1.0",
+  "identifier": "com.takazudo.ccresdoc",
+  "build": {
+    "frontendDist": "./frontend",
+    "beforeBuildCommand": "pnpm --filter app build",
+    "devUrl": "http://localhost:4892/"
+  },
+  "app": {
+    "windows": [],
+    "withGlobalTauri": true,
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [],
+    "resources": ["../app/dist/**/*"],
+    "category": "DeveloperTool",
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  }
+}
