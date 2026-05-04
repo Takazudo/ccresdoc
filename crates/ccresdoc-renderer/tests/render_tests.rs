@@ -10,7 +10,9 @@ fn default_opts() -> RenderOptions {
 
 /// Generate a deterministic pseudo-random u64 using a simple LCG.
 fn lcg_next(state: &mut u64) -> u64 {
-    *state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    *state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
     *state
 }
 
@@ -114,10 +116,8 @@ fn output_is_parseable_html() {
 
         // Parse the HTML through lol_html — if it errors, the output is malformed
         let mut output = Vec::new();
-        let mut rewriter = HtmlRewriter::new(
-            Settings::default(),
-            |c: &[u8]| output.extend_from_slice(c),
-        );
+        let mut rewriter =
+            HtmlRewriter::new(Settings::default(), |c: &[u8]| output.extend_from_slice(c));
         rewriter.write(html.as_bytes()).unwrap_or_else(|e| {
             panic!("lol_html parse error for input {input:?}: {e}\nhtml: {html}")
         });
@@ -192,8 +192,7 @@ Regular paragraph with `inline code`.
 #[test]
 fn class_contract_fixture_snapshot() {
     let opts = default_opts();
-    let html = render_markdown(CLASS_CONTRACT_INPUT, &opts)
-        .expect("class contract render failed");
+    let html = render_markdown(CLASS_CONTRACT_INPUT, &opts).expect("class contract render failed");
 
     // Verify each required class appears in the output
     let required_classes = [
@@ -204,7 +203,7 @@ fn class_contract_fixture_snapshot() {
         "admonition-warning",
         "admonition-danger",
         "code-title",
-        "language-",    // prefix for language classes
+        "language-", // prefix for language classes
         "heading-link",
     ];
 
@@ -225,18 +224,20 @@ fn class_contract_fixture_snapshot() {
     assert!(html.contains("<aside"), "aside not found");
 
     // Verify code title div
-    assert!(html.contains("<div class=\"code-title\">"), "code-title div not found");
+    assert!(
+        html.contains("<div class=\"code-title\">"),
+        "code-title div not found"
+    );
 
     // Write the fixture file
-    let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/class-contract.html");
+    let fixture_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/class-contract.html");
 
-    fs::write(&fixture_path, &html)
-        .unwrap_or_else(|e| panic!("failed to write fixture: {e}"));
+    fs::write(&fixture_path, &html).unwrap_or_else(|e| panic!("failed to write fixture: {e}"));
 
     // Snapshot: verify the fixture file matches what we just wrote
-    let stored = fs::read_to_string(&fixture_path)
-        .unwrap_or_else(|e| panic!("failed to read fixture: {e}"));
+    let stored =
+        fs::read_to_string(&fixture_path).unwrap_or_else(|e| panic!("failed to read fixture: {e}"));
     assert_eq!(
         stored, html,
         "class-contract.html fixture is out of date — re-run tests to regenerate"
@@ -253,11 +254,11 @@ mod dom_walker {
 
     #[derive(Debug, Clone, PartialEq)]
     pub struct DocStructure {
-        pub headings: Vec<(u8, String)>,  // (level 1-6, text)
+        pub headings: Vec<(u8, String)>,     // (level 1-6, text)
         pub code_langs: Vec<Option<String>>, // language class or None
         pub admonition_classes: Vec<String>, // "admonition-note" etc.
         pub table_count: usize,
-        pub links: Vec<String>,           // hrefs (stripped of # anchors for comparison)
+        pub links: Vec<String>, // hrefs (stripped of # anchors for comparison)
     }
 
     pub fn extract(html: &str) -> DocStructure {
@@ -314,11 +315,8 @@ mod dom_walker {
                             let cls = el.get_attribute("class").unwrap_or_default();
                             if !cls.contains("heading-link") {
                                 // Normalise: strip fragment for comparison
-                                let href_no_frag = href
-                                    .split('#')
-                                    .next()
-                                    .unwrap_or(&href)
-                                    .to_owned();
+                                let href_no_frag =
+                                    href.split('#').next().unwrap_or(&href).to_owned();
                                 if !href_no_frag.is_empty() {
                                     l_clone.borrow_mut().push(href_no_frag);
                                 }
@@ -389,7 +387,10 @@ mod md_walker {
             }
 
             // Code fences (may be indented up to 3 spaces in list items)
-            let trimmed_line = line.trim_start_matches("   ").trim_start_matches("  ").trim_start_matches(' ');
+            let trimmed_line = line
+                .trim_start_matches("   ")
+                .trim_start_matches("  ")
+                .trim_start_matches(' ');
             if trimmed_line.starts_with("```") {
                 if in_code_block {
                     in_code_block = false;
@@ -398,9 +399,10 @@ mod md_walker {
                     let rest = trimmed_line[3..].trim();
                     // Parse language (first word before space)
                     let lang = rest.split_whitespace().next();
-                    code_langs.push(lang.filter(|l| !l.is_empty()).map(|l| {
-                        format!("language-{l}")
-                    }));
+                    code_langs.push(
+                        lang.filter(|l| !l.is_empty())
+                            .map(|l| format!("language-{l}")),
+                    );
                 }
                 continue;
             }
@@ -452,10 +454,7 @@ mod md_walker {
                     if let Some(close) = href_area.find(')') {
                         let href = &href_area[..close];
                         // Skip empty, absolute, and fragment-only
-                        if !href.is_empty()
-                            && !href.starts_with('#')
-                            && !href.contains("://")
-                        {
+                        if !href.is_empty() && !href.starts_with('#') && !href.contains("://") {
                             // Strip .md extension and fragment (as the renderer does)
                             let href_no_frag = href.split('#').next().unwrap_or(href);
                             let href_stripped = href_no_frag
@@ -493,7 +492,11 @@ fn check_structural_equivalence(md_source: &str, label: &str) {
 
     // Heading hierarchy check: rendered heading levels must match markdown heading levels
     assert_eq!(
-        rendered.headings.iter().map(|(l, _)| *l).collect::<Vec<_>>(),
+        rendered
+            .headings
+            .iter()
+            .map(|(l, _)| *l)
+            .collect::<Vec<_>>(),
         expected.heading_levels,
         "{label}: heading hierarchy mismatch\nrendered: {:?}\nexpected: {:?}",
         rendered.headings,
@@ -502,8 +505,7 @@ fn check_structural_equivalence(md_source: &str, label: &str) {
 
     // Code fence languages check
     assert_eq!(
-        rendered.code_langs,
-        expected.code_langs,
+        rendered.code_langs, expected.code_langs,
         "{label}: code language mismatch"
     );
 
@@ -578,8 +580,8 @@ fn smoke_renderer_round_trip_sentinel_free() {
     let root = claude_dir();
 
     let sample_paths = vec![
-        ("CLAUDE.md",        root.join("CLAUDE.md")),
-        ("cpwd.md",          root.join("commands/cpwd.md")),
+        ("CLAUDE.md", root.join("CLAUDE.md")),
+        ("cpwd.md", root.join("commands/cpwd.md")),
         ("commits/SKILL.md", root.join("skills/commits/SKILL.md")),
     ];
 
@@ -668,7 +670,10 @@ fn heading_ids_and_links_generated() {
     let html = render_markdown(md, &opts).unwrap();
     // comrak emits id on the inner anchor, not on the heading element
     assert!(html.contains("id="), "heading id not found: {html}");
-    assert!(html.contains("heading-link"), "heading-link not found: {html}");
+    assert!(
+        html.contains("heading-link"),
+        "heading-link not found: {html}"
+    );
 }
 
 #[test]
@@ -676,8 +681,10 @@ fn md_extension_stripped_from_links() {
     let opts = default_opts();
     let md = "[link](./guide.md)\n";
     let html = render_markdown(md, &opts).unwrap();
-    assert!(html.contains("./guide\"") || html.contains("./guide#") || !html.contains(".md\""),
-        "md extension not stripped: {html}");
+    assert!(
+        html.contains("./guide\"") || html.contains("./guide#") || !html.contains(".md\""),
+        "md extension not stripped: {html}"
+    );
 }
 
 #[test]
@@ -694,5 +701,8 @@ fn syntax_highlighting_produces_spans() {
     let opts = default_opts();
     let md = "```rust\nfn main() {}\n```\n";
     let html = render_markdown(md, &opts).unwrap();
-    assert!(html.contains("language-rust"), "language class not found: {html}");
+    assert!(
+        html.contains("language-rust"),
+        "language class not found: {html}"
+    );
 }

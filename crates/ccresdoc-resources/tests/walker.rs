@@ -59,7 +59,8 @@ fn test_nested_claude_md_slug() {
     // root must come first
     assert_eq!(tree.claude_mds[0].slug, "root");
 
-    let nested = tree.claude_mds
+    let nested = tree
+        .claude_mds
         .iter()
         .find(|i| i.slug != "root")
         .expect("nested item not found");
@@ -121,7 +122,11 @@ fn test_skills_full() {
         "# Run Script\n\nScript body.",
     );
     // binary script (non-markdown)
-    write(claude_dir, "skills/my-skill/scripts/run.sh", "#!/bin/sh\necho hi");
+    write(
+        claude_dir,
+        "skills/my-skill/scripts/run.sh",
+        "#!/bin/sh\necho hi",
+    );
 
     let tree = walk_claude_dir(claude_dir, claude_dir).unwrap();
 
@@ -137,16 +142,30 @@ fn test_skills_full() {
     assert_eq!(skill.references.len(), 1);
     assert_eq!(skill.references[0].name, "ref-a");
     assert_eq!(skill.references[0].title, "Reference A");
-    assert!(skill.references[0].raw_content.contains("Reference content."));
+    assert!(skill.references[0]
+        .raw_content
+        .contains("Reference content."));
 
     // script files: .md and .sh
     assert_eq!(skill.script_files.len(), 2);
-    let md_script = skill.script_files.iter().find(|f| f.filename == "run.md").unwrap();
+    let md_script = skill
+        .script_files
+        .iter()
+        .find(|f| f.filename == "run.md")
+        .unwrap();
     assert!(md_script.is_markdown);
     assert_eq!(md_script.title.as_deref(), Some("Run Script"));
-    assert!(md_script.raw_content.as_deref().unwrap().contains("Script body."));
+    assert!(md_script
+        .raw_content
+        .as_deref()
+        .unwrap()
+        .contains("Script body."));
 
-    let sh_script = skill.script_files.iter().find(|f| f.filename == "run.sh").unwrap();
+    let sh_script = skill
+        .script_files
+        .iter()
+        .find(|f| f.filename == "run.sh")
+        .unwrap();
     assert!(!sh_script.is_markdown);
     assert!(sh_script.raw_content.is_none());
 }
@@ -237,9 +256,18 @@ fn test_exclude_dirs_not_walked() {
     let tree = walk_claude_dir(claude_dir, claude_dir).unwrap();
 
     assert_eq!(tree.claude_mds.len(), 2, "expected root + real-subdir only");
-    assert!(tree.claude_mds.iter().all(|i| !i.rel_path.starts_with(".git")));
-    assert!(tree.claude_mds.iter().all(|i| !i.rel_path.starts_with("node_modules")));
-    assert!(tree.claude_mds.iter().all(|i| !i.rel_path.starts_with("worktrees")));
+    assert!(tree
+        .claude_mds
+        .iter()
+        .all(|i| !i.rel_path.starts_with(".git")));
+    assert!(tree
+        .claude_mds
+        .iter()
+        .all(|i| !i.rel_path.starts_with("node_modules")));
+    assert!(tree
+        .claude_mds
+        .iter()
+        .all(|i| !i.rel_path.starts_with("worktrees")));
 }
 
 // ---------------------------------------------------------------------------
@@ -257,12 +285,28 @@ fn test_sorting() {
     write(claude_dir, "aaa/CLAUDE.md", "a subdir");
 
     // Commands out of alphabetical order
-    write(claude_dir, "commands/zebra.md", "---\ndescription: z\n---\nz body");
-    write(claude_dir, "commands/alpha.md", "---\ndescription: a\n---\na body");
+    write(
+        claude_dir,
+        "commands/zebra.md",
+        "---\ndescription: z\n---\nz body",
+    );
+    write(
+        claude_dir,
+        "commands/alpha.md",
+        "---\ndescription: a\n---\na body",
+    );
 
     // Agents out of order
-    write(claude_dir, "agents/z-agent.md", "---\nname: Z Agent\n---\nbody");
-    write(claude_dir, "agents/a-agent.md", "---\nname: A Agent\n---\nbody");
+    write(
+        claude_dir,
+        "agents/z-agent.md",
+        "---\nname: Z Agent\n---\nbody",
+    );
+    write(
+        claude_dir,
+        "agents/a-agent.md",
+        "---\nname: A Agent\n---\nbody",
+    );
 
     let tree = walk_claude_dir(claude_dir, claude_dir).unwrap();
 

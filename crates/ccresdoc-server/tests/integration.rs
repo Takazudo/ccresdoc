@@ -107,8 +107,8 @@ fn make_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
 
 /// Build the router from fixtures.
 fn make_router(root: &PathBuf, dist_dir: &PathBuf) -> axum::Router {
-    use ccresdoc_server::ServerConfig;
     use ccresdoc_server::routes_for_test;
+    use ccresdoc_server::ServerConfig;
 
     let config = ServerConfig {
         port: 0, // unused in oneshot mode
@@ -341,7 +341,10 @@ async fn dynamic_page_contains_layout_and_content_and_no_sentinels() {
     let body = body_string(resp).await;
 
     // Layout chrome
-    assert!(body.contains("ccresdoc-shell"), "must contain layout chrome");
+    assert!(
+        body.contains("ccresdoc-shell"),
+        "must contain layout chrome"
+    );
     // Rendered markdown content
     assert!(
         body.contains("Body here") || body.contains("<p>"),
@@ -382,6 +385,14 @@ async fn assets_returns_css() {
         .unwrap();
     let resp = router.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let ct = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
-    assert!(ct.contains("css"), "content-type should be css, got: {}", ct);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        ct.contains("css"),
+        "content-type should be css, got: {}",
+        ct
+    );
 }

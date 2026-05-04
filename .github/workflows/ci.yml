@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, "base/ccresdoc-zfb-restructure"]
+  push:
+    branches: [main, "base/ccresdoc-zfb-restructure"]
+
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Rust checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo clippy --workspace --all-targets
+        run: cargo clippy --workspace --all-targets
+
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+# NOTE: `pnpm --filter app build` is deferred from CI (v1).
+#
+# The app build requires:
+#   1. The `zfb` Rust binary in PATH — built from $HOME/repos/myoss/zfb,
+#      which is a separate private repo not available on CI runners.
+#   2. Local zfb link: dependencies in app/package.json point to
+#      link:../../../../zfb/packages/* (cross-repo pnpm symlinks).
+#   3. ZFB_ESBUILD_BIN and ZFB_TAILWIND_BIN env vars pointing into the zfb
+#      checkout's node_modules and binaries/.
+#
+# All three make the app build non-trivial to run on a generic CI runner
+# without vendoring zfb. The Rust checks (fmt + clippy + test) cover the
+# core library code. The app build is verified locally via `pnpm b4push`
+# before every push, and is exercised end-to-end by `cargo tauri build`
+# before each release. Re-enable once zfb is published to npm/crates.io.

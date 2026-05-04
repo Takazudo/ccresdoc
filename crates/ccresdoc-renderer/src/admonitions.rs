@@ -74,7 +74,10 @@ fn parse_open_fence<'a>(line: &str, kinds: &'a [String]) -> Option<&'a str> {
     }
     // Take the first word as the kind
     let word = rest.split_whitespace().next()?;
-    kinds.iter().find(|k| k.as_str() == word).map(|k| k.as_str())
+    kinds
+        .iter()
+        .find(|k| k.as_str() == word)
+        .map(|k| k.as_str())
 }
 
 #[cfg(test)]

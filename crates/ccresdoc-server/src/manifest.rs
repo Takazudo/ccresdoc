@@ -2,8 +2,8 @@
 //!
 //! The manifest must never include shell-related entries (paths starting with `/_shell`).
 
-use chrono::Utc;
 use ccresdoc_resources::ResourceTree;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -156,15 +156,31 @@ mod tests {
     fn manifest_category_slugs() {
         let tree = make_tree();
         let manifest = Manifest::build(&tree);
-        let slugs: Vec<&str> = manifest.categories.iter().map(|c| c.slug.as_str()).collect();
-        assert_eq!(slugs, ["claude-md", "claude-commands", "claude-skills", "claude-agents"]);
+        let slugs: Vec<&str> = manifest
+            .categories
+            .iter()
+            .map(|c| c.slug.as_str())
+            .collect();
+        assert_eq!(
+            slugs,
+            [
+                "claude-md",
+                "claude-commands",
+                "claude-skills",
+                "claude-agents"
+            ]
+        );
     }
 
     #[test]
     fn manifest_claude_md_path() {
         let tree = make_tree();
         let manifest = Manifest::build(&tree);
-        let cat = manifest.categories.iter().find(|c| c.slug == "claude-md").unwrap();
+        let cat = manifest
+            .categories
+            .iter()
+            .find(|c| c.slug == "claude-md")
+            .unwrap();
         assert_eq!(cat.items[0].path, "/claude-md/root");
     }
 
@@ -173,6 +189,9 @@ mod tests {
         let tree = make_tree();
         let manifest = Manifest::build(&tree);
         let json = serde_json::to_string(&manifest).unwrap();
-        assert!(json.contains("generatedAt"), "should use camelCase generatedAt");
+        assert!(
+            json.contains("generatedAt"),
+            "should use camelCase generatedAt"
+        );
     }
 }

@@ -9,13 +9,11 @@
 
 use std::path::PathBuf;
 
-use ccresdoc_server::{ServerConfig, serve};
+use ccresdoc_server::{serve, ServerConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let home = PathBuf::from(
-        std::env::var("HOME").expect("$HOME must be set"),
-    );
+    let home = PathBuf::from(std::env::var("HOME").expect("$HOME must be set"));
     let claude_dir = home.join(".claude");
 
     // project_root must equal $HOME/.claude (not $HOME)
@@ -33,7 +31,10 @@ async fn main() -> anyhow::Result<()> {
     let dist_dir = workspace_root.join("app").join("dist");
 
     if !dist_dir.exists() {
-        eprintln!("dist/ not found at {:?}. Build the app first: cd app && pnpm build", dist_dir);
+        eprintln!(
+            "dist/ not found at {:?}. Build the app first: cd app && pnpm build",
+            dist_dir
+        );
         std::process::exit(1);
     }
 

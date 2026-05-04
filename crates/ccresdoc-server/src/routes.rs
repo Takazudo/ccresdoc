@@ -9,9 +9,9 @@ use axum::{routing::get, Router};
 use crate::{
     handlers::{
         api_manifest, assets, claude_agent_page, claude_agents_index, claude_command_page,
-        claude_commands_index, claude_md_index, claude_md_page, claude_skill_subpage,
-        claude_skill_page, claude_skills_index,
-        home, not_found_page, ready, shell_forbidden, sidebar_js, static_fallback, AppState,
+        claude_commands_index, claude_md_index, claude_md_page, claude_skill_page,
+        claude_skill_subpage, claude_skills_index, home, not_found_page, ready, shell_forbidden,
+        sidebar_js, static_fallback, AppState,
     },
     ServerConfig,
 };

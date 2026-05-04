@@ -155,7 +155,7 @@ fn parse_frontmatter(content: &str) -> (Frontmatter, String) {
     if let Some(end) = after_open.find("\n---") {
         let yaml_str = &after_open[..end];
         let body_start = end + 4; // skip "\n---"
-        // skip optional trailing newline(s) after the closing `---`
+                                  // skip optional trailing newline(s) after the closing `---`
         let body = after_open[body_start..].trim_start_matches(['\r', '\n']);
         let fm: Frontmatter = serde_yaml::from_str(yaml_str).unwrap_or_default();
         (fm, body.to_owned())
@@ -278,21 +278,22 @@ fn find_claude_md_files(dir: &Path, exclude_paths: &[PathBuf]) -> Vec<PathBuf> {
 // Section walkers
 // ---------------------------------------------------------------------------
 
-fn collect_claude_mds(
-    project_root: &Path,
-    exclude_paths: &[PathBuf],
-) -> Result<Vec<ClaudeMdItem>> {
+fn collect_claude_mds(project_root: &Path, exclude_paths: &[PathBuf]) -> Result<Vec<ClaudeMdItem>> {
     let paths = find_claude_md_files(project_root, exclude_paths);
 
     // Canonicalize so that strip_prefix works correctly on macOS where
     // tempfile creates dirs under /var -> /private/var symlinks.
-    let canon_root = project_root.canonicalize().unwrap_or_else(|_| project_root.to_owned());
+    let canon_root = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_owned());
 
     let mut items = Vec::new();
     for file_path in &paths {
         let raw_content = read_file(file_path)?;
         // Try canonical path first, then fall back to the raw file_path
-        let canon_file = file_path.canonicalize().unwrap_or_else(|_| file_path.to_owned());
+        let canon_file = file_path
+            .canonicalize()
+            .unwrap_or_else(|_| file_path.to_owned());
         let rel = canon_file
             .strip_prefix(&canon_root)
             .unwrap_or(&canon_file)
@@ -604,8 +605,12 @@ pub fn walk_claude_dir(claude_dir: &Path, project_root: &Path) -> Result<Resourc
     // Both paths are resolved so that trailing slashes / symlinks don't matter.
     let home = dirs_home();
     if let Some(ref home_path) = home {
-        let pr = project_root.canonicalize().unwrap_or_else(|_| project_root.to_owned());
-        let home_canon = home_path.canonicalize().unwrap_or_else(|_| home_path.to_owned());
+        let pr = project_root
+            .canonicalize()
+            .unwrap_or_else(|_| project_root.to_owned());
+        let home_canon = home_path
+            .canonicalize()
+            .unwrap_or_else(|_| home_path.to_owned());
         if pr == home_canon {
             return Err(ResourceError::ProjectRootTooBroad(project_root.to_owned()));
         }

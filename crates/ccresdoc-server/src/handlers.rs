@@ -11,7 +11,7 @@ use axum::{
 };
 use ccresdoc_renderer::{render_markdown, RenderOptions, SENTINEL_CONTENT, SENTINEL_TITLE};
 use ccresdoc_resources::{
-    AgentItem, ClaudeMdItem, CommandItem, ResourceTree, SkillItem, walk_claude_dir,
+    walk_claude_dir, AgentItem, ClaudeMdItem, CommandItem, ResourceTree, SkillItem,
 };
 
 use crate::manifest::Manifest;
@@ -115,12 +115,10 @@ fn static_file_response(file_path: &Path, cache_secs: Option<u64>) -> Response<B
 
             builder.body(Body::from(bytes)).unwrap()
         }
-        Err(_) => {
-            Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(Body::from("Not Found"))
-                .unwrap()
-        }
+        Err(_) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("Not Found"))
+            .unwrap(),
     }
 }
 
@@ -476,10 +474,7 @@ pub(crate) async fn claude_skill_page(
                             html_escape(label),
                         ));
                     } else {
-                        body_parts.push_str(&format!(
-                            "<li>{}</li>",
-                            html_escape(&f.filename),
-                        ));
+                        body_parts.push_str(&format!("<li>{}</li>", html_escape(&f.filename),));
                     }
                 }
                 body_parts.push_str("</ul>");
@@ -497,10 +492,7 @@ pub(crate) async fn claude_skill_page(
                             html_escape(label),
                         ));
                     } else {
-                        body_parts.push_str(&format!(
-                            "<li>{}</li>",
-                            html_escape(&f.filename),
-                        ));
+                        body_parts.push_str(&format!("<li>{}</li>", html_escape(&f.filename),));
                     }
                 }
                 body_parts.push_str("</ul>");
