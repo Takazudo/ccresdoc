@@ -1,510 +1,840 @@
-@import "tailwindcss";
+@import "tailwindcss/preflight";
+@import "tailwindcss/utilities";
 
-/* ─── Light/dark theme tokens ─── */
+/* ========================================
+ * Design Token System
+ *
+ * Tight token strategy: import preflight + utilities only (no default theme).
+ * Only project-specific tokens are available.
+ *
+ * Raw palette: --zd-0 to --zd-15 + bg/fg/sel (injected by ColorSchemeProvider)
+ * Tailwind tokens: registered below via @theme
+ *
+ * Palette slots:
+ *   0/8:  black / bright-black (surfaces, muted text, borders)
+ *   1/9:  red / bright-red
+ *   2/10: green / bright-green
+ *   3/11: yellow / bright-yellow
+ *   4/12: blue / bright-blue
+ *   5/13: magenta / bright-magenta
+ *   6/14: cyan / bright-cyan
+ *   7/15: white / bright-white
+ * ======================================== */
 
-:root {
-  --color-bg: #0f1117;
-  --color-bg-surface: #1a1d27;
-  --color-bg-subtle: #1e2130;
-  --color-fg: #e2e8f0;
-  --color-fg-muted: #94a3b8;
-  --color-accent: #7aa7ff;
-  --color-border: #2d3348;
+@theme {
+  /* ========================================
+   * Colors — Three-tier token system
+   * ======================================== */
 
-  /* Sidebar width — persisted to localStorage and updated by resizer JS */
-  --ccresdoc-sidebar-width: 280px;
+  /* ── Base ── */
+  --color-bg: var(--zd-bg);
+  --color-fg: var(--zd-fg);
+  --color-sel-bg: var(--zd-sel-bg);
+  --color-sel-fg: var(--zd-sel-fg);
 
-  /* Admonition colours (dark) */
-  --admonition-note-border: #4a9eff;
-  --admonition-note-bg: #0d1f3c;
-  --admonition-note-fg: #93c5fd;
+  /* ── Raw palette (p0–p15) ── */
+  --color-p0: var(--zd-0);
+  --color-p1: var(--zd-1);
+  --color-p2: var(--zd-2);
+  --color-p3: var(--zd-3);
+  --color-p4: var(--zd-4);
+  --color-p5: var(--zd-5);
+  --color-p6: var(--zd-6);
+  --color-p7: var(--zd-7);
+  --color-p8: var(--zd-8);
+  --color-p9: var(--zd-9);
+  --color-p10: var(--zd-10);
+  --color-p11: var(--zd-11);
+  --color-p12: var(--zd-12);
+  --color-p13: var(--zd-13);
+  --color-p14: var(--zd-14);
+  --color-p15: var(--zd-15);
 
-  --admonition-tip-border: #34d399;
-  --admonition-tip-bg: #0d2e1f;
-  --admonition-tip-fg: #6ee7b7;
+  /* ── Semantic aliases ── */
+  --color-surface: var(--zd-surface);
+  --color-muted: var(--zd-muted);
+  --color-accent: var(--zd-accent);
+  --color-accent-hover: var(--zd-accent-hover);
+  --color-code-bg: var(--zd-code-bg);
+  --color-code-fg: var(--zd-code-fg);
+  --color-success: var(--zd-success);
+  --color-danger: var(--zd-danger);
+  --color-warning: var(--zd-warning);
+  --color-info: var(--zd-info);
+  --color-mermaid-node-bg: var(--zd-mermaid-node-bg);
+  --color-mermaid-text: var(--zd-mermaid-text);
+  --color-mermaid-line: var(--zd-mermaid-line);
+  --color-mermaid-label-bg: var(--zd-mermaid-label-bg);
+  --color-mermaid-note-bg: var(--zd-mermaid-note-bg);
+  --color-chat-user-bg: var(--zd-chat-user-bg);
+  --color-chat-user-text: var(--zd-chat-user-text);
+  --color-chat-assistant-bg: var(--zd-chat-assistant-bg);
+  --color-chat-assistant-text: var(--zd-chat-assistant-text);
 
-  --admonition-info-border: #60a5fa;
-  --admonition-info-bg: #0d1f3c;
-  --admonition-info-fg: #93c5fd;
+  /* ========================================
+   * Spacing — hsp (horizontal) + vsp (vertical)
+   * ======================================== */
+  --spacing-0: 0;
+  --spacing-px: 1px;
 
-  --admonition-warning-border: #fbbf24;
-  --admonition-warning-bg: #2d1f0a;
-  --admonition-warning-fg: #fcd34d;
+  /* Horizontal spacing (7 steps) */
+  --spacing-hsp-2xs: 0.125rem;   /* 2px  — tight inline */
+  --spacing-hsp-xs: 0.375rem;   /* 6px  — compact inline */
+  --spacing-hsp-sm: 0.5rem;     /* 8px  — small padding */
+  --spacing-hsp-md: 0.75rem;    /* 12px — default gaps */
+  --spacing-hsp-lg: 1rem;       /* 16px — standard padding */
+  --spacing-hsp-xl: 1.5rem;     /* 24px — generous padding */
+  --spacing-hsp-2xl: 2rem;      /* 32px — large padding */
 
-  --admonition-danger-border: #f87171;
-  --admonition-danger-bg: #2d0a0a;
-  --admonition-danger-fg: #fca5a5;
+  /* Vertical spacing (7 steps) */
+  --spacing-vsp-2xs: 0.4375rem;   /* 7px — tight gap */
+  --spacing-vsp-xs: 0.875rem;    /* 14px — small gap */
+  --spacing-vsp-sm: 1.25rem;     /* 20px — compact gap */
+  --spacing-vsp-md: 1.5rem;      /* 24px — standard gap */
+  --spacing-vsp-lg: 1.75rem;     /* 28px — section gap */
+  --spacing-vsp-xl: 2.5rem;      /* 40px — large section gap */
+  --spacing-vsp-2xl: 3.5rem;     /* 56px — page-level gap */
 
-  color-scheme: dark;
-  font-family:
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    sans-serif;
-  line-height: 1.6;
+  /* ========================================
+   * Typography
+   * ======================================== */
+
+  /* Font sizes (6 steps) */
+  --text-caption: 0.875rem;      /* 14px — labels, timestamps */
+  --text-small: 1rem;            /* 16px — secondary text, nav items */
+  --text-body: 1.2rem;           /* 19.2px — paragraphs, default */
+  --text-subheading: 1.4rem;     /* 22.4px — card titles, section labels */
+  --text-heading: 3rem;          /* 48px — page headings */
+  --text-display: 3.75rem;       /* 60px — hero text */
+
+  /* Font families */
+  --font-sans: system-ui, sans-serif;
+  --font-mono: ui-monospace, monospace;
+
+  /* Font weights (4 steps) */
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Line heights (4 steps) */
+  --leading-tight: 1.25;
+  --leading-snug: 1.375;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.625;
+
+  /* ========================================
+   * Border radius (3 steps)
+   * ======================================== */
+  --radius-DEFAULT: 0.25rem;    /* 4px — rounded */
+  --radius-lg: 0.5rem;          /* 8px — rounded-lg */
+  --radius-full: 9999px;        /* rounded-full */
+
+  /* ========================================
+   * Breakpoints (3 steps)
+   * ======================================== */
+  --breakpoint-sm: 640px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
 }
 
-[data-theme="light"] {
-  --color-bg: #ffffff;
-  --color-bg-surface: #f8fafc;
-  --color-bg-subtle: #f1f5f9;
-  --color-fg: #1e293b;
-  --color-fg-muted: #64748b;
-  --color-accent: #2563eb;
-  --color-border: #e2e8f0;
+/* ========================================
+ * Base styles
+ * ======================================== */
 
-  --admonition-note-border: #2563eb;
-  --admonition-note-bg: #eff6ff;
-  --admonition-note-fg: #1d4ed8;
-
-  --admonition-tip-border: #059669;
-  --admonition-tip-bg: #ecfdf5;
-  --admonition-tip-fg: #065f46;
-
-  --admonition-info-border: #0284c7;
-  --admonition-info-bg: #f0f9ff;
-  --admonition-info-fg: #0369a1;
-
-  --admonition-warning-border: #d97706;
-  --admonition-warning-bg: #fffbeb;
-  --admonition-warning-fg: #92400e;
-
-  --admonition-danger-border: #dc2626;
-  --admonition-danger-bg: #fef2f2;
-  --admonition-danger-fg: #991b1b;
-
-  color-scheme: light;
-}
-
-/* ─── Reset & base ─── */
-
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
+[id] {
+  scroll-margin-top: 80px;
 }
 
 body {
-  margin: 0;
-  background: var(--color-bg);
+  background-color: var(--color-bg);
   color: var(--color-fg);
-  min-height: 100dvh;
 }
 
-a {
+::selection {
+  background-color: var(--color-sel-bg);
+  color: var(--color-sel-fg);
+}
+
+@layer base {
+  a {
+    text-underline-offset: 4px;
+  }
+  button {
+    cursor: pointer;
+  }
+}
+
+/* ========================================
+ * Content typography (.zd-content)
+ *
+ * Direct element styling — no prose plugin.
+ * Uses :where() for zero specificity (easy to override).
+ * Font size pattern inspired by zpaper: paired size + line-height.
+ * ======================================== */
+
+.zd-content {
+  color: var(--color-fg);
+  font-size: var(--text-body);
+  line-height: var(--leading-relaxed);
+}
+
+/* ── Flow spacing (vertical rhythm) ── */
+
+.zd-content :where(> * + *) {
+  margin-top: var(--spacing-vsp-md);
+}
+
+/* ── Headings ── */
+
+.zd-content :where(h2) {
+  font-size: var(--text-subheading);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--leading-tight);
+  margin-top: var(--spacing-vsp-2xl);
+  margin-bottom: var(--spacing-vsp-xs);
+  padding-top: var(--spacing-vsp-sm);
+  border-top: 3px solid transparent;
+  border-image: linear-gradient(to right, var(--color-fg), transparent) 1;
+}
+
+.zd-content :where(h3) {
+  font-size: var(--text-body);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--leading-snug);
+  margin-top: var(--spacing-vsp-xl);
+  margin-bottom: var(--spacing-vsp-xs);
+  padding-top: var(--spacing-vsp-xs);
+  border-top: 2px solid transparent;
+  border-image: linear-gradient(to right, var(--color-muted), transparent) 1;
+}
+
+.zd-content :where(h4) {
+  font-size: var(--text-body);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--leading-snug);
+  margin-top: var(--spacing-vsp-lg);
+  margin-bottom: var(--spacing-vsp-xs);
+  padding-top: var(--spacing-vsp-xs);
+  border-top: 1px solid transparent;
+  border-image: linear-gradient(to right, var(--color-muted), transparent) 1;
+}
+
+.zd-content :where(h5, h6) {
+  font-size: var(--text-small);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--leading-snug);
+  margin-top: var(--spacing-vsp-md);
+  margin-bottom: var(--spacing-vsp-2xs);
+}
+
+/* ── Heading auto-links ── */
+
+.zd-content :where(h2, h3, h4, h5, h6) .hash-link {
+  text-decoration: none;
+  margin-left: var(--spacing-hsp-sm);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.zd-content :where(h2, h3, h4, h5, h6) .hash-link::after {
+  content: "#";
+  color: var(--color-accent);
+}
+
+.zd-content :where(h2, h3, h4, h5, h6):hover .hash-link {
+  opacity: 1;
+}
+
+.zd-content :where(h2, h3, h4, h5, h6) .hash-link:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Tighten spacing after headings */
+.zd-content :where(h2 + *, h3 + *, h4 + *, h5 + *, h6 + *) {
+  margin-top: 0;
+}
+
+/* ── Paragraphs ── */
+
+.zd-content :where(p) {
+  margin-top: 0;
+  margin-bottom: var(--spacing-vsp-md);
+}
+
+/* ── Links ── */
+
+.zd-content :where(a:not(.block):not([data-site-nav] *)) {
   color: var(--color-accent);
   text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
-a:hover {
-  opacity: 0.8;
+.zd-content :where(a:not(.block):not([data-site-nav] *):hover) {
+  color: var(--color-accent-hover);
 }
 
-/* ─── App shell layout ─── */
+/* ── Bold / Strong ── */
 
-.ccresdoc-shell {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  grid-template-columns: var(--ccresdoc-sidebar-width) 1fr;
-  grid-template-areas:
-    "header header"
-    "sidebar main"
-    "footer footer";
-  min-height: 100dvh;
-}
-
-.ccresdoc-header {
-  grid-area: header;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.75rem 1.5rem;
-  background: var(--color-bg-surface);
-  border-bottom: 1px solid var(--color-border);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-
-.ccresdoc-site-title {
-  font-weight: 700;
-  font-size: 1.125rem;
-  text-decoration: none;
+.zd-content :where(strong) {
+  font-weight: var(--font-weight-bold);
   color: var(--color-fg);
 }
 
-.ccresdoc-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
+/* ── Lists ── */
+
+.zd-content :where(ul) {
+  list-style-type: disc;
+  padding-left: var(--spacing-hsp-xl);
+  margin-bottom: var(--spacing-vsp-md);
 }
 
-/* Sidebar wrapper — toggled by JS */
-.ccresdoc-sidebar-wrapper {
-  grid-area: sidebar;
-  position: sticky;
-  top: 3.25rem;
-  height: calc(100dvh - 3.25rem);
-  overflow: hidden;
-  border-right: 1px solid var(--color-border);
-  background: var(--color-bg-surface);
-  transition: width 0.2s ease;
+.zd-content :where(ol) {
+  list-style-type: decimal;
+  padding-left: var(--spacing-hsp-xl);
+  margin-bottom: var(--spacing-vsp-md);
 }
 
-[data-sidebar-open="false"] .ccresdoc-sidebar-wrapper {
-  width: 0;
-  border-right: none;
+.zd-content :where(li) {
+  margin-bottom: var(--spacing-vsp-xs);
 }
 
-#ccresdoc-sidebar {
-  width: var(--ccresdoc-sidebar-width);
-  height: 100%;
-  overflow-y: auto;
-  padding: 1rem 0;
+.zd-content :where(li::marker) {
+  color: var(--color-muted);
 }
 
-/* Sidebar resizer handle */
-.ccresdoc-sidebar-resizer {
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  cursor: col-resize;
-  background: transparent;
-  z-index: 5;
-}
-
-.ccresdoc-sidebar-resizer:hover,
-.ccresdoc-sidebar-resizer.dragging {
-  background: var(--color-accent);
-  opacity: 0.5;
-}
-
-/* Sidebar nav content */
-.ccresdoc-sidebar-section {
-  margin-bottom: 1.5rem;
-}
-
-.ccresdoc-sidebar-section-title {
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-fg-muted);
-  padding: 0 1rem 0.5rem;
-}
-
-.ccresdoc-sidebar-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.ccresdoc-sidebar-list a {
-  display: block;
-  padding: 0.3rem 1rem;
-  font-size: 0.875rem;
-  color: var(--color-fg-muted);
-  text-decoration: none;
-  border-left: 2px solid transparent;
-}
-
-.ccresdoc-sidebar-list a:hover {
-  color: var(--color-fg);
-  background: var(--color-bg-subtle);
-  opacity: 1;
-}
-
-.ccresdoc-sidebar-list a.active {
-  color: var(--color-accent);
-  border-left-color: var(--color-accent);
-  background: var(--color-bg-subtle);
-}
-
-/* Sidebar toggle button */
-.ccresdoc-sidebar-toggle {
-  border: 1px solid var(--color-border);
-  background: transparent;
-  color: inherit;
-  padding: 0.25rem 0.5rem;
-  border-radius: 0.375rem;
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.875rem;
-  line-height: 1;
-}
-
-/* Main content */
-.ccresdoc-main {
-  grid-area: main;
-  padding: 2rem;
-  max-width: 900px;
-  width: 100%;
-}
-
-/* Footer */
-.ccresdoc-footer {
-  grid-area: footer;
-  padding: 1.5rem;
-  border-top: 1px solid var(--color-border);
-  background: var(--color-bg-surface);
-  font-size: 0.875rem;
-  color: var(--color-fg-muted);
-  display: flex;
-  gap: 2rem;
-  flex-wrap: wrap;
-  align-items: flex-start;
-}
-
-.ccresdoc-footer-links {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.ccresdoc-footer-links h3 {
-  margin: 0 0 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.ccresdoc-footer-links a {
-  color: var(--color-fg-muted);
-}
-
-.ccresdoc-footer-copyright {
-  margin-left: auto;
-  align-self: flex-end;
-}
-
-/* Theme toggle button */
-.theme-toggle {
-  border: 1px solid var(--color-border);
-  background: transparent;
-  color: inherit;
-  padding: 0.25rem 0.75rem;
-  border-radius: 0.375rem;
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.875rem;
-}
-
-/* ─── Landing page ─── */
-
-.ccresdoc-home-intro {
-  margin-bottom: 2rem;
-}
-
-.ccresdoc-category-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 1rem;
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.ccresdoc-category-grid a {
-  display: block;
-  padding: 1.25rem;
-  background: var(--color-bg-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 0.5rem;
-  text-decoration: none;
-  font-weight: 500;
-  transition: border-color 0.15s;
-}
-
-.ccresdoc-category-grid a:hover {
-  border-color: var(--color-accent);
-  opacity: 1;
-}
-
-/* Category index list — used by S5 for category index pages */
-ul.ccresdoc-category-index {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 0.5rem;
-}
-
-ul.ccresdoc-category-index li a {
-  display: block;
-  padding: 0.5rem 0.75rem;
-  background: var(--color-bg-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 0.375rem;
-  text-decoration: none;
-  font-size: 0.9375rem;
-}
-
-ul.ccresdoc-category-index li a:hover {
-  border-color: var(--color-accent);
-  opacity: 1;
-}
-
-/* ─── CSS class contract — S3 renderer output (ccresdoc-renderer) ─── */
-
-/* Admonition base box */
-aside.admonition {
-  padding: 1rem 1.25rem;
-  border-radius: 0.5rem;
-  border-left: 4px solid var(--color-border);
-  margin: 1.5rem 0;
-  background: var(--color-bg-surface);
-}
-
-aside.admonition-note {
-  border-left-color: var(--admonition-note-border);
-  background: var(--admonition-note-bg);
-  color: var(--admonition-note-fg);
-}
-
-aside.admonition-tip {
-  border-left-color: var(--admonition-tip-border);
-  background: var(--admonition-tip-bg);
-  color: var(--admonition-tip-fg);
-}
-
-aside.admonition-info {
-  border-left-color: var(--admonition-info-border);
-  background: var(--admonition-info-bg);
-  color: var(--admonition-info-fg);
-}
-
-aside.admonition-warning {
-  border-left-color: var(--admonition-warning-border);
-  background: var(--admonition-warning-bg);
-  color: var(--admonition-warning-fg);
-}
-
-aside.admonition-danger {
-  border-left-color: var(--admonition-danger-border);
-  background: var(--admonition-danger-bg);
-  color: var(--admonition-danger-fg);
-}
-
-/* Code title label — sits immediately above the <pre> block */
-div.code-title {
-  display: inline-block;
-  background: var(--color-bg-subtle);
-  border: 1px solid var(--color-border);
-  border-bottom: none;
-  border-radius: 0.375rem 0.375rem 0 0;
-  padding: 0.25rem 0.75rem;
-  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
-  font-size: 0.8125rem;
-  color: var(--color-fg-muted);
+.zd-content :where(li > ul, li > ol) {
+  margin-top: var(--spacing-vsp-xs);
   margin-bottom: 0;
 }
 
-/* Code block base — syntect emits language-* classes */
-pre > code[class*="language-"] {
-  display: block;
-  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
-  font-size: 0.875rem;
-  line-height: 1.6;
-  padding: 1rem 1.25rem;
-  overflow-x: auto;
-  background: var(--color-bg-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 0.375rem;
+/* ── Blockquotes ── */
+
+.zd-content :where(blockquote) {
+  border-left: 3px solid var(--color-muted);
+  padding-left: var(--spacing-hsp-lg);
+  color: var(--color-muted);
+  font-style: italic;
+  margin-bottom: var(--spacing-vsp-md);
 }
 
-/* Code block following a code-title — flush top corners */
-div.code-title + pre > code[class*="language-"] {
+.zd-content :where(blockquote p) {
+  margin-bottom: var(--spacing-vsp-xs);
+}
+
+/* ── Inline code ── */
+
+.zd-content :where(code:not(pre code)) {
+  font-size: var(--text-small);
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-mono);
+  background-color: var(--color-code-bg);
+  color: var(--color-code-fg);
+  border-radius: var(--radius-DEFAULT);
+  padding: 2px var(--spacing-hsp-xs);
+}
+
+/* ── Code blocks (pre) ── */
+
+.zd-content :where(pre) {
+  font-size: var(--text-small);
+  line-height: var(--leading-relaxed);
+  border: 1px solid var(--color-muted);
+  padding: var(--spacing-vsp-sm) var(--spacing-hsp-lg);
+  margin-bottom: var(--spacing-vsp-md);
+  overflow-x: auto;
+}
+
+.zd-content :where(pre code) {
+  background: transparent;
+  padding: 0;
+  border: none;
+  color: inherit;
+  font-size: inherit;
+}
+
+/* ── Tables ── */
+
+.zd-content :where(table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-small);
+  margin-bottom: var(--spacing-vsp-md);
+}
+
+.zd-content :where(th),
+.zd-content :where(td) {
+  padding: var(--spacing-vsp-xs) var(--spacing-hsp-md);
+  border-bottom: 1px solid var(--color-muted);
+  overflow-wrap: anywhere;
+}
+
+.zd-content :where(th) {
+  font-weight: var(--font-weight-semibold);
+  text-align: left;
+  border-bottom-width: 2px;
+}
+
+/* ── Horizontal rules ── */
+
+.zd-content :where(hr) {
+  border: none;
+  border-top: 1px solid var(--color-muted);
+  margin: var(--spacing-vsp-xl) 0;
+}
+
+/* ── Images ── */
+
+.zd-content :where(img) {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ── Definition lists ── */
+
+.zd-content :where(dt) {
+  font-weight: var(--font-weight-semibold);
+  margin-top: var(--spacing-vsp-md);
+}
+
+.zd-content :where(dd) {
+  padding-left: var(--spacing-hsp-xl);
+  margin-bottom: var(--spacing-vsp-xs);
+}
+
+/* ========================================
+ * Code block buttons (copy + word wrap)
+ * ======================================== */
+
+.code-block-wrapper {
+  position: relative;
+}
+
+pre.astro-code.word-wrap {
+  overflow-x: hidden;
+}
+
+pre.astro-code.word-wrap code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.code-block-sr-announce {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.code-buttons {
+  position: absolute;
+  top: var(--spacing-hsp-sm);
+  right: var(--spacing-hsp-sm);
+  display: flex;
+  gap: var(--spacing-hsp-2xs);
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 1;
+}
+
+.code-block-wrapper:hover .code-buttons,
+.code-block-wrapper:focus-within .code-buttons {
+  opacity: 1;
+}
+
+.code-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--spacing-hsp-2xl);
+  height: var(--spacing-hsp-2xl);
+  padding: 0;
+  border: 1px solid var(--color-muted);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface);
+  color: var(--color-fg);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s,
+    background-color 0.15s;
+}
+
+.code-btn:hover {
+  color: var(--color-fg);
+  border-color: var(--color-fg);
+}
+
+.code-btn .code-icon {
+  width: var(--spacing-hsp-lg);
+  height: var(--spacing-hsp-lg);
+}
+
+/* Copy: icon swap */
+.code-btn-copy .code-icon-check {
+  display: none;
+}
+.code-btn-copy .code-icon-copy {
+  display: block;
+}
+.code-btn-copy.copied .code-icon-check {
+  display: block;
+  color: var(--color-success);
+}
+.code-btn-copy.copied .code-icon-copy {
+  display: none;
+}
+
+/* Word wrap active state */
+.code-btn-wrap.active {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+@media (scripting: none) {
+  .code-buttons {
+    display: none;
+  }
+}
+
+/* ========================================
+ * Shiki dual theme (light/dark mode)
+ * ======================================== */
+
+[data-theme] .shiki,
+[data-theme] .shiki span,
+[data-theme] .astro-code,
+[data-theme] .astro-code span {
+  color: light-dark(var(--shiki-light), var(--shiki-dark)) !important;
+  background-color: light-dark(var(--shiki-light-bg), var(--shiki-dark-bg)) !important;
+  font-style: light-dark(
+    var(--shiki-light-font-style, inherit),
+    var(--shiki-dark-font-style, inherit)
+  );
+}
+
+/* HtmlPreview component — Shiki code blocks
+ * Token colors inherit from the global [data-theme] .shiki rule above.
+ * These rules only adjust layout and background for the preview context. */
+.zd-html-preview-code pre.shiki {
+  margin: 0;
+  padding: 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  overflow-x: auto;
+}
+
+.zd-html-preview-code pre.shiki code {
+  font-family: var(--font-mono);
+  white-space: pre;
+}
+
+/* ========================================
+ * Code block line highlighting
+ * ======================================== */
+
+/* Line highlighting via {1,3-5} meta syntax */
+pre.astro-code .line.highlighted {
+  background-color: color-mix(in srgb, var(--color-accent) 15%, transparent);
+}
+
+/* Word highlighting via /word/ meta syntax */
+pre.astro-code .line .highlighted-word {
+  background-color: color-mix(in srgb, var(--color-accent) 25%, transparent);
+  border-bottom: 1px solid var(--color-accent);
+}
+
+/* ========================================
+ * Code block titles
+ * ======================================== */
+
+.code-block-container {
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+.code-block-title {
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  color: var(--color-muted);
+  background-color: var(--color-code-bg);
+  border: 1px solid var(--color-muted);
+  border-bottom: none;
+  padding: var(--spacing-vsp-2xs) var(--spacing-hsp-lg);
+}
+
+.code-block-container pre.astro-code {
+  margin-top: 0 !important;
   border-top-left-radius: 0;
   border-top-right-radius: 0;
 }
 
-/* Syntect per-token spans — colours come from the theme's inline styles,
-   but we ensure spans don't disrupt line wrapping. */
-code[class*="language-"] span {
-  /* Syntect emits style="" inline for colours; no class-based colour rules needed.
-     We only need to ensure spans preserve their parent's font/size. */
-  font: inherit;
+/* ========================================
+ * Mermaid diagrams
+ * ======================================== */
+
+.zd-content .mermaid {
+  @apply my-vsp-lg flex justify-center;
 }
 
-/* Heading anchor links — invisible until hover */
-a.heading-link {
-  text-decoration: none;
+.zd-content .mermaid svg {
+  max-width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+/* Prevent mermaid edge labels from clipping text (foreignObject uses overflow:hidden) */
+.zd-content .mermaid foreignObject {
+  overflow: visible;
+}
+
+/* KaTeX math equations */
+.katex {
+  font-size: 1.1em;
+}
+
+.katex-display {
+  margin: var(--spacing-vsp-md) 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--spacing-vsp-xs) 0;
+}
+
+.katex-display > .katex {
+  white-space: nowrap;
+}
+
+/* Make KaTeX respect our color scheme */
+.katex .base {
+  color: var(--zd-fg);
+}
+
+/* ========================================
+ * Doc History Diff Viewer (side-by-side)
+ * ======================================== */
+
+.diff-row {
+  border-bottom: 1px solid color-mix(in oklch, var(--color-muted) 30%, transparent);
+}
+
+.diff-line-num {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-caption);
+  line-height: 1.5;
+  padding: 0 var(--spacing-hsp-xs);
+  text-align: right;
+  color: var(--color-muted);
+  user-select: none;
+  vertical-align: top;
+  border-right: 1px solid color-mix(in oklch, var(--color-muted) 30%, transparent);
+}
+
+.diff-line-content {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-caption);
+  line-height: 1.5;
+  padding: 0 var(--spacing-hsp-sm);
+  white-space: pre-wrap;
+  word-break: break-all;
+  vertical-align: top;
+}
+
+/* Left column right border to separate the two sides */
+.diff-row td:nth-child(2) {
+  border-right: 2px solid var(--color-muted);
+}
+
+.diff-line-added {
+  background-color: color-mix(in oklch, var(--color-success) 15%, transparent);
+}
+
+.diff-line-removed {
+  background-color: color-mix(in oklch, var(--color-danger) 15%, transparent);
+}
+
+.diff-line-empty {
+  background-color: color-mix(in oklch, var(--color-muted) 8%, transparent);
+}
+
+/* ── Search highlight ── */
+[data-search-results] mark {
+  background-color: color-mix(in oklch, var(--color-p3) 35%, transparent);
   color: inherit;
+  padding: 0;
+  border-radius: 2px;
 }
 
-a.heading-link:hover {
+/* ========================================
+ * Page transition animations
+ * ======================================== */
+
+/* ========================================
+ * AI Chat markdown (.ai-chat-md)
+ *
+ * Compact typography for chat bubbles.
+ * ======================================== */
+
+.ai-chat-md :where(p) {
+  margin: 0 0 var(--spacing-vsp-2xs);
+}
+
+.ai-chat-md :where(p:last-child) {
+  margin-bottom: 0;
+}
+
+.ai-chat-md :where(strong) {
+  font-weight: var(--font-weight-bold);
+}
+
+.ai-chat-md :where(em) {
+  font-style: italic;
+}
+
+.ai-chat-md :where(a) {
   color: var(--color-accent);
-  opacity: 1;
+  text-decoration: underline;
 }
 
-a.heading-link::after {
-  content: " #";
-  opacity: 0;
-  color: var(--color-fg-muted);
-  font-size: 0.8em;
-  transition: opacity 0.15s;
+.ai-chat-md :where(a:hover) {
+  color: var(--color-accent-hover);
 }
 
-h2[id]:hover a.heading-link::after,
-h3[id]:hover a.heading-link::after,
-h4[id]:hover a.heading-link::after,
-h5[id]:hover a.heading-link::after,
-h6[id]:hover a.heading-link::after {
-  opacity: 1;
+.ai-chat-md :where(code:not(pre code)) {
+  font-size: 0.9em;
+  background: color-mix(in oklch, var(--color-muted) 20%, transparent);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
 }
 
-/* GFM tables */
-table {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 1.5rem 0;
-  font-size: 0.9375rem;
+.ai-chat-md :where(pre) {
+  font-size: var(--text-caption);
+  line-height: var(--leading-relaxed);
+  background: var(--color-code-bg);
+  color: var(--color-code-fg);
+  padding: var(--spacing-vsp-2xs) var(--spacing-hsp-sm);
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: var(--spacing-vsp-2xs) 0;
 }
 
-th,
-td {
-  border: 1px solid var(--color-border);
-  padding: 0.5rem 0.75rem;
-  text-align: left;
+.ai-chat-md :where(pre code) {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
 }
 
-th {
-  background: var(--color-bg-subtle);
-  font-weight: 600;
+.ai-chat-md :where(ul) {
+  list-style-type: disc;
+  padding-left: var(--spacing-hsp-lg);
+  margin: var(--spacing-vsp-2xs) 0;
 }
 
-tr:nth-child(even) td {
-  background: var(--color-bg-surface);
+.ai-chat-md :where(ol) {
+  list-style-type: decimal;
+  padding-left: var(--spacing-hsp-lg);
+  margin: var(--spacing-vsp-2xs) 0;
 }
 
-/* ─── Responsive ─── */
+.ai-chat-md :where(li) {
+  margin-bottom: 0.15em;
+}
 
-@media (max-width: 768px) {
-  .ccresdoc-shell {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "header"
-      "sidebar"
-      "main"
-      "footer";
+.ai-chat-md :where(li::marker) {
+  color: var(--color-muted);
+}
+
+.ai-chat-md :where(h4, h5, h6) {
+  font-weight: var(--font-weight-bold);
+  margin: var(--spacing-vsp-xs) 0 var(--spacing-vsp-2xs);
+}
+
+/* ========================================
+ * Sidebar variable + toggle/resize
+ * ======================================== */
+
+:root {
+  --zd-sidebar-w: clamp(14rem, 20vw, 22rem);
+}
+
+@media (min-width: 1024px) {
+  #desktop-sidebar {
+    transition:
+      transform 200ms ease-in-out,
+      visibility 200ms;
   }
 
-  .ccresdoc-sidebar-wrapper {
-    position: relative;
-    top: auto;
-    height: auto;
-    max-height: 60vh;
-    overflow-y: auto;
-    border-right: none;
-    border-bottom: 1px solid var(--color-border);
+  html[data-sidebar-hidden] #desktop-sidebar {
+    transform: translateX(calc(-1 * var(--zd-sidebar-w)));
+    visibility: hidden;
   }
 
-  [data-sidebar-open="false"] .ccresdoc-sidebar-wrapper {
-    max-height: 0;
-    border-bottom: none;
+  .zd-sidebar-content-wrapper {
+    transition: margin-left 200ms ease-in-out;
+  }
+
+  html[data-sidebar-hidden] .zd-sidebar-content-wrapper {
+    margin-left: 0;
+  }
+}
+
+.zd-desktop-sidebar-toggle {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .zd-desktop-sidebar-toggle {
+    position: fixed;
+    bottom: var(--spacing-vsp-xl);
+    left: var(--zd-sidebar-w);
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 9999px;
+    border: 1px solid var(--color-muted);
+    background-color: var(--color-surface);
+    color: var(--color-muted);
+    cursor: pointer;
+    transform: translateX(-50%);
+    transition:
+      left 200ms ease-in-out,
+      color 0.15s;
+  }
+
+  .zd-desktop-sidebar-toggle:hover,
+  .zd-desktop-sidebar-toggle:focus-visible {
+    color: var(--color-fg);
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  html[data-sidebar-hidden] .zd-desktop-sidebar-toggle {
+    left: 0.75rem;
+    transform: none;
+  }
+}
+
+@keyframes contentFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes contentFadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
   }
 }
