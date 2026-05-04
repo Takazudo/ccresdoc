@@ -3,6 +3,7 @@ import type { ComponentChildren } from "preact";
 import Header from "../components/header";
 import Footer from "../components/footer";
 import SidebarMount from "../components/sidebar-mount";
+import ColorSchemeProvider from "../components/color-scheme-provider";
 import "../styles/global.css";
 
 /**
@@ -59,6 +60,8 @@ export default function DefaultLayout({ title, children }: Props) {
         <title>{title}</title>
         {/* Apply theme and sidebar width before paint to avoid FOUC. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
+        {/* Inject --zd-* palette variables for the active data-theme. */}
+        <ColorSchemeProvider />
         <script dangerouslySetInnerHTML={{ __html: SIDEBAR_WIDTH_SCRIPT }} />
       </head>
       <body>
