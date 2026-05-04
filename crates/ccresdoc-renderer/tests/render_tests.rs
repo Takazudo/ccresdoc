@@ -544,6 +544,7 @@ fn claude_dir() -> std::path::PathBuf {
 }
 
 #[test]
+#[ignore = "reads live $HOME/.claude/; run with --include-ignored locally"]
 fn structural_equivalence_claude_md() {
     let path = claude_dir().join("CLAUDE.md");
     let content = fs::read_to_string(&path)
@@ -552,6 +553,7 @@ fn structural_equivalence_claude_md() {
 }
 
 #[test]
+#[ignore = "reads live $HOME/.claude/; run with --include-ignored locally"]
 fn structural_equivalence_command_cpwd() {
     let path = claude_dir().join("commands/cpwd.md");
     let content = fs::read_to_string(&path)
@@ -560,6 +562,7 @@ fn structural_equivalence_command_cpwd() {
 }
 
 #[test]
+#[ignore = "reads live $HOME/.claude/; run with --include-ignored locally"]
 fn structural_equivalence_skill_commits() {
     let path = claude_dir().join("skills/commits/SKILL.md");
     let content = fs::read_to_string(&path)
@@ -575,6 +578,7 @@ fn structural_equivalence_skill_commits() {
 /// - output contains admonition class names if the input had :::note/:::tip/etc. blocks
 /// - output does NOT contain either sentinel
 #[test]
+#[ignore = "Wave 2.5 smoke — reads live $HOME/.claude/; run with --include-ignored locally"]
 fn smoke_renderer_round_trip_sentinel_free() {
     let opts = default_opts();
     let root = claude_dir();
