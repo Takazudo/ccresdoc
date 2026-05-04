@@ -219,9 +219,14 @@ fn main() {
             let dist_dir = if IS_DEV {
                 std::path::PathBuf::from(home_dir()).join(".claude").join("app").join("dist")
             } else {
+                // Tauri bundles resources from "../app/dist/**/*" (relative to src-tauri/).
+                // When resources are specified with a ".." traversal, Tauri places them under
+                // "_up_/<path>" inside Contents/Resources/ to represent the parent-dir step.
+                // So the actual bundle path is Resources/_up_/app/dist/, not Resources/app/dist/.
                 app.path()
                     .resource_dir()
                     .expect("resource_dir unavailable in production")
+                    .join("_up_")
                     .join("app")
                     .join("dist")
             };
