@@ -411,11 +411,14 @@ body {
   position: relative;
 }
 
-pre.astro-code.word-wrap {
+/* word-wrap also covers syntect-rendered pre blocks (ccresdoc-renderer) */
+pre.astro-code.word-wrap,
+pre.word-wrap {
   overflow-x: hidden;
 }
 
-pre.astro-code.word-wrap code {
+pre.astro-code.word-wrap code,
+pre.word-wrap code {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

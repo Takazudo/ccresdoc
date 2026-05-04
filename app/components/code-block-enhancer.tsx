@@ -7,7 +7,10 @@
  * events for SPA navigation. In zfb, ViewTransitions triggers real page loads
  * so the script runs fresh on every navigation — DOMContentLoaded is sufficient.
  *
- * Targets pre.astro-code elements produced by the ccresdoc-renderer (syntect).
+ * Targets both:
+ *   pre.astro-code — Shiki-rendered blocks from the original Astro build path
+ *   pre:has(> code[class]) — syntect-rendered blocks from ccresdoc-renderer
+ *     (emits <pre><code class="language-{lang}">...</code></pre>)
  */
 
 const SCRIPT = `(function () {
@@ -22,7 +25,9 @@ const SCRIPT = `(function () {
   });
 
   function enhanceCodeBlocks() {
-    var pres = document.querySelectorAll("pre.astro-code");
+    // pre.astro-code: Shiki-rendered (original Astro path)
+    // pre:has(> code[class]): syntect-rendered (ccresdoc-renderer emits class="language-*")
+    var pres = document.querySelectorAll("pre.astro-code, pre:has(> code[class])");
 
     for (var i = 0; i < pres.length; i++) {
       var pre = pres[i];
