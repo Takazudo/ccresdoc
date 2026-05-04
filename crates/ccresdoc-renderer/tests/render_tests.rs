@@ -534,28 +534,87 @@ fn check_structural_equivalence(md_source: &str, label: &str) {
     );
 }
 
+fn claude_dir() -> std::path::PathBuf {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/Users/takazudo"));
+    home.join(".claude")
+}
+
 #[test]
 fn structural_equivalence_claude_md() {
-    let path = "/Users/takazudo/.claude/CLAUDE.md";
-    let content = fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
+    let path = claude_dir().join("CLAUDE.md");
+    let content = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
     check_structural_equivalence(&content, "CLAUDE.md");
 }
 
 #[test]
 fn structural_equivalence_command_cpwd() {
-    let path = "/Users/takazudo/.claude/commands/cpwd.md";
-    let content = fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
+    let path = claude_dir().join("commands/cpwd.md");
+    let content = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
     check_structural_equivalence(&content, "commands/cpwd.md");
 }
 
 #[test]
 fn structural_equivalence_skill_commits() {
-    let path = "/Users/takazudo/.claude/skills/commits/SKILL.md";
-    let content = fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
+    let path = claude_dir().join("skills/commits/SKILL.md");
+    let content = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
     check_structural_equivalence(&content, "skills/commits/SKILL.md");
+}
+
+// ─── Wave 2.5 smoke: Check 4 — renderer round-trip with sentinel assertions ──────
+
+/// Smoke test: run render_markdown on three real source documents and verify:
+/// - no panic
+/// - output is non-empty
+/// - output contains admonition class names if the input had :::note/:::tip/etc. blocks
+/// - output does NOT contain either sentinel
+#[test]
+fn smoke_renderer_round_trip_sentinel_free() {
+    let opts = default_opts();
+    let root = claude_dir();
+
+    let sample_paths = vec![
+        ("CLAUDE.md",        root.join("CLAUDE.md")),
+        ("cpwd.md",          root.join("commands/cpwd.md")),
+        ("commits/SKILL.md", root.join("skills/commits/SKILL.md")),
+    ];
+
+    for (label, path) in &sample_paths {
+        let content = fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("failed to read {} ({label}): {e}", path.display()));
+
+        let html = render_markdown(&content, &opts)
+            .unwrap_or_else(|e| panic!("render_markdown panicked for {label}: {e}"));
+
+        // Must be non-empty
+        assert!(!html.is_empty(), "{label}: rendered output is empty");
+
+        // Must NOT contain either sentinel
+        assert!(
+            !html.contains(SENTINEL_CONTENT),
+            "{label}: output contains SENTINEL_CONTENT"
+        );
+        assert!(
+            !html.contains(SENTINEL_TITLE),
+            "{label}: output contains SENTINEL_TITLE"
+        );
+
+        // If the input contains :::note blocks, output must contain admonition class names
+        let admonition_kinds = ["note", "tip", "info", "warning", "danger"];
+        for kind in &admonition_kinds {
+            let needle = format!(":::{kind}");
+            if content.contains(&needle) {
+                assert!(
+                    html.contains(&format!("admonition-{kind}")),
+                    "{label}: input has {needle} block but output missing admonition-{kind} class"
+                );
+            }
+        }
+    }
 }
 
 // ─── Individual feature tests ───────────────────────────────────────────────────

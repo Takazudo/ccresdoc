@@ -301,3 +301,141 @@ fn test_skill_name_fallback() {
     assert_eq!(tree.skills.len(), 1);
     assert_eq!(tree.skills[0].name, "my-dir"); // fallback to dir name
 }
+
+// ---------------------------------------------------------------------------
+// Test 11: live round-trip against actual $HOME/.claude/
+//
+// This is the Wave 2.5 smoke check (Check 5): verify walk_claude_dir returns
+// non-empty results for all four resource lists and that the counts match
+// ls-based ground truth.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_live_claude_dir_round_trip() {
+    let home = std::env::var_os("HOME").expect("HOME not set");
+    let home_path = std::path::PathBuf::from(home);
+    let claude_dir = home_path.join(".claude");
+
+    if !claude_dir.exists() {
+        // Skip if no .claude dir (CI / clean environments)
+        eprintln!("SKIP: $HOME/.claude does not exist");
+        return;
+    }
+
+    let tree = walk_claude_dir(&claude_dir, &claude_dir)
+        .expect("walk_claude_dir failed against $HOME/.claude");
+
+    // All four lists must be non-empty
+    assert!(
+        !tree.claude_mds.is_empty(),
+        "expected at least one CLAUDE.md; got 0"
+    );
+    assert!(
+        !tree.commands.is_empty(),
+        "expected at least one command; got 0"
+    );
+    assert!(
+        !tree.skills.is_empty(),
+        "expected at least one skill; got 0"
+    );
+    assert!(
+        !tree.agents.is_empty(),
+        "expected at least one agent; got 0"
+    );
+
+    // ls-based ground truth for commands (counts .md files in commands/)
+    let commands_dir = claude_dir.join("commands");
+    let ls_commands = if commands_dir.exists() {
+        std::fs::read_dir(&commands_dir)
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .filter(|e| {
+                        e.file_name()
+                            .to_str()
+                            .map(|n| n.ends_with(".md"))
+                            .unwrap_or(false)
+                            && e.file_type().map(|t| t.is_file()).unwrap_or(false)
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    // ls-based ground truth for agents (counts .md files in agents/)
+    let agents_dir = claude_dir.join("agents");
+    let ls_agents = if agents_dir.exists() {
+        std::fs::read_dir(&agents_dir)
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .filter(|e| {
+                        e.file_name()
+                            .to_str()
+                            .map(|n| n.ends_with(".md"))
+                            .unwrap_or(false)
+                            && e.file_type().map(|t| t.is_file()).unwrap_or(false)
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    // ls-based ground truth for skills (dirs with SKILL.md, following symlinks).
+    // We must use std::fs::metadata(path) rather than DirEntry::metadata() because
+    // DirEntry::metadata() on Unix calls lstat() and does NOT follow symlinks —
+    // symlinked directories would be seen as symlinks, not dirs.
+    let skills_dir = claude_dir.join("skills");
+    let ls_skills = if skills_dir.exists() {
+        std::fs::read_dir(&skills_dir)
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .filter(|e| {
+                        let path = e.path();
+                        // std::fs::metadata follows symlinks
+                        std::fs::metadata(&path)
+                            .map(|m| m.is_dir())
+                            .unwrap_or(false)
+                            && path.join("SKILL.md").is_file()
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    // Counts must match ls-based ground truth
+    assert_eq!(
+        tree.commands.len(),
+        ls_commands,
+        "command count mismatch: walker={}, ls={}",
+        tree.commands.len(),
+        ls_commands
+    );
+    assert_eq!(
+        tree.agents.len(),
+        ls_agents,
+        "agent count mismatch: walker={}, ls={}",
+        tree.agents.len(),
+        ls_agents
+    );
+    assert_eq!(
+        tree.skills.len(),
+        ls_skills,
+        "skill count mismatch: walker={}, ls={}",
+        tree.skills.len(),
+        ls_skills
+    );
+
+    // Report counts for smoke report
+    eprintln!(
+        "live round-trip counts: claude_mds={}, commands={}, skills={}, agents={}",
+        tree.claude_mds.len(),
+        tree.commands.len(),
+        tree.skills.len(),
+        tree.agents.len()
+    );
+}
