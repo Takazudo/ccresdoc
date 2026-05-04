@@ -258,8 +258,8 @@ to an Option-B architecture.
 
 Note: tailwindcss has a download script (`pnpm fetch:tailwind`) in the zfb repo,
 and the binary at `crates/zfb/binaries/tailwindcss-v4` is the result. The same
-pattern needs to apply to esbuild and needs to be bundled into the `cargo install`
-step.
+pattern needs to apply to esbuild and both need to be bundled into the `cargo
+install` step. See also issue #186 for tailwindcss-specific tracking.
 
 ---
 
@@ -360,8 +360,8 @@ state for post-S8 documentation.
    `node_modules` (see Q2, issue #183).
 4. `check_runtime_installed` must not hard-error when node_modules is absent
    (will be fixed as part of issue #183).
-5. tailwindcss binary is already downloadable via `pnpm fetch:tailwind`; bundling
-   it into `cargo install` follows the same pattern as esbuild.
+5. tailwindcss binary delivery (issue #186): currently requires `pnpm fetch:tailwind`;
+   bundling it into `cargo install` follows the same pattern as esbuild (#184).
 
 ---
 
@@ -474,8 +474,8 @@ config-loader Node dependency (`node config-loader.mjs`) would have been missed.
 2. Issue #183: `@takazudo/zfb` and `@takazudo/zfb-runtime` must resolve from the
    zfb binary, not from consumer `node_modules` (BLOCKING for clean no-node).
 
-3. tailwindcss binary delivery: currently requires `pnpm fetch:tailwind` from the
-   zfb repo. The same bundling-into-cargo-install treatment as esbuild.
+3. Issue #186: tailwindcss binary delivery: currently requires `pnpm fetch:tailwind`
+   from the zfb repo. The same bundling-into-cargo-install treatment as esbuild.
 
 ### Recommended path for S8 (post-upstream-fixes)
 
@@ -496,15 +496,17 @@ zfb work) are:
 
 - esbuild binary delivery (#184): no binary, no bundling.
 - @takazudo/zfb-runtime resolution (#183): no pnpm, no resolution.
-- tailwindcss binary delivery (not yet filed, coupled to #184 pattern).
+- tailwindcss binary delivery (#186): no binary, no CSS.
 
 S8's scope should be adjusted to: implement the changes achievable without
 upstream fixes (zfb.config.json conversion, beforeBuildCommand cleanup), and
-create placeholder issues in ccresdoc that are blocked on zfb #183 and #184.
+create placeholder issues in ccresdoc that are blocked on zfb #183, #184,
+and #186.
 
 ---
 
 ## Filed upstream issue URLs
 
 - https://github.com/Takazudo/zudo-front-builder/issues/183 (zfb package resolution without node_modules)
-- https://github.com/Takazudo/zudo-front-builder/issues/184 (esbuild and tailwindcss binary delivery via cargo install)
+- https://github.com/Takazudo/zudo-front-builder/issues/184 (esbuild binary delivery via cargo install)
+- https://github.com/Takazudo/zudo-front-builder/issues/186 (tailwindcss binary delivery via cargo install)
