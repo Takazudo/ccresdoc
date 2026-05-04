@@ -1,0 +1,18 @@
+# Build the .app bundle: cargo tauri build
+# (requires `cargo install tauri-cli` or `cargo binstall tauri-cli`)
+
+[package]
+name = "ccresdoc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tauri = { version = "2", features = ["devtools"] }
+ccresdoc-server = { path = "../crates/ccresdoc-server" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+anyhow = "1"
+libc = "0.2"
+serde_json = "1"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

@@ -1,0 +1,23 @@
+{
+  "name": "@ccresdoc/app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CCResDoc static shell — built by zfb, served by axum at runtime",
+  "scripts": {
+    "dev": "zfb dev",
+    "build": "ZFB_ESBUILD_BIN=\"$HOME/repos/myoss/zfb/node_modules/.pnpm/@esbuild+darwin-arm64@0.25.12/node_modules/@esbuild/darwin-arm64/bin/esbuild\" ZFB_TAILWIND_BIN=\"$HOME/repos/myoss/zfb/crates/zfb/binaries/tailwindcss-v4\" zfb build",
+    "preview": "zfb preview",
+    "zfb": "zfb"
+  },
+  "dependencies": {
+    "@takazudo/zfb": "link:../../zfb/packages/zfb",
+    "@takazudo/zfb-runtime": "link:../../zfb/packages/zfb-runtime",
+    "preact": "^10.22.0",
+    "preact-render-to-string": "^6.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

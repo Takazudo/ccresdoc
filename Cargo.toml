@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/*", "src-tauri"]
+resolver = "2"
