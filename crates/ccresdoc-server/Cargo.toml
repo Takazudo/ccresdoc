@@ -1,0 +1,28 @@
+[package]
+name = "ccresdoc-server"
+version = "0.1.0"
+edition = "2021"
+description = "Axum HTTP server for CCResDoc — static files + dynamic markdown rendering"
+
+[[example]]
+name = "serve_local"
+path = "examples/serve_local.rs"
+
+[dependencies]
+ccresdoc-resources = { path = "../ccresdoc-resources" }
+ccresdoc-renderer = { path = "../ccresdoc-renderer" }
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["fs", "set-status"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+mime_guess = "2"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.4", features = ["util"] }
+http-body-util = "0.1"
+tempfile = "3"
