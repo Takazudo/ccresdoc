@@ -838,3 +838,211 @@ pre.astro-code .line .highlighted-word {
     opacity: 0;
   }
 }
+
+/* ========================================
+ * Renderer heading links (.heading-link)
+ *
+ * ccresdoc-renderer emits class="heading-link" on the hidden anchor inside
+ * headings (comrak's header_ids extension). This mirrors the hash-link
+ * pattern from the original astro project.
+ * ======================================== */
+
+.zd-content :where(h2, h3, h4, h5, h6) .heading-link {
+  text-decoration: none;
+  margin-left: var(--spacing-hsp-sm);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.zd-content :where(h2, h3, h4, h5, h6) .heading-link::after {
+  content: "#";
+  color: var(--color-accent);
+}
+
+.zd-content :where(h2, h3, h4, h5, h6):hover .heading-link {
+  opacity: 1;
+}
+
+.zd-content :where(h2, h3, h4, h5, h6) .heading-link:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ========================================
+ * Renderer code titles (.code-title)
+ *
+ * ccresdoc-renderer emits <div class="code-title"> immediately before <pre>
+ * when a fenced code block has a title="..." meta attribute.
+ * ======================================== */
+
+.code-title {
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  color: var(--color-muted);
+  background-color: var(--color-code-bg);
+  border: 1px solid var(--color-muted);
+  border-bottom: none;
+  padding: var(--spacing-vsp-2xs) var(--spacing-hsp-lg);
+}
+
+.code-title + pre {
+  margin-top: 0 !important;
+  border-top: none;
+}
+
+/* ========================================
+ * Admonitions
+ *
+ * ccresdoc-renderer emits:
+ *   <aside class="admonition admonition-{type}">...</aside>
+ * where type is: note | tip | info | warning | danger
+ *
+ * Color assignment mirrors the original admonition.astro:
+ *   note    → --color-accent
+ *   tip     → --color-success
+ *   info    → --color-info
+ *   warning → --color-warning
+ *   danger  → --color-danger
+ * ======================================== */
+
+.admonition {
+  margin: var(--spacing-vsp-md) 0;
+  border-left: 4px solid;
+  padding: var(--spacing-vsp-md) var(--spacing-hsp-lg) var(--spacing-vsp-2xs);
+  font-size: var(--text-small);
+  color: var(--color-fg);
+}
+
+.admonition-note {
+  border-color: var(--color-accent);
+  background-color: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg));
+}
+
+.admonition-tip {
+  border-color: var(--color-success);
+  background-color: color-mix(in srgb, var(--color-success) 12%, var(--color-bg));
+}
+
+.admonition-info {
+  border-color: var(--color-info);
+  background-color: color-mix(in srgb, var(--color-info) 12%, var(--color-bg));
+}
+
+.admonition-warning {
+  border-color: var(--color-warning);
+  background-color: color-mix(in srgb, var(--color-warning) 12%, var(--color-bg));
+}
+
+.admonition-danger {
+  border-color: var(--color-danger);
+  background-color: color-mix(in srgb, var(--color-danger) 12%, var(--color-bg));
+}
+
+/* Admonition title — first paragraph acts as label */
+.admonition > p:first-child {
+  margin-bottom: var(--spacing-vsp-2xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.admonition-note > p:first-child { color: var(--color-accent); }
+.admonition-tip > p:first-child { color: var(--color-success); }
+.admonition-info > p:first-child { color: var(--color-info); }
+.admonition-warning > p:first-child { color: var(--color-warning); }
+.admonition-danger > p:first-child { color: var(--color-danger); }
+
+/* ========================================
+ * Details / summary polish
+ * ======================================== */
+
+.zd-content :where(details) {
+  border: 1px solid var(--color-muted);
+  border-radius: var(--radius-DEFAULT);
+  padding: var(--spacing-vsp-xs) var(--spacing-hsp-lg);
+  margin-bottom: var(--spacing-vsp-md);
+}
+
+.zd-content :where(summary) {
+  cursor: pointer;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-accent);
+  padding: var(--spacing-vsp-2xs) 0;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-hsp-xs);
+}
+
+.zd-content :where(summary)::-webkit-details-marker {
+  display: none;
+}
+
+.zd-content :where(summary)::before {
+  content: "▶";
+  font-size: 0.6em;
+  color: var(--color-muted);
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+
+.zd-content :where(details[open] summary)::before {
+  transform: rotate(90deg);
+}
+
+.zd-content :where(details) > :not(summary) {
+  margin-top: var(--spacing-vsp-xs);
+}
+
+/* ========================================
+ * Tabs container
+ *
+ * Tab click-handler init script lives in S5. These styles provide the
+ * visual container. Tabs are rendered by the original `tabs.astro` /
+ * `tab-item.astro` pattern; here we cover the data-* attribute hooks
+ * the JS will use.
+ * ======================================== */
+
+.tabs-container {
+  margin-bottom: var(--spacing-vsp-md);
+  border: 1px solid var(--color-muted);
+  border-radius: var(--radius-DEFAULT);
+  overflow: hidden;
+}
+
+.tabs-list {
+  display: flex;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-muted);
+  background-color: var(--color-surface);
+}
+
+.tabs-tab {
+  padding: var(--spacing-vsp-2xs) var(--spacing-hsp-lg);
+  font-size: var(--text-small);
+  color: var(--color-muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.tabs-tab:hover {
+  color: var(--color-fg);
+}
+
+.tabs-tab[aria-selected="true"] {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.tabs-panel {
+  padding: var(--spacing-vsp-sm) var(--spacing-hsp-lg);
+}
+
+.tabs-panel[hidden] {
+  display: none;
+}
