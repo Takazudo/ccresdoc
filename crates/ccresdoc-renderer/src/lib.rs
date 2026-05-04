@@ -75,7 +75,13 @@ fn strip_frontmatter(input: &str) -> &str {
             // offset now points to the start of "---\n"
             let tail = &after_open[offset + line_len..];
             // Skip blank lines immediately after the closing fence
-            let tail = if tail.starts_with("\r\n") { &tail[2..] } else if tail.starts_with('\n') { &tail[1..] } else { tail };
+            let tail = if tail.starts_with("\r\n") {
+                &tail[2..]
+            } else if tail.starts_with('\n') {
+                &tail[1..]
+            } else {
+                tail
+            };
             return tail;
         }
 

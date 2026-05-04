@@ -28,11 +28,7 @@ fn log(msg: &str) {
     // In production, log next to the binary in the bundle. In dev, use the
     // cargo workspace directory so the file is always discoverable.
     let path = log_path();
-    if let Ok(mut f) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
         let secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -61,7 +57,9 @@ fn kill_port() {
         let pids = String::from_utf8_lossy(&output.stdout);
         for line in pids.trim().lines() {
             if let Ok(pid) = line.trim().parse::<i32>() {
-                log(&format!("kill_port: killing stale pid {pid} on port {PORT}"));
+                log(&format!(
+                    "kill_port: killing stale pid {pid} on port {PORT}"
+                ));
                 unsafe { libc::kill(pid, libc::SIGTERM) };
             }
         }
@@ -100,7 +98,9 @@ fn start_embedded_server(dist_dir: std::path::PathBuf) {
                 project_root,
                 dist_dir,
             };
-            if let Err(e) = ccresdoc_server::serve_with_shutdown(config, std::future::pending()).await {
+            if let Err(e) =
+                ccresdoc_server::serve_with_shutdown(config, std::future::pending()).await
+            {
                 log(&format!("start_embedded_server: server error: {e}"));
             }
         });
@@ -173,7 +173,11 @@ fn emit_launch_error(app_handle: &AppHandle, result: &ReadyResult) {
 /// The embedded server is always live — no restart needed.
 fn do_refresh(app_handle: &AppHandle) {
     if let Some(w) = app_handle.get_webview_window("main") {
-        let _ = w.navigate(docs_url().parse().expect("BUG: docs_url produced an invalid URL"));
+        let _ = w.navigate(
+            docs_url()
+                .parse()
+                .expect("BUG: docs_url produced an invalid URL"),
+        );
     }
 }
 
@@ -217,7 +221,10 @@ fn main() {
             // In dev: fall back to $HOME/.claude/app/dist so `cargo tauri dev` works
             // against a locally-built app/dist/ without requiring the full bundle.
             let dist_dir = if IS_DEV {
-                std::path::PathBuf::from(home_dir()).join(".claude").join("app").join("dist")
+                std::path::PathBuf::from(home_dir())
+                    .join(".claude")
+                    .join("app")
+                    .join("dist")
             } else {
                 // Tauri bundles resources from "../app/dist/**/*" (relative to src-tauri/).
                 // When resources are specified with a ".." traversal, Tauri places them under
@@ -320,7 +327,9 @@ fn main() {
             if IS_DEV {
                 // In dev mode the server starts concurrently; navigate directly
                 // once it's ready rather than showing the bundled loading page.
-                let url: tauri::Url = docs_url().parse().expect("BUG: docs_url produced an invalid URL");
+                let url: tauri::Url = docs_url()
+                    .parse()
+                    .expect("BUG: docs_url produced an invalid URL");
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                     .title("CCResDoc")
                     .inner_size(1200.0, 800.0)
@@ -486,8 +495,7 @@ mod tests {
         let html_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("frontend")
             .join("index.html");
-        let html =
-            std::fs::read_to_string(&html_path).expect("Failed to read frontend/index.html");
+        let html = std::fs::read_to_string(&html_path).expect("Failed to read frontend/index.html");
         assert!(
             html.contains("\"launch-error\""),
             "frontend/index.html should listen for the launch-error event"

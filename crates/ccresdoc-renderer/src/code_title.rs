@@ -57,13 +57,19 @@ fn extract_titles(html: &str) -> Vec<Option<String>> {
         let after_pre = &search[pre_pos..];
 
         // Find the closing > of this <pre ...>
-        let pre_end = after_pre.find('>').map(|p| p + 1).unwrap_or(after_pre.len());
+        let pre_end = after_pre
+            .find('>')
+            .map(|p| p + 1)
+            .unwrap_or(after_pre.len());
         let after_pre_tag = &after_pre[pre_end..];
 
         // Look for a <code ... data-meta=...> inside this <pre>
         let title = if let Some(code_pos) = find_tag(after_pre_tag, "<code") {
             let code_snippet = &after_pre_tag[code_pos..];
-            let code_end = code_snippet.find('>').map(|p| p + 1).unwrap_or(code_snippet.len());
+            let code_end = code_snippet
+                .find('>')
+                .map(|p| p + 1)
+                .unwrap_or(code_snippet.len());
             let code_tag = &code_snippet[..code_end];
             extract_title_from_code_tag(code_tag)
         } else {
@@ -122,7 +128,10 @@ mod tests {
         // Simulated comrak output for ```ts title="foo.ts"
         let html = "<pre><code class=\"language-ts\" data-meta=\"title=&quot;foo.ts&quot;\">let x = 1;\n</code></pre>";
         let out = apply_code_titles(html).unwrap();
-        assert!(out.contains("<div class=\"code-title\">foo.ts</div>"), "got: {out}");
+        assert!(
+            out.contains("<div class=\"code-title\">foo.ts</div>"),
+            "got: {out}"
+        );
         assert!(out.contains("<pre>"));
     }
 

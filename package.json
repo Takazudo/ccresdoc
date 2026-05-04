@@ -6,6 +6,7 @@
     "dev": "pnpm --filter app dev",
     "build": "pnpm --filter app build",
     "app:dev": "cargo tauri dev",
-    "app:build": "cargo tauri build"
+    "app:build": "cargo tauri build",
+    "b4push": "./scripts/run-b4push.sh"
   }
 }
