@@ -29,11 +29,16 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --check
 
-      - name: cargo clippy --workspace --all-targets
-        run: cargo clippy --workspace --all-targets
+      # Exclude the src-tauri crate (`ccresdoc`) from Linux CI: tauri v2 pulls
+      # in webkit2gtk / gtk3 system libs that aren't on ubuntu-latest by default.
+      # The Tauri shell is verified locally via `cargo tauri build` (mac-only v1)
+      # and `cargo tauri dev`. The library crates (ccresdoc-{resources,renderer,server})
+      # are pure Rust and run cleanly on any platform.
+      - name: cargo clippy --workspace --exclude ccresdoc --all-targets
+        run: cargo clippy --workspace --exclude ccresdoc --all-targets
 
-      - name: cargo test --workspace
-        run: cargo test --workspace
+      - name: cargo test --workspace --exclude ccresdoc
+        run: cargo test --workspace --exclude ccresdoc
 
 # NOTE: `pnpm --filter app build` is deferred from CI (v1).
 #
