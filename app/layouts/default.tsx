@@ -1,8 +1,11 @@
 import type { ComponentChildren } from "preact";
 
+import { Island } from "@takazudo/zfb";
 import Header from "../components/header";
 import Footer from "../components/footer";
-import SidebarMount from "../components/sidebar-mount";
+import Sidebar from "../components/sidebar";
+import SidebarToggle from "../components/sidebar-toggle";
+import DesktopSidebarToggle from "../components/desktop-sidebar-toggle";
 import ColorSchemeProvider from "../components/color-scheme-provider";
 import "../styles/global.css";
 
@@ -34,14 +37,15 @@ const THEME_BOOTSTRAP_SCRIPT = `(() => {
 })();`;
 
 /**
- * Inline script to restore sidebar width from localStorage before paint,
- * so layout does not jump when the CSS custom property is updated by JS.
+ * Inline script to restore sidebar visibility from localStorage before paint.
+ * Applies data-sidebar-hidden attribute so the CSS transition does not flash.
+ * Key matches SIDEBAR_STORAGE_KEY in desktop-sidebar-toggle.tsx.
  */
-const SIDEBAR_WIDTH_SCRIPT = `(() => {
+const SIDEBAR_VISIBILITY_SCRIPT = `(() => {
   try {
-    var w = localStorage.getItem("ccresdoc.sidebarWidth");
-    if (w && /^\\d+$/.test(w)) {
-      document.documentElement.style.setProperty("--ccresdoc-sidebar-width", w + "px");
+    var v = localStorage.getItem("zudo-doc-sidebar-visible");
+    if (v === "false") {
+      document.documentElement.setAttribute("data-sidebar-hidden", "");
     }
   } catch (e) {}
 })();`;
@@ -58,18 +62,46 @@ export default function DefaultLayout({ title, children }: Props) {
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>{title}</title>
-        {/* Apply theme and sidebar width before paint to avoid FOUC. */}
+        {/* Apply theme before paint to avoid FOUC. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
         {/* Inject --zd-* palette variables for the active data-theme. */}
         <ColorSchemeProvider />
-        <script dangerouslySetInnerHTML={{ __html: SIDEBAR_WIDTH_SCRIPT }} />
+        {/* Restore sidebar visibility state before paint. */}
+        <script dangerouslySetInnerHTML={{ __html: SIDEBAR_VISIBILITY_SCRIPT }} />
       </head>
       <body>
-        <div class="ccresdoc-shell" data-sidebar-open="true">
-          <Header />
-          <SidebarMount />
-          <main class="ccresdoc-main">{children}</main>
-          <Footer />
+        <div class="ccresdoc-shell">
+          {/* Desktop sidebar — fixed left column, hidden by data-sidebar-hidden */}
+          <div
+            id="desktop-sidebar"
+            class="hidden lg:flex fixed top-[3.5rem] left-0 h-[calc(100vh-3.5rem)] flex-col border-r border-muted bg-surface overflow-y-auto"
+            style={{ width: "var(--zd-sidebar-w)" }}
+          >
+            <Island when="idle">
+              <Sidebar />
+            </Island>
+          </div>
+
+          {/* Desktop sidebar toggle — fixed button at sidebar edge */}
+          <Island when="idle">
+            <DesktopSidebarToggle />
+          </Island>
+
+          {/* Main content area — offset by sidebar width on desktop */}
+          <div class="zd-sidebar-content-wrapper lg:ml-[var(--zd-sidebar-w)]">
+            {/* Header includes mobile sidebar toggle with Sidebar inside */}
+            <Header />
+
+            {/* Mobile sidebar toggle wrapper — wraps the sidebar for mobile slide-in */}
+            <Island when="idle">
+              <SidebarToggle>
+                <Sidebar />
+              </SidebarToggle>
+            </Island>
+
+            <main class="ccresdoc-main">{children}</main>
+            <Footer />
+          </div>
         </div>
       </body>
     </html>
