@@ -8,7 +8,8 @@ src-tauri/target/
 
 # Node
 node_modules/
-app/dist/
+app/dist/**
+!app/dist/placeholder.txt
 
 # Logs
 *.log
