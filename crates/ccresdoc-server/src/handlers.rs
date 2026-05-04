@@ -664,18 +664,46 @@ pub(crate) async fn static_fallback(
         return not_found_response(&state);
     }
 
-    // Strip leading slash and prevent path traversal
     let relative = raw_path.trim_start_matches('/');
     if relative.is_empty() {
         return not_found_response(&state);
     }
 
-    // Reject path traversal attempts
-    if relative.contains("..") {
-        return not_found_response(&state);
+    // Per-segment validation. Reject any segment that decodes to "." or "..", is empty,
+    // or contains a path separator. percent_decode is needed because plain
+    // `relative.contains("..")` can be bypassed by `%2e%2e/etc/passwd`.
+    let mut safe = std::path::PathBuf::new();
+    for raw_segment in relative.split('/') {
+        let decoded = percent_encoding::percent_decode_str(raw_segment)
+            .decode_utf8()
+            .ok();
+        let segment = match decoded.as_deref() {
+            Some(s) => s,
+            None => return not_found_response(&state),
+        };
+        if segment.is_empty()
+            || segment == "."
+            || segment == ".."
+            || segment.contains('/')
+            || segment.contains('\\')
+        {
+            return not_found_response(&state);
+        }
+        safe.push(segment);
     }
 
-    let file_path = state.dist_dir.join(relative);
+    let file_path = state.dist_dir.join(&safe);
+    // Defense in depth: ensure the resolved path stays inside dist_dir even after
+    // any future symlink-aware joining.
+    let canonical_dist = std::fs::canonicalize(&state.dist_dir);
+    if let Ok(dist_root) = canonical_dist {
+        if let Ok(resolved) = std::fs::canonicalize(&file_path) {
+            if !resolved.starts_with(&dist_root) {
+                return not_found_response(&state);
+            }
+        }
+    }
+
     if file_path.is_file() {
         static_file_response(&file_path, None)
     } else {

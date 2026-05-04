@@ -136,7 +136,12 @@ fn build_comrak_options(opts: &RenderOptions) -> comrak::Options<'_> {
         options.extension.header_ids = Some(prefix.clone());
     }
 
-    // Allow raw HTML (needed for our admonition pre-processing)
+    // Allow raw HTML in markdown sources. Required because our admonition
+    // pre-process emits <aside> blocks the comrak pass must round-trip.
+    // Threat model: CCResDoc only renders files from the local user's
+    // ~/.claude/ tree (their own CLAUDE.md, commands, skills, agents). All
+    // input is locally authored and trusted. Do NOT reuse this renderer
+    // for content from untrusted sources without a sanitiser layer.
     options.render.unsafe_ = true;
 
     // Emit the full info string (everything after the language token) as data-meta

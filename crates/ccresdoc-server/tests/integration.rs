@@ -396,3 +396,55 @@ async fn assets_returns_css() {
         ct
     );
 }
+
+#[tokio::test]
+async fn path_traversal_literal_dotdot_blocked() {
+    let (_dir, root, dist) = make_fixture();
+    let router = make_router(&root, &dist);
+
+    for uri in ["/..", "/../etc/passwd", "/foo/../bar", "/./bar"] {
+        let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let resp = router.clone().oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "path {uri} must be 404"
+        );
+    }
+}
+
+#[tokio::test]
+async fn path_traversal_percent_encoded_dotdot_blocked() {
+    let (_dir, root, dist) = make_fixture();
+    let router = make_router(&root, &dist);
+
+    // Percent-encoded variants must NOT bypass the .. check.
+    for uri in [
+        "/%2e%2e/etc/passwd",
+        "/%2e%2e%2fetc%2fpasswd",
+        "/foo/%2e%2e/bar",
+        "/%2e/bar",
+    ] {
+        let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let resp = router.clone().oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "path {uri} must be 404 (percent-encoded traversal)"
+        );
+    }
+}
+
+#[tokio::test]
+async fn path_with_backslash_blocked() {
+    let (_dir, root, dist) = make_fixture();
+    let router = make_router(&root, &dist);
+
+    // Decoded backslash should not be treated as a separator on any platform.
+    let req = Request::builder()
+        .uri("/foo%5C..%5Cetc")
+        .body(Body::empty())
+        .unwrap();
+    let resp = router.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

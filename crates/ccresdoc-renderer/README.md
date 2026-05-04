@@ -31,6 +31,19 @@ let html = render_markdown("# Hello\n\nworld", &opts).unwrap();
 - Syntax highlighting via syntect (inline style spans)
 - YAML frontmatter stripped before rendering
 
+## Threat Model
+
+This renderer enables comrak's `render.unsafe_` flag so the admonition
+pre-process can round-trip its `<aside>` blocks through comrak. As a
+consequence, raw HTML in markdown source is rendered verbatim — no
+sanitiser layer.
+
+CCResDoc only renders files from the local user's `~/.claude/` tree
+(their own CLAUDE.md, commands, skills, agents). All input is locally
+authored and trusted. Do **not** reuse this renderer for content from
+untrusted sources (user-submitted comments, scraped pages, etc.) without
+adding a post-render sanitiser (e.g., ammonia).
+
 ## Runtime Sentinels
 
 Two strings are reserved for runtime slot substitution by the Tauri shell and
