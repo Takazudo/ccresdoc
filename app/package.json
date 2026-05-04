@@ -11,8 +11,8 @@
     "zfb": "zfb"
   },
   "dependencies": {
-    "@takazudo/zfb": "link:../../../../zfb/packages/zfb",
-    "@takazudo/zfb-runtime": "link:../../../../zfb/packages/zfb-runtime",
+    "@takazudo/zfb": "link:../../zfb/packages/zfb",
+    "@takazudo/zfb-runtime": "link:../../zfb/packages/zfb-runtime",
     "preact": "^10.22.0",
     "preact-render-to-string": "^6.5.0"
   },

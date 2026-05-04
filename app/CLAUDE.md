@@ -6,14 +6,23 @@ Static shell built by zfb. Output in `dist/` is served by the axum runtime serve
 
 zfb is NOT published to npm. Dependencies are wired via pnpm `link:` protocol:
 
-- `@takazudo/zfb`: `link:../../../../zfb/packages/zfb` (4 levels up from app/)
-- `@takazudo/zfb-runtime`: `link:../../../../zfb/packages/zfb-runtime`
+- `@takazudo/zfb`: `link:../../zfb/packages/zfb` (2 levels up from app/)
+- `@takazudo/zfb-runtime`: `link:../../zfb/packages/zfb-runtime`
 
-These resolve to `$HOME/repos/myoss/zfb/packages/{pkg}`.
+These resolve to `$HOME/repos/myoss/zfb/packages/{pkg}` from the main repo.
 
 Approach tried: link: (pnpm symlink) — this works because the zfb workspace
 node_modules/ is already populated, so transitive resolution succeeds.
 file: was also considered but link: is simpler for this cross-repo setup.
+
+**Worktree caveat:** the link: relative paths above are computed from
+`<repo>/app/`. When the repo is checked out as a git worktree at
+`<repo>/worktrees/<topic>/`, the `app/` directory is one level deeper, so the
+link target resolves outside `$HOME/repos/myoss/zfb`. After creating any
+worktree that touches `app/`, re-run `pnpm install` inside that worktree
+(pnpm will rewrite the symlinks relative to the worktree's `app/`), then run
+`pnpm install` again in the main repo before building from the main repo.
+A future fix: switch to absolute path or pnpm pack vendoring.
 
 ## Build
 

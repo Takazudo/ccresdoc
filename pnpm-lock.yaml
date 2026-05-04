@@ -11,11 +11,11 @@ importers:
   app:
     dependencies:
       '@takazudo/zfb':
-        specifier: link:../../../../zfb/packages/zfb
-        version: link:../../../../zfb/packages/zfb
+        specifier: link:../../zfb/packages/zfb
+        version: link:../../zfb/packages/zfb
       '@takazudo/zfb-runtime':
-        specifier: link:../../../../zfb/packages/zfb-runtime
-        version: link:../../../../zfb/packages/zfb-runtime
+        specifier: link:../../zfb/packages/zfb-runtime
+        version: link:../../zfb/packages/zfb-runtime
       preact:
         specifier: ^10.22.0
         version: 10.29.1
