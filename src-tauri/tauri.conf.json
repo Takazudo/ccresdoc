@@ -4,7 +4,7 @@
   "identifier": "com.takazudo.ccresdoc",
   "build": {
     "frontendDist": "./frontend",
-    "beforeBuildCommand": "pnpm --filter app build",
+    "beforeBuildCommand": ": \"${ZFB_HOME:=$HOME/repos/myoss/zfb}\" && cd ../app && ZFB_ESBUILD_BIN=\"$ZFB_HOME/crates/zfb/binaries/esbuild/esbuild\" ZFB_TAILWIND_BIN=\"$ZFB_HOME/crates/zfb/binaries/tailwindcss-v4\" zfb build",
     "devUrl": "http://localhost:4892/"
   },
   "app": {

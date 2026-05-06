@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Before-push comprehensive check script for CCResDoc.
-# Runs: cargo fmt --check, cargo clippy, cargo test, pnpm --filter app build
+# Runs: cargo fmt --check, cargo clippy, cargo test, zfb build (app/)
 # All steps run even if one fails; summary at end.
+# Invocation: bash scripts/run-b4push.sh  (no pnpm / Node required)
 
 START_TIME=$(date +%s)
 FAILURES=()
@@ -50,12 +51,21 @@ else
   fail "cargo test --workspace"
 fi
 
-# ── Step 4: pnpm --filter app build ─────────────
-step "Step 4/4: pnpm --filter app build"
-if (cd "$ROOT_DIR" && pnpm --filter app build); then
-  pass "pnpm --filter app build passed"
+# ── Step 4: zfb build (app/) ─────────────────────
+# zfb's TS config loader and CSS engine resolve esbuild + tailwindcss-v4 from
+# fixed staged-slot paths or env vars (not from the binary's embedded snapshot).
+# Until upstream zfb extracts these via include_dir at runtime, point at the
+# zfb source-tree binaries via env vars. ZFB_HOME defaults to the standard
+# myoss layout but can be overridden in the developer's shell.
+ZFB_HOME="${ZFB_HOME:-$HOME/repos/myoss/zfb}"
+step "Step 4/4: zfb build (app/)"
+if (cd "$ROOT_DIR/app" \
+      && ZFB_ESBUILD_BIN="$ZFB_HOME/crates/zfb/binaries/esbuild/esbuild" \
+         ZFB_TAILWIND_BIN="$ZFB_HOME/crates/zfb/binaries/tailwindcss-v4" \
+         zfb build); then
+  pass "zfb build passed"
 else
-  fail "pnpm --filter app build"
+  fail "zfb build (app/)"
 fi
 
 # ── Summary ─────────────────────────────────────
