@@ -13,4 +13,4 @@ Detailed architecture notes are in per-directory CLAUDE.md files — read these 
 
 - `crates/CLAUDE.md` — Rust workspace layout; what each crate owns
 - `src-tauri/CLAUDE.md` — Tauri wrapper architecture (embedded axum server, window lifecycle)
-- `app/CLAUDE.md` — zfb frontend project; local dependency setup; known zfb workarounds
+- `app/CLAUDE.md` — zfb frontend project; embedded package credits; known zfb workarounds
