@@ -1,0 +1,11 @@
+{
+  "framework": "preact",
+  "tailwind": {
+    "enabled": true
+  },
+  "plugins": [
+    {
+      "name": "./plugins/rename-shell.mjs"
+    }
+  ]
+}

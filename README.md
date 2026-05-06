@@ -10,9 +10,9 @@ End users need nothing beyond the `.app` bundle. To develop or build from source
 
 - **Rust** (stable) — `rustup install stable`
 - **Tauri CLI** — `cargo install tauri-cli` or `cargo binstall tauri-cli`
-- **zfb binary** — `cargo install --path $HOME/repos/myoss/zfb/crates/zfb` — `cargo install` downloads esbuild + tailwindcss-v4 standalone binaries to the zfb source tree
+- **zfb binary** — `cargo install --path $HOME/repos/myoss/zfb/crates/zfb`
 
-ccresdoc's build invocations (`tauri.conf.json` `beforeBuildCommand` and `scripts/run-b4push.sh`) point at those binaries via `ZFB_ESBUILD_BIN` and `ZFB_TAILWIND_BIN` env vars. This is a temporary workaround until zfb extracts those binaries from its `include_dir!` snapshot at runtime; once that lands upstream, the env-var prefixes can be dropped. See `app/CLAUDE.md` for the full list of known zfb feature gaps.
+The zfb binary embeds esbuild + tailwindcss-v4 standalone binaries via `include_dir!` and extracts them at runtime, so ccresdoc's build invocations don't need any env-var prefixes. See `app/CLAUDE.md` for the full list of known zfb feature gaps.
 
 ## Develop
 
@@ -23,12 +23,10 @@ cargo tauri dev
 `cargo tauri dev` starts the embedded server and opens the Tauri window pointing at `http://localhost:4892/`. Changes to `app/` require a manual rebuild to take effect in dev mode:
 
 ```
-ZFB_ESBUILD_BIN=$HOME/repos/myoss/zfb/crates/zfb/binaries/esbuild/esbuild \
-ZFB_TAILWIND_BIN=$HOME/repos/myoss/zfb/crates/zfb/binaries/tailwindcss-v4 \
-  zfb build --cwd app
+zfb build --cwd app
 ```
 
-(or just run `bash scripts/run-b4push.sh` which sets the env vars itself.)
+(or just run `bash scripts/run-b4push.sh`.)
 
 ## Build the .app
 
@@ -36,7 +34,7 @@ ZFB_TAILWIND_BIN=$HOME/repos/myoss/zfb/crates/zfb/binaries/tailwindcss-v4 \
 cargo tauri build
 ```
 
-This runs the env-var-prefixed `zfb build` automatically (via `beforeBuildCommand` in `src-tauri/tauri.conf.json`), then compiles and bundles the Tauri app. The output is at `src-tauri/target/release/bundle/macos/CCResDoc.app`.
+This runs `zfb build` automatically (via `beforeBuildCommand` in `src-tauri/tauri.conf.json`), then compiles and bundles the Tauri app. The output is at `src-tauri/target/release/bundle/macos/CCResDoc.app`.
 
 ## Project structure
 

@@ -454,8 +454,8 @@ mod tests {
         );
     }
 
-    /// beforeBuildCommand must run `pnpm --filter app build` so `cargo tauri build`
-    /// compiles the frontend before bundling.
+    /// beforeBuildCommand must run `zfb build` from the `app/` directory so
+    /// `cargo tauri build` compiles the frontend before bundling.
     #[test]
     fn tauri_conf_before_build_command_builds_app() {
         let conf = read_tauri_conf();
@@ -463,8 +463,8 @@ mod tests {
             .as_str()
             .expect("beforeBuildCommand must be a string");
         assert!(
-            cmd.contains("pnpm") && cmd.contains("app") && cmd.contains("build"),
-            "beforeBuildCommand '{cmd}' should run pnpm --filter app build"
+            cmd.contains("../app") && cmd.contains("zfb build"),
+            "beforeBuildCommand '{cmd}' should run zfb build from ../app"
         );
     }
 
