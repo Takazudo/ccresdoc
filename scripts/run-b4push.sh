@@ -52,8 +52,17 @@ else
 fi
 
 # ── Step 4: zfb build (app/) ─────────────────────
+# zfb's TS config loader and CSS engine resolve esbuild + tailwindcss-v4 from
+# fixed staged-slot paths or env vars (not from the binary's embedded snapshot).
+# Until upstream zfb extracts these via include_dir at runtime, point at the
+# zfb source-tree binaries via env vars. ZFB_HOME defaults to the standard
+# myoss layout but can be overridden in the developer's shell.
+ZFB_HOME="${ZFB_HOME:-$HOME/repos/myoss/zfb}"
 step "Step 4/4: zfb build (app/)"
-if (cd "$ROOT_DIR/app" && zfb build); then
+if (cd "$ROOT_DIR/app" \
+      && ZFB_ESBUILD_BIN="$ZFB_HOME/crates/zfb/binaries/esbuild/esbuild" \
+         ZFB_TAILWIND_BIN="$ZFB_HOME/crates/zfb/binaries/tailwindcss-v4" \
+         zfb build); then
   pass "zfb build passed"
 else
   fail "zfb build (app/)"
