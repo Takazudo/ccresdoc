@@ -16,7 +16,6 @@
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
     "verbatimModuleSyntax": false,
-    "types": ["node"],
     "noEmit": true
   },
   "include": [
