@@ -14,8 +14,7 @@ None. Always builds the single Tauri target defined in `src-tauri/tauri.conf.jso
 ## Prerequisites
 
 - macOS arm64
-- `zfb` Rust binary in PATH: `cargo install --path $HOME/repos/myoss/zfb/crates/zfb` (one-time)
-- `pnpm install` resolves the cross-repo `link:` deps (zfb at `$HOME/repos/myoss/zfb`)
+- `zfb` Rust binary in PATH: `cargo install --path $HOME/repos/myoss/zfb/crates/zfb` (one-time; auto-downloads esbuild + tailwind binaries)
 - The user is in the `admin` group (default on personal Macs) — `/Applications/` write needs no sudo
 
 ## Workflow
@@ -30,7 +29,7 @@ cargo clean -p ccresdoc
 
 ### Step 2: Build app/ (zfb static shell) + .app bundle
 
-`cargo tauri build` runs `pnpm --filter app build` automatically (via `beforeBuildCommand`). Produces both `.app` and `.dmg` bundles under `target/release/bundle/`.
+`cargo tauri build` runs `cd ../app && zfb build` automatically (via `beforeBuildCommand`). Produces both `.app` and `.dmg` bundles under `target/release/bundle/`.
 
 ```bash
 cargo tauri build
@@ -54,7 +53,7 @@ Note: Tauri encodes the `bundle.resources` parent-dir traversal (`../app/dist/**
 If verification fails, the build is stale or zfb didn't run. Inspect:
 
 ```bash
-pnpm --filter app build   # re-run zfb manually
+cd app && zfb build   # re-run zfb manually
 ```
 
 Then go back to Step 1.

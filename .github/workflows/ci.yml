@@ -40,8 +40,11 @@ jobs:
       - name: cargo test --workspace --exclude ccresdoc
         run: cargo test --workspace --exclude ccresdoc
 
-# NOTE: App build deferred from CI.
+# NOTE: `zfb build` (app/ frontend) is deferred from CI (v1).
 #
-# Locally exercised via `bash scripts/run-b4push.sh` and `cargo tauri build`.
-# Re-enable on CI once zfb is published to crates.io and the GitHub runner
-# can `cargo install zfb`.
+# The app build requires the `zfb` Rust binary in PATH — built from
+# $HOME/repos/myoss/zfb, which is a separate private repo not available
+# on CI runners. The Rust checks (fmt + clippy + test) cover the core
+# library code. The app build is verified locally via `bash scripts/run-b4push.sh`
+# before every push, and is exercised end-to-end by `cargo tauri build`
+# before each release. Re-enable once zfb is published to crates.io.

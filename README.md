@@ -10,19 +10,15 @@ End users need nothing beyond the `.app` bundle. To develop or build from source
 
 - **Rust** (stable) — `rustup install stable`
 - **Tauri CLI** — `cargo install tauri-cli` or `cargo binstall tauri-cli`
-- **pnpm** — `npm install -g pnpm`
-- **Node.js** (LTS) — for running `pnpm install` and the zfb build
-- **zfb binary** — `cd $HOME/repos/myoss/zfb && cargo install --path crates/zfb`
-- The `zfb` local package links assume the zfb repo lives at `$HOME/repos/myoss/zfb`
+- **zfb binary** — `cargo install --path $HOME/repos/myoss/zfb/crates/zfb` — auto-downloads esbuild + tailwind binaries at install time; no Node.js or pnpm required
 
 ## Develop
 
 ```
-pnpm install
 cargo tauri dev
 ```
 
-`cargo tauri dev` starts the embedded server and opens the Tauri window pointing at `http://localhost:4892/`. Changes to `app/` require a manual `pnpm --filter app build` to take effect in dev mode.
+`cargo tauri dev` starts the embedded server and opens the Tauri window pointing at `http://localhost:4892/`. Changes to `app/` require a manual `cd app && zfb build` to take effect in dev mode.
 
 ## Build the .app
 
@@ -30,7 +26,7 @@ cargo tauri dev
 cargo tauri build
 ```
 
-This runs `pnpm --filter app build` automatically (via `beforeBuildCommand`), then compiles and bundles the Tauri app. The output is at `src-tauri/target/release/bundle/macos/CCResDoc.app`.
+This runs `cd ../app && zfb build` automatically (via `beforeBuildCommand`), then compiles and bundles the Tauri app. The output is at `src-tauri/target/release/bundle/macos/CCResDoc.app`.
 
 ## Project structure
 
@@ -46,12 +42,12 @@ See per-directory CLAUDE.md files for detailed architecture notes.
 
 ## CI
 
-GitHub Actions runs `cargo fmt --check`, `cargo clippy --workspace --all-targets`, and `cargo test --workspace` on every push and PR. The `pnpm --filter app build` step is run locally (via `pnpm b4push`) but deferred from CI until zfb is published to npm — see `.github/workflows/ci.yml` for the rationale.
+GitHub Actions runs `cargo fmt --check`, `cargo clippy --workspace --all-targets`, and `cargo test --workspace` on every push and PR. The `zfb build` step is run locally (via `scripts/run-b4push.sh`) but deferred from CI — see `.github/workflows/ci.yml` for the rationale.
 
 ## Before pushing
 
 ```
-pnpm b4push
+bash scripts/run-b4push.sh
 ```
 
 Runs all four checks locally: cargo fmt, clippy, test, and the app build.
