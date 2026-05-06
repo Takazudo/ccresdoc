@@ -4,7 +4,7 @@
   "identifier": "com.takazudo.ccresdoc",
   "build": {
     "frontendDist": "./frontend",
-    "beforeBuildCommand": "pnpm --filter app build",
+    "beforeBuildCommand": "cd ../app && zfb build",
     "devUrl": "http://localhost:4892/"
   },
   "app": {
