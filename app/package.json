@@ -10,12 +10,8 @@
     "preview": "zfb preview",
     "zfb": "zfb"
   },
-  "dependencies": {
-    "preact": "^10.22.0",
-    "preact-render-to-string": "^6.5.0"
-  },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "preact": "^10.22.0",
     "typescript": "^5.6.0"
   }
 }
