@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Before-push comprehensive check script for CCResDoc.
-# Runs: cargo fmt --check, cargo clippy, cargo test, pnpm --filter app build
+# Runs: cargo fmt --check, cargo clippy, cargo test, zfb build (app/)
 # All steps run even if one fails; summary at end.
+# Invocation: bash scripts/run-b4push.sh  (no pnpm / Node required)
 
 START_TIME=$(date +%s)
 FAILURES=()
@@ -50,12 +51,12 @@ else
   fail "cargo test --workspace"
 fi
 
-# ── Step 4: pnpm --filter app build ─────────────
-step "Step 4/4: pnpm --filter app build"
-if (cd "$ROOT_DIR" && pnpm --filter app build); then
-  pass "pnpm --filter app build passed"
+# ── Step 4: zfb build (app/) ─────────────────────
+step "Step 4/4: zfb build (app/)"
+if (cd "$ROOT_DIR/app" && zfb build); then
+  pass "zfb build passed"
 else
-  fail "pnpm --filter app build"
+  fail "zfb build (app/)"
 fi
 
 # ── Summary ─────────────────────────────────────
