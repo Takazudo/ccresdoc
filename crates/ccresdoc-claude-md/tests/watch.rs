@@ -46,7 +46,11 @@ fn watcher_regenerates_on_add_edit_remove() {
 
     // Seed with one command so the dirs exist before watching.
     write(&claude, "CLAUDE.md", "root");
-    write(&claude, "commands/first.md", "---\ndescription: first\n---\nbody");
+    write(
+        &claude,
+        "commands/first.md",
+        "---\ndescription: first\n---\nbody",
+    );
 
     let (tx, rx) = mpsc::channel::<WatchEvent>();
     let handle = watch(
@@ -60,7 +64,11 @@ fn watcher_regenerates_on_add_edit_remove() {
     .expect("watch failed to start");
 
     // --- ADD a command ---
-    write(&claude, "commands/second.md", "---\ndescription: second\n---\nbody");
+    write(
+        &claude,
+        "commands/second.md",
+        "---\ndescription: second\n---\nbody",
+    );
     let count = wait_regen(&rx, Duration::from_secs(10));
     assert_eq!(count, 2, "after add, expected 2 commands");
     assert!(docs.join("claude-commands/second.mdx").exists());

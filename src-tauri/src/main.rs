@@ -106,7 +106,12 @@ fn docs_url() -> String {
 
 /// The log path resolved in setup(), read out of shared state.
 fn log_path(app_handle: &AppHandle) -> String {
-    app_handle.state::<AppState>().log_path.lock().unwrap().clone()
+    app_handle
+        .state::<AppState>()
+        .log_path
+        .lock()
+        .unwrap()
+        .clone()
 }
 
 /// Navigate the main window to the doc site. Parse errors are impossible for
@@ -295,7 +300,10 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
             {
                 use std::os::unix::fs::PermissionsExt;
                 if let Ok(meta) = fs::metadata(&from) {
-                    let _ = fs::set_permissions(&to, fs::Permissions::from_mode(meta.permissions().mode()));
+                    let _ = fs::set_permissions(
+                        &to,
+                        fs::Permissions::from_mode(meta.permissions().mode()),
+                    );
                 }
             }
         }
@@ -312,8 +320,13 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// Node-shebang wrapper — running the wrapper would require Node at runtime,
 /// defeating the node-free goal.
 fn resolve_zfb_binary(workspace: &Path) -> Result<PathBuf, String> {
-    let pkg = zfb_platform_package()
-        .ok_or_else(|| format!("unsupported platform: {}-{}", env::consts::OS, env::consts::ARCH))?;
+    let pkg = zfb_platform_package().ok_or_else(|| {
+        format!(
+            "unsupported platform: {}-{}",
+            env::consts::OS,
+            env::consts::ARCH
+        )
+    })?;
     let bin = workspace
         .join("node_modules")
         .join(pkg)
@@ -331,11 +344,7 @@ fn resolve_zfb_binary(workspace: &Path) -> Result<PathBuf, String> {
 
 /// Spawn `zfb dev --port 4892` with cwd = the writable workspace, in its own
 /// process group so the whole tree dies on window close (no orphan on 4892).
-fn spawn_zfb_dev(
-    zfb_bin: &Path,
-    workspace: &Path,
-    log_path: &str,
-) -> Result<Sidecar, String> {
+fn spawn_zfb_dev(zfb_bin: &Path, workspace: &Path, log_path: &str) -> Result<Sidecar, String> {
     log_to(
         log_path,
         &format!(
@@ -412,7 +421,10 @@ fn kill_port(log_path: &str) {
         return;
     }
     for pid in &pids {
-        log_to(log_path, &format!("kill_port: SIGTERM stale pid {pid} on :{PORT}"));
+        log_to(
+            log_path,
+            &format!("kill_port: SIGTERM stale pid {pid} on :{PORT}"),
+        );
         #[cfg(unix)]
         unsafe {
             libc::kill(*pid, libc::SIGTERM);
@@ -422,7 +434,10 @@ fn kill_port(log_path: &str) {
 
     let stragglers = pids_on_port();
     for pid in &stragglers {
-        log_to(log_path, &format!("kill_port: SIGKILL straggler pid {pid} on :{PORT}"));
+        log_to(
+            log_path,
+            &format!("kill_port: SIGKILL straggler pid {pid} on :{PORT}"),
+        );
         #[cfg(unix)]
         unsafe {
             libc::kill(*pid, libc::SIGKILL);
@@ -440,19 +455,14 @@ enum ReadyResult {
     Ready,
     Timeout,
     /// The sidecar exited before becoming ready — short-circuit the wait.
-    SidecarExited { code: Option<i32> },
+    SidecarExited {
+        code: Option<i32>,
+    },
 }
 
 fn curl_root() -> String {
     Command::new("/usr/bin/curl")
-        .args([
-            "-s",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            &docs_url(),
-        ])
+        .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", &docs_url()])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|_| "err".to_string())
@@ -488,7 +498,10 @@ fn wait_for_ready(
         }
 
         let code = curl_root();
-        log_to(log_path, &format!("curl /: {code} ({}s)", start.elapsed().as_secs()));
+        log_to(
+            log_path,
+            &format!("curl /: {code} ({}s)", start.elapsed().as_secs()),
+        );
         if code == "200" {
             log_to(log_path, "wait_for_ready: ready");
             return ReadyResult::Ready;
@@ -557,7 +570,10 @@ fn launch(app_handle: &AppHandle) {
     let workspace = match resolve_workspace(app_handle, &log_path) {
         Ok(w) => w.path().to_path_buf(),
         Err(e) => {
-            log_to(&log_path, &format!("launch: workspace resolution failed: {e}"));
+            log_to(
+                &log_path,
+                &format!("launch: workspace resolution failed: {e}"),
+            );
             emit_launch_error_str(app_handle, "workspace_unavailable");
             return;
         }
@@ -576,7 +592,10 @@ fn launch(app_handle: &AppHandle) {
     // 3. Resolve absolute ~/.claude (missing → error UI).
     let claude = claude_dir();
     if !claude.exists() {
-        log_to(&log_path, &format!("launch: ~/.claude missing at {}", claude.display()));
+        log_to(
+            &log_path,
+            &format!("launch: ~/.claude missing at {}", claude.display()),
+        );
         emit_launch_error_str(app_handle, "claude_dir_missing");
         return;
     }
@@ -609,7 +628,12 @@ fn launch(app_handle: &AppHandle) {
     // watcher FIRST (before constructing the new one) so two watchers never
     // run concurrently on ~/.claude.
     {
-        let _ = app_handle.state::<AppState>().watch_handle.lock().unwrap().take();
+        let _ = app_handle
+            .state::<AppState>()
+            .watch_handle
+            .lock()
+            .unwrap()
+            .take();
         let watch_log = log_path.clone();
         match ccresdoc_claude_md::watch(gen_config, DEFAULT_DEBOUNCE, move |event| match event {
             WatchEvent::Regenerated(report) => log_to(
@@ -629,7 +653,10 @@ fn launch(app_handle: &AppHandle) {
             Err(e) => {
                 // Non-fatal: one-shot content is already on disk, so the site
                 // still serves; only live updates are lost.
-                log_to(&log_path, &format!("launch: watch failed (continuing without live updates): {e}"));
+                log_to(
+                    &log_path,
+                    &format!("launch: watch failed (continuing without live updates): {e}"),
+                );
             }
         }
     }
@@ -659,8 +686,16 @@ fn launch(app_handle: &AppHandle) {
     let result = wait_for_ready(READY_TIMEOUT, &sidecar_arc, &log_path);
 
     // 7. Skip navigate/emit if a newer launch superseded this one.
-    if app_handle.state::<AppState>().launch_gen.load(Ordering::SeqCst) != my_gen {
-        log_to(&log_path, "launch: superseded by a newer launch — skipping navigate/emit");
+    if app_handle
+        .state::<AppState>()
+        .launch_gen
+        .load(Ordering::SeqCst)
+        != my_gen
+    {
+        log_to(
+            &log_path,
+            "launch: superseded by a newer launch — skipping navigate/emit",
+        );
         return;
     }
 
@@ -686,7 +721,10 @@ fn apply_zoom(app_handle: &AppHandle, level: f64) {
 /// re-spawns) in both dev and prod — the host owns `zfb dev` in both modes.
 #[tauri::command]
 fn retry_launch(app_handle: AppHandle) {
-    log_to(&log_path(&app_handle), "retry_launch: invoked from frontend");
+    log_to(
+        &log_path(&app_handle),
+        "retry_launch: invoked from frontend",
+    );
     thread::spawn(move || launch(&app_handle));
 }
 
@@ -720,7 +758,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![retry_launch])
         .setup(move |app| {
             // Resolve the log path under the app-data dir (always writable).
-            let app_data = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("/tmp"));
+            let app_data = app
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| PathBuf::from("/tmp"));
             let _ = fs::create_dir_all(&app_data);
             let log_path = app_data.join("ccresdoc.log").to_string_lossy().into_owned();
             {
@@ -838,7 +879,12 @@ fn main() {
                 let log_path = log_path(app_handle);
                 // Stop the watcher and kill the sidecar process group so
                 // nothing is left holding port 4892.
-                let _ = app_handle.state::<AppState>().watch_handle.lock().unwrap().take();
+                let _ = app_handle
+                    .state::<AppState>()
+                    .watch_handle
+                    .lock()
+                    .unwrap()
+                    .take();
                 if let Ok(mut g) = sidecar_for_exit.lock() {
                     if let Some(mut s) = g.take() {
                         kill_sidecar(&mut s, &log_path);
@@ -877,7 +923,10 @@ mod tests {
     fn claude_dir_is_absolute_and_not_home() {
         let c = claude_dir();
         assert!(c.is_absolute(), "claude_dir must be absolute");
-        assert!(c.ends_with(".claude"), "claude_dir must end with .claude, not be $HOME");
+        assert!(
+            c.ends_with(".claude"),
+            "claude_dir must end with .claude, not be $HOME"
+        );
     }
 
     #[test]
@@ -917,7 +966,10 @@ mod tests {
         let external: tauri::Url = "https://example.com/".parse().unwrap();
         assert!(allow_navigation(&ok));
         assert!(allow_navigation(&loop_ok));
-        assert!(!allow_navigation(&external), "external links must open in OS browser");
+        assert!(
+            !allow_navigation(&external),
+            "external links must open in OS browser"
+        );
     }
 
     // ── tauri.conf.json assertions ──────────────────
@@ -925,8 +977,14 @@ mod tests {
     #[test]
     fn tauri_conf_devurl_points_to_port_4892_root() {
         let conf = read_tauri_conf();
-        let dev_url = conf["build"]["devUrl"].as_str().expect("devUrl must be a string");
-        assert_eq!(dev_url, docs_url(), "devUrl should equal http://localhost:{PORT}/");
+        let dev_url = conf["build"]["devUrl"]
+            .as_str()
+            .expect("devUrl must be a string");
+        assert_eq!(
+            dev_url,
+            docs_url(),
+            "devUrl should equal http://localhost:{PORT}/"
+        );
     }
 
     #[test]
@@ -950,7 +1008,9 @@ mod tests {
     #[test]
     fn tauri_conf_has_real_icon() {
         let conf = read_tauri_conf();
-        let icons = conf["bundle"]["icon"].as_array().expect("bundle.icon must be an array");
+        let icons = conf["bundle"]["icon"]
+            .as_array()
+            .expect("bundle.icon must be an array");
         assert!(!icons.is_empty(), "bundle.icon must be populated (was [])");
     }
 
@@ -967,7 +1027,10 @@ mod tests {
                 .any(|v| v.as_str().map(|s| s.contains("app/")).unwrap_or(false)),
             _ => false,
         };
-        assert!(bundles_app, "bundle.resources should include ../app/**, got: {resources}");
+        assert!(
+            bundles_app,
+            "bundle.resources should include ../app/**, got: {resources}"
+        );
     }
 
     #[test]

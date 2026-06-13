@@ -129,7 +129,11 @@ fn skills_emit_page_tree_and_subpages() {
         "skills/my-skill/scripts/run.md",
         "# Run Script\n\nScript body.",
     );
-    write(&claude, "skills/my-skill/scripts/run.sh", "#!/bin/sh\necho hi");
+    write(
+        &claude,
+        "skills/my-skill/scripts/run.sh",
+        "#!/bin/sh\necho hi",
+    );
 
     let report = generate(&config_for(&claude, &docs)).unwrap();
     assert_eq!(report.skills, 1);
@@ -160,7 +164,9 @@ fn skills_emit_page_tree_and_subpages() {
     assert!(script_page.contains("Script body."));
 
     // No sub-page for the binary script.
-    assert!(!docs.join("claude-skills/my-skill--script-run.sh.mdx").exists());
+    assert!(!docs
+        .join("claude-skills/my-skill--script-run.sh.mdx")
+        .exists());
 
     let idx = read(&docs.join("claude-skills/index.mdx"));
     assert!(idx.contains("sidebar_position: 902"));
@@ -190,7 +196,11 @@ fn skill_without_frontmatter_is_skipped() {
     let tmp = tempfile::TempDir::new().unwrap();
     let claude = tmp.path().join("dot-claude");
     let docs = tmp.path().join("docs");
-    write(&claude, "skills/no-fm/SKILL.md", "Just a body, no frontmatter.");
+    write(
+        &claude,
+        "skills/no-fm/SKILL.md",
+        "Just a body, no frontmatter.",
+    );
     write(
         &claude,
         "skills/has-fm/SKILL.md",
@@ -198,7 +208,10 @@ fn skill_without_frontmatter_is_skipped() {
     );
 
     let report = generate(&config_for(&claude, &docs)).unwrap();
-    assert_eq!(report.skills, 1, "skill lacking frontmatter must be skipped");
+    assert_eq!(
+        report.skills, 1,
+        "skill lacking frontmatter must be skipped"
+    );
     assert!(docs.join("claude-skills/has-fm.mdx").exists());
     assert!(!docs.join("claude-skills/no-fm.mdx").exists());
 }
@@ -297,7 +310,11 @@ fn walk_is_scoped_to_claude_dir_not_parent() {
 
     // OUTSIDE ~/.claude (a sibling project under the fake home) — must NOT be
     // walked, because project_root is scoped to ~/.claude.
-    write(fake_home, "other-project/CLAUDE.md", "OUTSIDE — must not appear");
+    write(
+        fake_home,
+        "other-project/CLAUDE.md",
+        "OUTSIDE — must not appear",
+    );
     write(fake_home, "CLAUDE.md", "HOME-level — must not appear");
 
     let report = generate(&config_for(&claude, &docs)).unwrap();
@@ -380,8 +397,16 @@ fn regeneration_removes_stale_command_files() {
     let tmp = tempfile::TempDir::new().unwrap();
     let claude = tmp.path().join("dot-claude");
     let docs = tmp.path().join("docs");
-    write(&claude, "commands/keep.md", "---\ndescription: k\n---\nbody");
-    write(&claude, "commands/remove-me.md", "---\ndescription: r\n---\nbody");
+    write(
+        &claude,
+        "commands/keep.md",
+        "---\ndescription: k\n---\nbody",
+    );
+    write(
+        &claude,
+        "commands/remove-me.md",
+        "---\ndescription: r\n---\nbody",
+    );
 
     generate(&config_for(&claude, &docs)).unwrap();
     assert!(docs.join("claude-commands/remove-me.mdx").exists());

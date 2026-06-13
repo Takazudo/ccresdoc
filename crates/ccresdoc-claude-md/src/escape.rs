@@ -14,13 +14,78 @@ fn html_tags() -> &'static HashSet<&'static str> {
     static TAGS: OnceLock<HashSet<&'static str>> = OnceLock::new();
     TAGS.get_or_init(|| {
         [
-            "div", "span", "p", "a", "img", "br", "hr", "ul", "ol", "li", "h1", "h2", "h3", "h4",
-            "h5", "h6", "code", "pre", "blockquote", "table", "tr", "td", "th", "thead", "tbody",
-            "tfoot", "colgroup", "col", "strong", "em", "b", "i", "u", "s", "del", "ins", "sub",
-            "sup", "details", "summary", "figure", "figcaption", "mark", "small", "cite", "q",
-            "abbr", "dfn", "time", "var", "samp", "kbd", "section", "article", "aside", "header",
-            "footer", "nav", "main", "form", "input", "button", "select", "option", "textarea",
-            "label", "fieldset", "legend", "dl", "dt", "dd", "caption",
+            "div",
+            "span",
+            "p",
+            "a",
+            "img",
+            "br",
+            "hr",
+            "ul",
+            "ol",
+            "li",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "code",
+            "pre",
+            "blockquote",
+            "table",
+            "tr",
+            "td",
+            "th",
+            "thead",
+            "tbody",
+            "tfoot",
+            "colgroup",
+            "col",
+            "strong",
+            "em",
+            "b",
+            "i",
+            "u",
+            "s",
+            "del",
+            "ins",
+            "sub",
+            "sup",
+            "details",
+            "summary",
+            "figure",
+            "figcaption",
+            "mark",
+            "small",
+            "cite",
+            "q",
+            "abbr",
+            "dfn",
+            "time",
+            "var",
+            "samp",
+            "kbd",
+            "section",
+            "article",
+            "aside",
+            "header",
+            "footer",
+            "nav",
+            "main",
+            "form",
+            "input",
+            "button",
+            "select",
+            "option",
+            "textarea",
+            "label",
+            "fieldset",
+            "legend",
+            "dl",
+            "dt",
+            "dd",
+            "caption",
         ]
         .into_iter()
         .collect()
@@ -169,7 +234,10 @@ enum Segment<'a> {
     Text(&'a str),
     /// `idx` is the parsed placeholder index; `raw` is the full matched
     /// placeholder slice, used as a fallback when `idx` is out of range.
-    Placeholder { idx: usize, raw: &'a str },
+    Placeholder {
+        idx: usize,
+        raw: &'a str,
+    },
 }
 
 /// Split `s` into alternating text / placeholder segments. A placeholder has
@@ -246,8 +314,7 @@ fn extract_inline_code(part: &str) -> (String, Vec<String>) {
             // length L in 1..=3 such that the char at i+L is NOT a backtick.
             let run = backtick_run_len(bytes, i);
             if let Some(open) = greedy_opener_len(bytes, i, run) {
-                if let Some((content_end, close_end)) = find_inline_close(part, i + open, open)
-                {
+                if let Some((content_end, close_end)) = find_inline_close(part, i + open, open) {
                     // The JS body group requires at least one char
                     // (`[\s\S]*?[^`]`), so an empty body does NOT match.
                     if content_end > i + open {

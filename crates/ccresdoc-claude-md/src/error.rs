@@ -10,7 +10,9 @@ pub enum GenerateError {
     /// `project_root` resolved to the user's home directory. The CLAUDE.md walk
     /// MUST stay scoped to `~/.claude` (zudolab/zudo-doc#2115) so it never
     /// crawls all of `$HOME`.
-    #[error("project_root is too broad: {0:?}. Pass a specific directory such as ~/.claude, not $HOME.")]
+    #[error(
+        "project_root is too broad: {0:?}. Pass a specific directory such as ~/.claude, not $HOME."
+    )]
     ProjectRootTooBroad(PathBuf),
 
     /// A `Config` field is malformed (e.g. a non-absolute path). Distinct from

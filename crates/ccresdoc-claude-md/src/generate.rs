@@ -99,12 +99,7 @@ fn write_category_index(
 }
 
 /// Write an unlisted sub-page MDX file (flat file with a custom nested slug).
-fn write_unlisted_sub_page(
-    output_path: &Path,
-    title: &str,
-    slug: &str,
-    body: &str,
-) -> Result<()> {
+fn write_unlisted_sub_page(output_path: &Path, title: &str, slug: &str, body: &str) -> Result<()> {
     let mdx = format!(
         "---\ntitle: \"{}\"\nslug: \"{}\"\nunlisted: true\ngenerated: true\n---\n\n{}\n",
         escape_title(title),
@@ -128,10 +123,7 @@ fn claude_md_output_name(slug: &str) -> String {
     }
 }
 
-fn generate_claudemd_docs(
-    items: &[ClaudeMdItem],
-    docs_dir: &Path,
-) -> Result<usize> {
+fn generate_claudemd_docs(items: &[ClaudeMdItem], docs_dir: &Path) -> Result<usize> {
     let output_dir = docs_dir.join("claude-md");
     clean_dir(&output_dir)?;
 
@@ -177,7 +169,12 @@ fn generate_claudemd_docs(
         write_file(&output_dir.join(format!("{out_name}.mdx")), &mdx)?;
     }
 
-    write_category_index(&output_dir, "CLAUDE.md", 900, "Project-specific instructions")?;
+    write_category_index(
+        &output_dir,
+        "CLAUDE.md",
+        900,
+        "Project-specific instructions",
+    )?;
     Ok(items.len())
 }
 
@@ -237,7 +234,11 @@ fn render_skill_file_tree(skill_dir: &str, sub_dirs: &[(&str, Vec<String>)]) -> 
         let continuation = if is_last { "    " } else { "│   " };
         for (j, child) in children.iter().enumerate() {
             let child_is_last = j == children.len() - 1;
-            let child_prefix = if child_is_last { "└── " } else { "├── " };
+            let child_prefix = if child_is_last {
+                "└── "
+            } else {
+                "├── "
+            };
             lines.push(format!("{continuation}{child_prefix}{child}"));
         }
         idx += 1;
@@ -267,36 +268,47 @@ fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
             .iter()
             .filter(|f| f.is_markdown)
             .collect();
-        let asset_md: Vec<&_> = skill
-            .asset_files
-            .iter()
-            .filter(|f| f.is_markdown)
-            .collect();
+        let asset_md: Vec<&_> = skill.asset_files.iter().filter(|f| f.is_markdown).collect();
 
         // File tree (lists ALL sub-files, markdown and binary).
         let mut sub_dirs: Vec<(&str, Vec<String>)> = Vec::new();
         if !skill.script_files.is_empty() {
             sub_dirs.push((
                 "scripts",
-                skill.script_files.iter().map(|f| f.filename.clone()).collect(),
+                skill
+                    .script_files
+                    .iter()
+                    .map(|f| f.filename.clone())
+                    .collect(),
             ));
         }
         if !skill.references.is_empty() {
             sub_dirs.push((
                 "references",
-                skill.references.iter().map(|r| format!("{}.md", r.name)).collect(),
+                skill
+                    .references
+                    .iter()
+                    .map(|r| format!("{}.md", r.name))
+                    .collect(),
             ));
         }
         if !skill.asset_files.is_empty() {
             sub_dirs.push((
                 "assets",
-                skill.asset_files.iter().map(|f| f.filename.clone()).collect(),
+                skill
+                    .asset_files
+                    .iter()
+                    .map(|f| f.filename.clone())
+                    .collect(),
             ));
         }
 
         let mut file_structure_section = String::new();
         if !sub_dirs.is_empty() {
-            let tree = format!("```\n{}\n```", render_skill_file_tree(&skill.dir, &sub_dirs));
+            let tree = format!(
+                "```\n{}\n```",
+                render_skill_file_tree(&skill.dir, &sub_dirs)
+            );
 
             let mut links: Vec<String> = Vec::new();
             for r in &skill.references {
@@ -515,8 +527,7 @@ fn generate_overview_index(docs_dir: &Path, kinds: ResourceItemKinds) -> Result<
 pub(crate) fn run(config: &Config) -> Result<GenerateReport> {
     config.validate()?;
 
-    let tree =
-        walk::walk_claude_dir(&config.claude_dir, &config.project_root, &config.docs_dir)?;
+    let tree = walk::walk_claude_dir(&config.claude_dir, &config.project_root, &config.docs_dir)?;
 
     let docs_dir = &config.docs_dir;
     ensure_dir(docs_dir)?;

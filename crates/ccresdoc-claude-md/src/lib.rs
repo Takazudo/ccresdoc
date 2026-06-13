@@ -134,7 +134,9 @@ impl Config {
                 .unwrap_or_else(|_| self.project_root.clone());
             let home_canon = home.canonicalize().unwrap_or(home);
             if pr == home_canon {
-                return Err(GenerateError::ProjectRootTooBroad(self.project_root.clone()));
+                return Err(GenerateError::ProjectRootTooBroad(
+                    self.project_root.clone(),
+                ));
             }
         }
         Ok(())

@@ -456,9 +456,7 @@ fn collect_skills(skills_dir: &Path) -> Result<Vec<SkillItem>> {
         // generator's intent: a SKILL.md without a frontmatter block is skipped
         // because skills are expected to carry name/description frontmatter.
         if !has_frontmatter {
-            log::warn!(
-                "skipping skill {dir_name}: SKILL.md has no frontmatter block"
-            );
+            log::warn!("skipping skill {dir_name}: SKILL.md has no frontmatter block");
             continue;
         }
 
