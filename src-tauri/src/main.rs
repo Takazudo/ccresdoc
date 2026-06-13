@@ -374,6 +374,34 @@ fn spawn_zfb_dev(zfb_bin: &Path, workspace: &Path, log_path: &str) -> Result<Sid
     Ok(Sidecar { child })
 }
 
+/// Tear down the live sidecar + watcher: drop the `WatchHandle` (stops the
+/// watcher) and SIGTERM→SIGKILL the `zfb dev` process group so nothing is left
+/// holding port 4892.
+///
+/// This MUST run on every app-exit path, not just window close. An app-level
+/// Quit (Cmd+Q, Dock → Quit, `osascript 'tell application … to quit'`) can
+/// terminate the app WITHOUT reliably emitting `WindowEvent::Destroyed` first,
+/// which previously left `zfb dev` orphaned on 4892. So the run-event handler
+/// calls this from `WindowEvent::Destroyed` AND `ExitRequested` AND `Exit`.
+///
+/// It is idempotent: both the sidecar (`Option::take()` on the shared
+/// `Mutex<Option<Sidecar>>`) and the watcher (`Option::take()` on the
+/// `WatchHandle`) are taken out of shared state, so whichever exit event fires
+/// first does the work and any later call is a no-op.
+fn teardown(app_handle: &AppHandle, sidecar: &Arc<Mutex<Option<Sidecar>>>, log_path: &str) {
+    let _ = app_handle
+        .state::<AppState>()
+        .watch_handle
+        .lock()
+        .unwrap()
+        .take();
+    if let Ok(mut g) = sidecar.lock() {
+        if let Some(mut s) = g.take() {
+            kill_sidecar(&mut s, log_path);
+        }
+    }
+}
+
 fn kill_sidecar(sidecar: &mut Sidecar, log_path: &str) {
     let pid = sidecar.child.id();
     log_to(log_path, &format!("kill_sidecar: pid={pid}"));
@@ -871,26 +899,33 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |app_handle, event| {
-            if let tauri::RunEvent::WindowEvent {
-                event: tauri::WindowEvent::Destroyed,
-                ..
-            } = &event
-            {
-                let log_path = log_path(app_handle);
-                // Stop the watcher and kill the sidecar process group so
-                // nothing is left holding port 4892.
-                let _ = app_handle
-                    .state::<AppState>()
-                    .watch_handle
-                    .lock()
-                    .unwrap()
-                    .take();
-                if let Ok(mut g) = sidecar_for_exit.lock() {
-                    if let Some(mut s) = g.take() {
-                        kill_sidecar(&mut s, &log_path);
-                    }
+            // Tear down on EVERY exit path. Window close fires
+            // `WindowEvent::Destroyed`; an app-level Quit (Cmd+Q, Dock → Quit,
+            // `osascript` quit) fires `ExitRequested` (before exit) then `Exit`
+            // (last) but NOT necessarily `Destroyed` — handling all three (and
+            // relying on `teardown`'s take-once idempotency) guarantees the
+            // sidecar process group is killed exactly once regardless of which
+            // event the platform delivers, so nothing is orphaned on 4892.
+            let is_window_destroyed = matches!(
+                &event,
+                tauri::RunEvent::WindowEvent {
+                    event: tauri::WindowEvent::Destroyed,
+                    ..
                 }
-                app_handle.exit(0);
+            );
+            let is_app_exit = matches!(
+                &event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            );
+            if is_window_destroyed || is_app_exit {
+                let log_path = log_path(app_handle);
+                teardown(app_handle, &sidecar_for_exit, &log_path);
+                // Closing the last window keeps the event loop alive on macOS,
+                // so the window-close path explicitly exits; the app-quit paths
+                // (ExitRequested/Exit) are already exiting and must not re-enter.
+                if is_window_destroyed {
+                    app_handle.exit(0);
+                }
             }
         });
 }
@@ -1031,6 +1066,19 @@ mod tests {
             bundles_app,
             "bundle.resources should include ../app/**, got: {resources}"
         );
+    }
+
+    /// `Option::take()` on the shared sidecar state yields the value exactly
+    /// once; a second take is `None`. This is the take-once idempotency that
+    /// makes `teardown` safe to call from whichever exit event fires first
+    /// (Destroyed / ExitRequested / Exit) — the first wins, later calls no-op.
+    #[test]
+    fn shared_sidecar_take_is_once() {
+        let slot: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(Some(7)));
+        let first = slot.lock().unwrap().take();
+        let second = slot.lock().unwrap().take();
+        assert_eq!(first, Some(7), "first take yields the value");
+        assert_eq!(second, None, "second take is a no-op");
     }
 
     #[test]
