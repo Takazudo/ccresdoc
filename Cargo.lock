@@ -271,6 +271,7 @@ dependencies = [
 name = "ccresdoc"
 version = "0.1.0"
 dependencies = [
+ "ccresdoc-claude-md",
  "libc",
  "serde_json",
  "tauri",
