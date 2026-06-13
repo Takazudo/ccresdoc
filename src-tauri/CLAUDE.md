@@ -149,7 +149,12 @@ rejected by the WebView so they open in the OS browser.
 ## Anti-white-flash pattern
 
 The window opens with the bundled loading page first, then navigates once the
-site is ready. Avoids both a white flash and a visible URL-bar flicker.
+site is ready. Avoids both a white flash and a visible URL-bar flicker. The
+window is built with `WebviewUrl::App("index.html")` (the bundled `frontendDist`
+page) **explicitly** — NOT `WebviewUrl::default()`, which in dev resolves to
+`devUrl` (:4892) and would show connection-refused before `zfb dev` binds. The
+host owns `zfb dev` in both dev and prod, so the loading-page → readiness →
+navigate flow must run in both modes.
 
 ## What Wave 4 must wire
 

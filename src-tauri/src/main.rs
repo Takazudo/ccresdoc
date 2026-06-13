@@ -72,7 +72,6 @@ fn zfb_binary_name() -> &'static str {
 
 struct Sidecar {
     child: Child,
-    pid: u32,
 }
 
 struct AppState {
@@ -80,8 +79,7 @@ struct AppState {
     /// Kept alive for the process lifetime; dropping it stops the watcher.
     watch_handle: Mutex<Option<WatchHandle>>,
     zoom: Mutex<f64>,
-    /// Resolved once in setup(), then read by menu/retry handlers.
-    workspace_dir: Mutex<PathBuf>,
+    /// Filled in during setup() (app_data_dir/ccresdoc.log).
     log_path: Mutex<String>,
     /// Bumped at the start of every launch attempt (initial setup + each
     /// retry). A launch thread that finishes after a newer one began sees a
@@ -104,6 +102,22 @@ fn claude_dir() -> PathBuf {
 
 fn docs_url() -> String {
     format!("http://localhost:{PORT}{DOCS_PATH}")
+}
+
+/// The log path resolved in setup(), read out of shared state.
+fn log_path(app_handle: &AppHandle) -> String {
+    app_handle.state::<AppState>().log_path.lock().unwrap().clone()
+}
+
+/// Navigate the main window to the doc site. Parse errors are impossible for
+/// the constant `docs_url()`, so they are silently ignored. Shared by the
+/// launch-success path, the dev retry path, and the Refresh menu item.
+fn navigate_to_docs(app_handle: &AppHandle) {
+    if let Some(w) = app_handle.get_webview_window("main") {
+        if let Ok(url) = docs_url().parse::<tauri::Url>() {
+            let _ = w.navigate(url);
+        }
+    }
 }
 
 fn log_to(path: &str, msg: &str) {
@@ -347,16 +361,16 @@ fn spawn_zfb_dev(
         log_to(log_path, &format!("spawn_zfb_dev: spawn failed: {e}"));
         format!("failed to spawn zfb dev in {}: {e}", workspace.display())
     })?;
-    let pid = child.id();
-    log_to(log_path, &format!("spawn_zfb_dev: pid={pid}"));
-    Ok(Sidecar { child, pid })
+    log_to(log_path, &format!("spawn_zfb_dev: pid={}", child.id()));
+    Ok(Sidecar { child })
 }
 
 fn kill_sidecar(sidecar: &mut Sidecar, log_path: &str) {
-    log_to(log_path, &format!("kill_sidecar: pid={}", sidecar.pid));
+    let pid = sidecar.child.id();
+    log_to(log_path, &format!("kill_sidecar: pid={pid}"));
     #[cfg(unix)]
     {
-        if let Ok(pid) = i32::try_from(sidecar.pid) {
+        if let Ok(pid) = i32::try_from(pid) {
             // Negative PID → signal the whole process group.
             unsafe { libc::kill(-pid, libc::SIGTERM) };
         }
@@ -374,24 +388,48 @@ fn kill_sidecar(sidecar: &mut Sidecar, log_path: &str) {
 
 // ── Port cleanup ─────────────────────────────────
 
-fn kill_port(log_path: &str) {
-    if let Ok(output) = Command::new("/usr/bin/lsof")
+/// List PIDs currently holding :PORT (via `lsof -ti`).
+fn pids_on_port() -> Vec<i32> {
+    Command::new("/usr/bin/lsof")
         .args(["-ti", &format!(":{PORT}")])
         .output()
-    {
-        let pids = String::from_utf8_lossy(&output.stdout);
-        for line in pids.trim().lines() {
-            if let Ok(pid) = line.trim().parse::<i32>() {
-                log_to(log_path, &format!("kill_port: killing stale pid {pid} on :{PORT}"));
-                #[cfg(unix)]
-                unsafe {
-                    libc::kill(pid, libc::SIGTERM);
-                }
-            }
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter_map(|l| l.trim().parse::<i32>().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Free :PORT before spawning a fresh sidecar. SIGTERM first; if a holder is
+/// slow/deaf to it, escalate to SIGKILL so a stuck process can't make every
+/// subsequent spawn (and Retry) fail to bind. Mirrors `kill_sidecar`'s
+/// terminate-then-kill escalation.
+fn kill_port(log_path: &str) {
+    let pids = pids_on_port();
+    if pids.is_empty() {
+        return;
+    }
+    for pid in &pids {
+        log_to(log_path, &format!("kill_port: SIGTERM stale pid {pid} on :{PORT}"));
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(*pid, libc::SIGTERM);
         }
-        if !pids.trim().is_empty() {
-            thread::sleep(Duration::from_millis(500));
+    }
+    thread::sleep(Duration::from_millis(500));
+
+    let stragglers = pids_on_port();
+    for pid in &stragglers {
+        log_to(log_path, &format!("kill_port: SIGKILL straggler pid {pid} on :{PORT}"));
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(*pid, libc::SIGKILL);
         }
+    }
+    if !stragglers.is_empty() {
+        thread::sleep(Duration::from_millis(300));
     }
 }
 
@@ -464,11 +502,7 @@ fn wait_for_ready(
 // ── Error emission ────────────────────────────────
 
 fn emit_launch_error_str(app_handle: &AppHandle, reason: &str) {
-    let log_path = {
-        let state = app_handle.state::<AppState>();
-        let p = state.log_path.lock().unwrap().clone();
-        p
-    };
+    let log_path = log_path(app_handle);
     let payload = serde_json::json!({
         "reason": reason,
         "logPath": log_path,
@@ -488,12 +522,10 @@ fn emit_launch_error(app_handle: &AppHandle, result: &ReadyResult) {
         ReadyResult::Ready => return,
         ReadyResult::Timeout => "timeout",
         ReadyResult::SidecarExited { code } => {
-            let log_path = {
-                let state = app_handle.state::<AppState>();
-                let p = state.log_path.lock().unwrap().clone();
-                p
-            };
-            log_to(&log_path, &format!("emit_launch_error: zfb dev exit code = {code:?}"));
+            log_to(
+                &log_path(app_handle),
+                &format!("emit_launch_error: zfb dev exit code = {code:?}"),
+            );
             "sidecar_exited"
         }
     };
@@ -509,29 +541,21 @@ fn emit_launch_error(app_handle: &AppHandle, result: &ReadyResult) {
 /// `launch_gen` guards against a restart-race: a retry pressed mid-wait bumps
 /// the generation so the older launch thread skips its terminal navigate/emit.
 fn launch(app_handle: &AppHandle) {
-    let (log_path, sidecar_arc) = {
-        let state = app_handle.state::<AppState>();
-        let lp = state.log_path.lock().unwrap().clone();
-        let arc = state.sidecar.clone();
-        (lp, arc)
-    };
+    let log_path = log_path(app_handle);
+    let sidecar_arc = app_handle.state::<AppState>().sidecar.clone();
 
     // Claim a new generation; any in-flight launch is now stale.
-    let my_gen = {
-        let state = app_handle.state::<AppState>();
-        state.launch_gen.fetch_add(1, Ordering::SeqCst) + 1
-    };
+    let my_gen = app_handle
+        .state::<AppState>()
+        .launch_gen
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
 
     log_to(&log_path, "launch: start");
 
     // 1. Resolve a writable workspace.
     let workspace = match resolve_workspace(app_handle, &log_path) {
-        Ok(w) => {
-            let p = w.path().to_path_buf();
-            let state = app_handle.state::<AppState>();
-            *state.workspace_dir.lock().unwrap() = p.clone();
-            p
-        }
+        Ok(w) => w.path().to_path_buf(),
         Err(e) => {
             log_to(&log_path, &format!("launch: workspace resolution failed: {e}"));
             emit_launch_error_str(app_handle, "workspace_unavailable");
@@ -581,9 +605,11 @@ fn launch(app_handle: &AppHandle) {
     }
 
     // Start the watcher; keep its handle in AppState so it lives for the
-    // process lifetime (dropping it stops the watch). Replacing an existing
-    // handle (on retry) drops the old watcher first.
+    // process lifetime (dropping it stops the watch). On retry, drop the old
+    // watcher FIRST (before constructing the new one) so two watchers never
+    // run concurrently on ~/.claude.
     {
+        let _ = app_handle.state::<AppState>().watch_handle.lock().unwrap().take();
         let watch_log = log_path.clone();
         match ccresdoc_claude_md::watch(gen_config, DEFAULT_DEBOUNCE, move |event| match event {
             WatchEvent::Regenerated(report) => log_to(
@@ -639,13 +665,7 @@ fn launch(app_handle: &AppHandle) {
     }
 
     match result {
-        ReadyResult::Ready => {
-            if let Some(w) = app_handle.get_webview_window("main") {
-                if let Ok(url) = docs_url().parse::<tauri::Url>() {
-                    let _ = w.navigate(url);
-                }
-            }
-        }
+        ReadyResult::Ready => navigate_to_docs(app_handle),
         ReadyResult::Timeout | ReadyResult::SidecarExited { .. } => {
             emit_launch_error(app_handle, &result);
         }
@@ -661,24 +681,12 @@ fn apply_zoom(app_handle: &AppHandle, level: f64) {
 }
 
 /// Frontend-callable retry for the loading page's error panel. Spawned on a
-/// thread so the IPC call returns immediately.
+/// thread so the IPC call returns immediately. Re-runs the full `launch()`
+/// (which claims a new generation, tears down the old sidecar/watcher, and
+/// re-spawns) in both dev and prod — the host owns `zfb dev` in both modes.
 #[tauri::command]
 fn retry_launch(app_handle: AppHandle) {
-    let log_path = {
-        let state = app_handle.state::<AppState>();
-        let p = state.log_path.lock().unwrap().clone();
-        p
-    };
-    log_to(&log_path, "retry_launch: invoked from frontend");
-    if IS_DEV {
-        // Dev: zfb dev is already running; just re-navigate.
-        if let Some(w) = app_handle.get_webview_window("main") {
-            if let Ok(url) = docs_url().parse::<tauri::Url>() {
-                let _ = w.navigate(url);
-            }
-        }
-        return;
-    }
+    log_to(&log_path(&app_handle), "retry_launch: invoked from frontend");
     thread::spawn(move || launch(&app_handle));
 }
 
@@ -702,7 +710,6 @@ fn main() {
         sidecar: Arc::new(Mutex::new(None)),
         watch_handle: Mutex::new(None),
         zoom: Mutex::new(1.0),
-        workspace_dir: Mutex::new(PathBuf::new()),
         log_path: Mutex::new(String::new()),
         launch_gen: AtomicU64::new(0),
     };
@@ -777,13 +784,7 @@ fn main() {
             app.set_menu(menu)?;
 
             app.on_menu_event(|app_handle, event| match event.id().as_ref() {
-                "refresh" => {
-                    if let Some(w) = app_handle.get_webview_window("main") {
-                        if let Ok(url) = docs_url().parse::<tauri::Url>() {
-                            let _ = w.navigate(url);
-                        }
-                    }
-                }
+                "refresh" => navigate_to_docs(app_handle),
                 "devtools" => {
                     if let Some(w) = app_handle.get_webview_window("main") {
                         if w.is_devtools_open() {
@@ -810,7 +811,12 @@ fn main() {
             // ── Window ──
             // Open immediately with the bundled loading page (anti-white-flash),
             // then a background thread does the node-free boot and navigates.
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+            // Use App("index.html") (the bundled frontendDist page) explicitly —
+            // NOT WebviewUrl::default(), which in dev resolves to `devUrl`
+            // (:4892) and would show connection-refused before zfb dev binds.
+            // The host owns `zfb dev` in BOTH dev and prod, so the loading page
+            // + readiness-navigate flow must run in both modes.
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("CCResDoc")
                 .inner_size(1200.0, 800.0)
                 .on_navigation(allow_navigation)
@@ -829,17 +835,10 @@ fn main() {
                 ..
             } = &event
             {
-                let log_path = {
-                    let state = app_handle.state::<AppState>();
-                    let p = state.log_path.lock().unwrap().clone();
-                    p
-                };
+                let log_path = log_path(app_handle);
                 // Stop the watcher and kill the sidecar process group so
                 // nothing is left holding port 4892.
-                {
-                    let state = app_handle.state::<AppState>();
-                    let _ = state.watch_handle.lock().unwrap().take();
-                }
+                let _ = app_handle.state::<AppState>().watch_handle.lock().unwrap().take();
                 if let Ok(mut g) = sidecar_for_exit.lock() {
                     if let Some(mut s) = g.take() {
                         kill_sidecar(&mut s, &log_path);
