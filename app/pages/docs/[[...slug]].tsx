@@ -34,6 +34,11 @@ interface DocPageProps {
   navSection?: string;
   hideSidebar?: boolean;
   hideToc?: boolean;
+  // MDX render function for this entry. zfb does NOT auto-inject `Content` for a
+  // programmatic catch-all route (only for MDX-backed page modules), so paths()
+  // wires it explicitly from the collection entry — mirrors zudo-doc's scaffold
+  // `<props.entry.Content />`. Optional only because TS can't prove it's set.
+  Content?: (props: { components?: Record<string, unknown> }) => JSX.Element;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +86,7 @@ export function paths(): Array<{
         navSection,
         hideSidebar: entry.data.hide_sidebar ?? false,
         hideToc: entry.data.hide_toc ?? false,
+        Content: entry.Content as DocPageProps["Content"],
         params: { slug: slugParams },
       };
       return { params: { slug: slugParams }, props };
@@ -93,8 +99,6 @@ export function paths(): Array<{
 
 interface PageProps extends DocPageProps {
   params: { slug: string[] };
-  // MDX render function injected by zfb
-  Content?: (props: { components?: Record<string, unknown> }) => JSX.Element;
 }
 
 export default function DocsPage({

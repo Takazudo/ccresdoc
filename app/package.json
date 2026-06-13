@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "CCResDoc zudo-doc consumer — built by zfb, served by axum at runtime",
+  "description": "CCResDoc zudo-doc consumer — built by zfb, served node-free by `zfb dev` (port 4892) under the Tauri sidecar host",
   "scripts": {
     "dev": "zfb dev",
     "build": "zfb build",
@@ -11,14 +11,36 @@
     "zfb": "zfb"
   },
   "dependencies": {
-    "@takazudo/zudo-doc": "^0.2.4"
+    "@shikijs/transformers": "^4.0.0",
+    "@takazudo/zdtp": "0.2.0-next.2",
+    "@takazudo/zfb": "0.1.0-next.43",
+    "@takazudo/zfb-adapter-cloudflare": "0.1.0-next.43",
+    "@takazudo/zfb-runtime": "0.1.0-next.43",
+    "@takazudo/zudo-doc": "^0.2.4",
+    "clsx": "^2.1.1",
+    "gray-matter": "^4.0.0",
+    "katex": "^0.16.38",
+    "mermaid": "^11.12.3",
+    "preact": "^10.29.1",
+    "preact-render-to-string": "^6.6.6",
+    "remark-cjk-friendly": "^2.0.1",
+    "remark-directive": "^3.0.0",
+    "shiki": "^4.0.2",
+    "zod": "^3.24.0"
+  },
+  "optionalDependencies": {
+    "@takazudo/zfb-darwin-arm64": "0.1.0-next.43",
+    "@takazudo/zfb-darwin-x64": "0.1.0-next.43",
+    "@takazudo/zfb-linux-arm64-gnu": "0.1.0-next.43",
+    "@takazudo/zfb-linux-x64-gnu": "0.1.0-next.43",
+    "@takazudo/zfb-win32-x64-msvc": "0.1.0-next.43"
   },
   "devDependencies": {
-    "@takazudo/zfb": "0.1.0-next.43",
-    "clsx": "^2.1.1",
-    "preact": "^10.22.0",
-    "preact-render-to-string": "^6.6.6",
-    "typescript": "^5.6.0",
-    "zod": "^3.24.0"
+    "@tailwindcss/vite": "^4.2.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.0",
+    "html-validate": "^10.0.0",
+    "tailwindcss": "^4.2.0",
+    "typescript": "^5.6.0"
   }
 }
