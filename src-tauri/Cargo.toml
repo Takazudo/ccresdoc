@@ -8,9 +8,9 @@ edition = "2021"
 
 [dependencies]
 tauri = { version = "2", features = ["devtools"] }
-ccresdoc-server = { path = "../crates/ccresdoc-server" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-anyhow = "1"
+# TODO(#44): Wave 3 re-adds `ccresdoc-claude-md = { path = "../crates/ccresdoc-claude-md" }`
+# (and tokio if the sidecar host needs an async runtime). Wave 2 removed the
+# deleted `ccresdoc-server` dependency to keep the workspace compiling.
 libc = "0.2"
 serde_json = "1"
 

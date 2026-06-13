@@ -71,40 +71,26 @@ fn kill_port() {
 
 // ── Embedded server ──────────────────────────────
 
-/// Spawn the embedded ccresdoc-server on a dedicated tokio runtime thread.
-/// The server runs until the process exits (no shutdown signal in normal use).
+/// TODO(#44): sidecar host rewrite.
 ///
-/// `dist_dir` is resolved at runtime:
-///   - production: `tauri::path::resource_dir()` + "app/dist"
-///   - dev: `$HOME/.claude/app/dist` fallback (actual dev build outputs there)
+/// Wave 2 (#43) deleted the `ccresdoc-server` and `ccresdoc-renderer` crates,
+/// so the previous embedded-axum-server spawn no longer exists. This is now a
+/// stub that only logs the resolved `dist_dir`; the window will fail to load
+/// real content until Wave 3 (#44) replaces `main.rs` with the new sidecar
+/// host that:
+///   - calls `ccresdoc_claude_md::generate(&config)` at boot, and
+///   - starts `ccresdoc_claude_md::watch(...)` so `zfb dev` HMRs regenerated MDX,
+///   - serves `dist_dir` (the compiled `app/dist/` tree) on PORT 4892.
+///
+/// Until then this no-op keeps the workspace compiling and clippy clean.
 fn start_embedded_server(dist_dir: std::path::PathBuf) {
     let claude_dir = std::path::PathBuf::from(home_dir()).join(".claude");
-    let project_root = claude_dir.clone();
 
     log(&format!(
-        "start_embedded_server: dist_dir={}",
-        dist_dir.display()
+        "start_embedded_server: STUB (TODO #44) — dist_dir={}, claude_dir={}",
+        dist_dir.display(),
+        claude_dir.display()
     ));
-
-    thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create tokio runtime");
-        rt.block_on(async {
-            let config = ccresdoc_server::ServerConfig {
-                port: PORT,
-                claude_dir,
-                project_root,
-                dist_dir,
-            };
-            if let Err(e) =
-                ccresdoc_server::serve_with_shutdown(config, std::future::pending()).await
-            {
-                log(&format!("start_embedded_server: server error: {e}"));
-            }
-        });
-    });
 }
 
 // ── Readiness polling ────────────────────────────
@@ -185,7 +171,7 @@ fn apply_zoom(app_handle: &AppHandle, level: f64) {
     let state = app_handle.state::<AppState>();
     *state.zoom.lock().unwrap() = level;
     if let Some(w) = app_handle.get_webview_window("main") {
-        let _ = w.eval(&format!("document.body.style.zoom = '{level}'"));
+        let _ = w.eval(format!("document.body.style.zoom = '{level}'"));
     }
 }
 
@@ -364,14 +350,14 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| match &event {
-            tauri::RunEvent::WindowEvent {
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::WindowEvent {
                 event: tauri::WindowEvent::Destroyed,
                 ..
-            } => {
+            } = &event
+            {
                 app_handle.exit(0);
             }
-            _ => {}
         });
 }
 

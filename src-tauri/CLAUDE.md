@@ -2,6 +2,14 @@
 
 Tauri v2 macOS app that opens the CCResDoc doc viewer in a native window. The HTTP server is embedded directly in the Tauri binary — no Node.js, no sidecar process.
 
+> **Wave 2 status (TODO #44):** Wave 2 (#43) deleted the `ccresdoc-server` and
+> `ccresdoc-renderer` crates. `start_embedded_server()` in `src/main.rs` is now
+> a **stub** (logs `dist_dir` only) so the workspace still compiles and clippy
+> stays clean. The window will not load real content until Wave 3 (#44)
+> rewrites `main.rs` to call `ccresdoc_claude_md::generate` + `::watch` and
+> serve `app/dist/`. The sections below describe the intended (pre-Wave-2 /
+> post-Wave-3) architecture, not the current stubbed state.
+
 ## Quick start
 
 ```
