@@ -1,11 +1,31 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+//! CCResDoc — thin sidecar host (Wave 3 / #44).
+//!
+//! Runtime is **node-free**: the host resolves a writable app-project, the
+//! native `zfb` binary (NOT the Node-shebang `node_modules/.bin/zfb` wrapper),
+//! and the absolute `~/.claude` path, then:
+//!
+//!   1. boots the Wave 2 generator (`ccresdoc_claude_md::generate`) once,
+//!   2. starts the Wave 2 watcher (`::watch`) in-process so edits under
+//!      `~/.claude` regenerate the MDX tree and `zfb dev`'s content-watch HMRs,
+//!   3. spawns `zfb dev --port 4892` (cwd = the writable app project) as a
+//!      process-group sidecar,
+//!   4. polls readiness on `/` (scaled for the cold first build of ~135
+//!      skills) and navigates the WebView to `http://localhost:4892/`.
+//!
+//! On window close the sidecar process group is SIGTERM→SIGKILL'd so nothing
+//! is left holding port 4892.
+
 use std::fs;
-use std::process::Command;
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, thread};
 
+use ccresdoc_claude_md::{Config as GenConfig, WatchEvent, WatchHandle, DEFAULT_DEBOUNCE};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -13,8 +33,58 @@ const PORT: u16 = 4892;
 const DOCS_PATH: &str = "/";
 const IS_DEV: bool = cfg!(debug_assertions);
 
+/// Cold first launch must walk + render ~135 skills (plus commands/agents/
+/// CLAUDE.md) and then let `zfb dev` build the whole site once. That is far
+/// slower than a warm relaunch, so the readiness window is generous; the
+/// loading page stays informative (spinner + "still building" hint) meanwhile.
+const READY_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Sentinel filename written into the writable workspace once a copy fully
+/// completes. Its presence + matching version token is what marks the
+/// workspace "ready"; a partial/interrupted copy lacks it and is re-copied.
+const WORKSPACE_READY_FILE: &str = ".ccresdoc-workspace-ready";
+
+/// Maps `std::env::consts::OS`-`ARCH` to the zfb platform package name.
+/// Mirrors `@takazudo/zfb/bin/zfb.mjs` exactly (biome's pattern). The native
+/// binary lives at `<pkgDir>/zfb` (`zfb.exe` on Windows) — NEVER the
+/// `node_modules/.bin/zfb` Node-shebang wrapper, which would require Node.
+fn zfb_platform_package() -> Option<&'static str> {
+    // Tauri ships macOS arm64/x64 here; the full map matches the npm wrapper.
+    match (env::consts::OS, env::consts::ARCH) {
+        ("macos", "aarch64") => Some("@takazudo/zfb-darwin-arm64"),
+        ("macos", "x86_64") => Some("@takazudo/zfb-darwin-x64"),
+        ("linux", "aarch64") => Some("@takazudo/zfb-linux-arm64-gnu"),
+        ("linux", "x86_64") => Some("@takazudo/zfb-linux-x64-gnu"),
+        ("windows", "x86_64") => Some("@takazudo/zfb-win32-x64-msvc"),
+        _ => None,
+    }
+}
+
+fn zfb_binary_name() -> &'static str {
+    if cfg!(windows) {
+        "zfb.exe"
+    } else {
+        "zfb"
+    }
+}
+
+// ── Shared state ──────────────────────────────────
+
+struct Sidecar {
+    child: Child,
+}
+
 struct AppState {
+    sidecar: Arc<Mutex<Option<Sidecar>>>,
+    /// Kept alive for the process lifetime; dropping it stops the watcher.
+    watch_handle: Mutex<Option<WatchHandle>>,
     zoom: Mutex<f64>,
+    /// Filled in during setup() (app_data_dir/ccresdoc.log).
+    log_path: Mutex<String>,
+    /// Bumped at the start of every launch attempt (initial setup + each
+    /// retry). A launch thread that finishes after a newer one began sees a
+    /// mismatch and skips its navigate/emit so the two cannot race.
+    launch_gen: AtomicU64,
 }
 
 // ── Helpers ───────────────────────────────────────
@@ -23,12 +93,39 @@ fn home_dir() -> String {
     env::var("HOME").expect("HOME not set")
 }
 
-fn log(msg: &str) {
+/// Absolute `~/.claude`. Passed to the Wave 2 generator as both `claude_dir`
+/// and `project_root` — NEVER `$HOME` (the walk must stay scoped to
+/// `~/.claude`; the generator rejects `project_root == $HOME`).
+fn claude_dir() -> PathBuf {
+    PathBuf::from(home_dir()).join(".claude")
+}
+
+fn docs_url() -> String {
+    format!("http://localhost:{PORT}{DOCS_PATH}")
+}
+
+/// The log path resolved in setup(), read out of shared state.
+fn log_path(app_handle: &AppHandle) -> String {
+    app_handle.state::<AppState>().log_path.lock().unwrap().clone()
+}
+
+/// Navigate the main window to the doc site. Parse errors are impossible for
+/// the constant `docs_url()`, so they are silently ignored. Shared by the
+/// launch-success path, the dev retry path, and the Refresh menu item.
+fn navigate_to_docs(app_handle: &AppHandle) {
+    if let Some(w) = app_handle.get_webview_window("main") {
+        if let Ok(url) = docs_url().parse::<tauri::Url>() {
+            let _ = w.navigate(url);
+        }
+    }
+}
+
+fn log_to(path: &str, msg: &str) {
     use std::io::Write;
-    // In production, log next to the binary in the bundle. In dev, use the
-    // cargo workspace directory so the file is always discoverable.
-    let path = log_path();
-    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if path.is_empty() {
+        return;
+    }
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
         let secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -37,65 +134,316 @@ fn log(msg: &str) {
     }
 }
 
-fn log_path() -> String {
-    // $HOME/.claude/doc/src-tauri/launch.log — same location as the original
-    // for continuity; S8 may move this to a proper app-support dir.
-    format!("{}/.claude/doc/src-tauri/launch.log", home_dir())
-}
+// ── Bundle version token (writable-workspace refresh gate) ─
 
-fn docs_url() -> String {
-    format!("http://localhost:{PORT}{DOCS_PATH}")
-}
-
-// ── Port cleanup ─────────────────────────────────
-
-fn kill_port() {
-    if let Ok(output) = Command::new("/usr/bin/lsof")
-        .args(["-ti", &format!(":{PORT}")])
-        .output()
-    {
-        let pids = String::from_utf8_lossy(&output.stdout);
-        for line in pids.trim().lines() {
-            if let Ok(pid) = line.trim().parse::<i32>() {
-                log(&format!(
-                    "kill_port: killing stale pid {pid} on port {PORT}"
-                ));
-                unsafe { libc::kill(pid, libc::SIGTERM) };
-            }
+/// The version token used to decide whether the writable workspace copy is
+/// stale. We embed the app's Cargo package version at compile time; Wave 4's
+/// build step writes the same value into a `version.txt` beside the bundled
+/// `app/` so the check has a concrete file to compare against. We prefer the
+/// bundled `version.txt` (authoritative for what was actually shipped) and
+/// fall back to the compiled-in version when it is absent.
+fn bundled_version_token(resources_app_parent: &Path) -> String {
+    let version_file = resources_app_parent.join("version.txt");
+    if let Ok(v) = fs::read_to_string(&version_file) {
+        let v = v.trim();
+        if !v.is_empty() {
+            return v.to_string();
         }
-        if !pids.trim().is_empty() {
-            thread::sleep(Duration::from_millis(500));
+    }
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+// ── Workspace resolution ──────────────────────────
+
+/// How the writable app-project root was resolved.
+#[derive(Debug)]
+enum WorkspaceResolution {
+    /// `cargo tauri dev` — use the repo `app/` directly (already writable,
+    /// already has `node_modules` from the dev `pnpm install`).
+    DevRepo(PathBuf),
+    /// Bundled `.app` — a versioned copy of the read-only bundled `app/` placed
+    /// in the app-data dir (writable; `zfb dev` writes `dist/`, `.zfb/`,
+    /// `.zfb-build/`, and the generated `claude*/` MDX there).
+    AppDataCopy(PathBuf),
+}
+
+impl WorkspaceResolution {
+    fn path(&self) -> &Path {
+        match self {
+            WorkspaceResolution::DevRepo(p) | WorkspaceResolution::AppDataCopy(p) => p,
         }
     }
 }
 
-// ── Embedded server ──────────────────────────────
-
-/// TODO(#44): sidecar host rewrite.
+/// Resolve the bundled (read-only) `app/` directory inside `.app` Resources.
 ///
-/// Wave 2 (#43) deleted the `ccresdoc-server` and `ccresdoc-renderer` crates,
-/// so the previous embedded-axum-server spawn no longer exists. This is now a
-/// stub that only logs the resolved `dist_dir`; the window will fail to load
-/// real content until Wave 3 (#44) replaces `main.rs` with the new sidecar
-/// host that:
-///   - calls `ccresdoc_claude_md::generate(&config)` at boot, and
-///   - starts `ccresdoc_claude_md::watch(...)` so `zfb dev` HMRs regenerated MDX,
-///   - serves `dist_dir` (the compiled `app/dist/` tree) on PORT 4892.
-///
-/// Until then this no-op keeps the workspace compiling and clippy clean.
-fn start_embedded_server(dist_dir: std::path::PathBuf) {
-    let claude_dir = std::path::PathBuf::from(home_dir()).join(".claude");
+/// Tauri bundles `../app/**` (a `..` traversal relative to `src-tauri/`) under
+/// `Contents/Resources/_up_/app/`. We return the `_up_` parent so callers can
+/// also read the sibling `version.txt`.
+fn bundled_resources_app_parent(app: &AppHandle) -> tauri::Result<PathBuf> {
+    Ok(app.path().resource_dir()?.join("_up_"))
+}
 
-    log(&format!(
-        "start_embedded_server: STUB (TODO #44) — dist_dir={}, claude_dir={}",
-        dist_dir.display(),
-        claude_dir.display()
-    ));
+/// Resolve a **writable** app-project root.
+///
+/// - Dev: the repo `app/` (sibling of `src-tauri/`, found via `CARGO_MANIFEST_DIR`).
+/// - Bundled: copy the read-only bundled `app/` into the app-data dir, with a
+///   **versioned refresh** (re-copy when the bundled token differs from the
+///   one recorded in the copy, or when the previous copy never completed).
+fn resolve_workspace(app: &AppHandle, log_path: &str) -> Result<WorkspaceResolution, String> {
+    if IS_DEV {
+        // src-tauri/ sibling: ../app
+        let repo_app = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(|p| p.join("app"))
+            .ok_or_else(|| "could not resolve repo app/ dir in dev".to_string())?;
+        log_to(
+            log_path,
+            &format!("resolve_workspace: DEV repo app = {}", repo_app.display()),
+        );
+        return Ok(WorkspaceResolution::DevRepo(repo_app));
+    }
+
+    let resources_parent =
+        bundled_resources_app_parent(app).map_err(|e| format!("resource_dir unavailable: {e}"))?;
+    let bundled_app = resources_parent.join("app");
+    if !bundled_app.exists() {
+        return Err(format!(
+            "bundled app/ missing at {} (build did not stage it)",
+            bundled_app.display()
+        ));
+    }
+
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir unavailable: {e}"))?;
+    fs::create_dir_all(&app_data).map_err(|e| format!("create app_data dir: {e}"))?;
+    let workspace = app_data.join("app-workspace");
+
+    let bundled_token = bundled_version_token(&resources_parent);
+    let ready_sentinel = workspace.join(WORKSPACE_READY_FILE);
+    let recorded_token = fs::read_to_string(&ready_sentinel)
+        .ok()
+        .map(|s| s.trim().to_string());
+
+    let up_to_date = recorded_token.as_deref() == Some(bundled_token.as_str());
+    if workspace.exists() && up_to_date {
+        log_to(
+            log_path,
+            &format!(
+                "resolve_workspace: reusing workspace {} (token={bundled_token})",
+                workspace.display()
+            ),
+        );
+        return Ok(WorkspaceResolution::AppDataCopy(workspace));
+    }
+
+    log_to(
+        log_path,
+        &format!(
+            "resolve_workspace: (re)copying bundled app -> {} (bundled_token={bundled_token}, recorded={recorded_token:?})",
+            workspace.display()
+        ),
+    );
+
+    // Remove any partial/stale copy, then copy fresh. The sentinel is written
+    // LAST so an interrupted copy is detected (missing sentinel ⇒ not ready).
+    if workspace.exists() {
+        fs::remove_dir_all(&workspace).map_err(|e| format!("clear stale workspace: {e}"))?;
+    }
+    copy_dir_recursive(&bundled_app, &workspace)
+        .map_err(|e| format!("copy bundled app into workspace: {e}"))?;
+    fs::write(&ready_sentinel, &bundled_token).map_err(|e| format!("write ready sentinel: {e}"))?;
+
+    log_to(
+        log_path,
+        &format!("resolve_workspace: workspace ready (token={bundled_token})"),
+    );
+    Ok(WorkspaceResolution::AppDataCopy(workspace))
+}
+
+/// Recursively copy `src` into `dst`, preserving Unix permissions (the native
+/// `zfb` binary and `node_modules/.bin` shims must stay executable). Symlinks
+/// are recreated as symlinks (pnpm's `node_modules` is symlink-heavy).
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+
+        if file_type.is_symlink() {
+            let target = fs::read_link(&from)?;
+            // Best-effort: replace any pre-existing entry at `to`.
+            let _ = fs::remove_file(&to);
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&target, &to)?;
+            #[cfg(windows)]
+            {
+                // Windows symlink kind depends on the target; fall back to a
+                // file symlink (node_modules layout is dir-symlink-heavy, but
+                // Tauri targets macOS here so this branch is rarely taken).
+                let _ = std::os::windows::fs::symlink_file(&target, &to);
+            }
+        } else if file_type.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            fs::copy(&from, &to)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(meta) = fs::metadata(&from) {
+                    let _ = fs::set_permissions(&to, fs::Permissions::from_mode(meta.permissions().mode()));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+// ── zfb binary resolution ─────────────────────────
+
+/// Resolve the **native** zfb binary inside the workspace's `node_modules`.
+///
+/// Path: `<workspace>/node_modules/@takazudo/zfb-<platform>/zfb`. This is the
+/// platform package's binary (`main: "zfb"`), NOT the `node_modules/.bin/zfb`
+/// Node-shebang wrapper — running the wrapper would require Node at runtime,
+/// defeating the node-free goal.
+fn resolve_zfb_binary(workspace: &Path) -> Result<PathBuf, String> {
+    let pkg = zfb_platform_package()
+        .ok_or_else(|| format!("unsupported platform: {}-{}", env::consts::OS, env::consts::ARCH))?;
+    let bin = workspace
+        .join("node_modules")
+        .join(pkg)
+        .join(zfb_binary_name());
+    if !bin.exists() {
+        return Err(format!(
+            "native zfb binary missing at {} — node_modules not installed or platform package absent",
+            bin.display()
+        ));
+    }
+    Ok(bin)
+}
+
+// ── Sidecar (zfb dev) management ──────────────────
+
+/// Spawn `zfb dev --port 4892` with cwd = the writable workspace, in its own
+/// process group so the whole tree dies on window close (no orphan on 4892).
+fn spawn_zfb_dev(
+    zfb_bin: &Path,
+    workspace: &Path,
+    log_path: &str,
+) -> Result<Sidecar, String> {
+    log_to(
+        log_path,
+        &format!(
+            "spawn_zfb_dev: bin={} cwd={}",
+            zfb_bin.display(),
+            workspace.display()
+        ),
+    );
+
+    let mut cmd = Command::new(zfb_bin);
+    cmd.args(["dev", "--port", &PORT.to_string()])
+        .current_dir(workspace)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let child = cmd.spawn().map_err(|e| {
+        log_to(log_path, &format!("spawn_zfb_dev: spawn failed: {e}"));
+        format!("failed to spawn zfb dev in {}: {e}", workspace.display())
+    })?;
+    log_to(log_path, &format!("spawn_zfb_dev: pid={}", child.id()));
+    Ok(Sidecar { child })
+}
+
+fn kill_sidecar(sidecar: &mut Sidecar, log_path: &str) {
+    let pid = sidecar.child.id();
+    log_to(log_path, &format!("kill_sidecar: pid={pid}"));
+    #[cfg(unix)]
+    {
+        if let Ok(pid) = i32::try_from(pid) {
+            // Negative PID → signal the whole process group.
+            unsafe { libc::kill(-pid, libc::SIGTERM) };
+        }
+    }
+    thread::sleep(Duration::from_millis(500));
+    match sidecar.child.try_wait() {
+        Ok(Some(_)) => log_to(log_path, "kill_sidecar: already exited"),
+        _ => {
+            log_to(log_path, "kill_sidecar: escalating to SIGKILL");
+            let _ = sidecar.child.kill();
+            let _ = sidecar.child.wait();
+        }
+    }
+}
+
+// ── Port cleanup ─────────────────────────────────
+
+/// List PIDs currently holding :PORT (via `lsof -ti`).
+fn pids_on_port() -> Vec<i32> {
+    Command::new("/usr/bin/lsof")
+        .args(["-ti", &format!(":{PORT}")])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter_map(|l| l.trim().parse::<i32>().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Free :PORT before spawning a fresh sidecar. SIGTERM first; if a holder is
+/// slow/deaf to it, escalate to SIGKILL so a stuck process can't make every
+/// subsequent spawn (and Retry) fail to bind. Mirrors `kill_sidecar`'s
+/// terminate-then-kill escalation.
+fn kill_port(log_path: &str) {
+    let pids = pids_on_port();
+    if pids.is_empty() {
+        return;
+    }
+    for pid in &pids {
+        log_to(log_path, &format!("kill_port: SIGTERM stale pid {pid} on :{PORT}"));
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(*pid, libc::SIGTERM);
+        }
+    }
+    thread::sleep(Duration::from_millis(500));
+
+    let stragglers = pids_on_port();
+    for pid in &stragglers {
+        log_to(log_path, &format!("kill_port: SIGKILL straggler pid {pid} on :{PORT}"));
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(*pid, libc::SIGKILL);
+        }
+    }
+    if !stragglers.is_empty() {
+        thread::sleep(Duration::from_millis(300));
+    }
 }
 
 // ── Readiness polling ────────────────────────────
 
-fn curl_ready() -> String {
+#[derive(Debug)]
+enum ReadyResult {
+    Ready,
+    Timeout,
+    /// The sidecar exited before becoming ready — short-circuit the wait.
+    SidecarExited { code: Option<i32> },
+}
+
+fn curl_root() -> String {
     Command::new("/usr/bin/curl")
         .args([
             "-s",
@@ -103,67 +451,224 @@ fn curl_ready() -> String {
             "/dev/null",
             "-w",
             "%{http_code}",
-            &format!("http://localhost:{PORT}/___ready"),
+            &docs_url(),
         ])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|_| "err".to_string())
 }
 
-#[derive(Debug)]
-enum ReadyResult {
-    Ready,
-    Timeout,
-}
-
-fn wait_for_ready(timeout: Duration) -> ReadyResult {
-    log("wait_for_ready: start");
+/// Poll `GET /` until 200, up to `timeout`. Each tick first checks sidecar
+/// liveness via `try_wait` so a crashed `zfb dev` surfaces an error within ~1s
+/// rather than burning the whole timeout on the spinner.
+fn wait_for_ready(
+    timeout: Duration,
+    sidecar: &Arc<Mutex<Option<Sidecar>>>,
+    log_path: &str,
+) -> ReadyResult {
+    log_to(log_path, "wait_for_ready: start");
     let start = Instant::now();
     while start.elapsed() < timeout {
-        let code = curl_ready();
-        log(&format!("curl: {code} ({}s)", start.elapsed().as_secs()));
+        {
+            let mut guard = sidecar.lock().unwrap();
+            if let Some(ref mut s) = *guard {
+                match s.child.try_wait() {
+                    Ok(Some(status)) => {
+                        let code = status.code();
+                        log_to(
+                            log_path,
+                            &format!("wait_for_ready: sidecar exited early (code={code:?})"),
+                        );
+                        return ReadyResult::SidecarExited { code };
+                    }
+                    Ok(None) => {}
+                    Err(e) => log_to(log_path, &format!("wait_for_ready: try_wait error: {e}")),
+                }
+            }
+        }
+
+        let code = curl_root();
+        log_to(log_path, &format!("curl /: {code} ({}s)", start.elapsed().as_secs()));
         if code == "200" {
-            log("wait_for_ready: ready");
+            log_to(log_path, "wait_for_ready: ready");
             return ReadyResult::Ready;
         }
         thread::sleep(Duration::from_secs(1));
     }
-    log("wait_for_ready: TIMEOUT");
+    log_to(log_path, "wait_for_ready: TIMEOUT");
     ReadyResult::Timeout
 }
 
-fn emit_launch_error(app_handle: &AppHandle, result: &ReadyResult) {
-    if matches!(result, ReadyResult::Ready) {
-        return;
-    }
-    let reason = match result {
-        ReadyResult::Ready => return,
-        ReadyResult::Timeout => "timeout",
-    };
-    let lp = log_path();
+// ── Error emission ────────────────────────────────
+
+fn emit_launch_error_str(app_handle: &AppHandle, reason: &str) {
+    let log_path = log_path(app_handle);
     let payload = serde_json::json!({
         "reason": reason,
-        "logPath": lp,
+        "logPath": log_path,
     });
-    log(&format!("emit_launch_error: reason={reason}"));
+    log_to(&log_path, &format!("emit_launch_error: reason={reason}"));
     if let Some(w) = app_handle.get_webview_window("main") {
         if let Err(e) = w.emit("launch-error", payload) {
-            log(&format!("emit_launch_error: emit failed: {e}"));
+            log_to(&log_path, &format!("emit_launch_error: emit failed: {e}"));
         }
+    } else {
+        log_to(&log_path, "emit_launch_error: no main window to emit to");
     }
 }
 
-// ── Refresh ───────────────────────────────────────
+fn emit_launch_error(app_handle: &AppHandle, result: &ReadyResult) {
+    let reason = match result {
+        ReadyResult::Ready => return,
+        ReadyResult::Timeout => "timeout",
+        ReadyResult::SidecarExited { code } => {
+            log_to(
+                &log_path(app_handle),
+                &format!("emit_launch_error: zfb dev exit code = {code:?}"),
+            );
+            "sidecar_exited"
+        }
+    };
+    emit_launch_error_str(app_handle, reason);
+}
 
-/// Refresh simply re-navigates the window to the docs URL.
-/// The embedded server is always live — no restart needed.
-fn do_refresh(app_handle: &AppHandle) {
-    if let Some(w) = app_handle.get_webview_window("main") {
-        let _ = w.navigate(
-            docs_url()
-                .parse()
-                .expect("BUG: docs_url produced an invalid URL"),
-        );
+// ── Launch (boot + retry) ─────────────────────────
+
+/// The full node-free boot, runnable from both initial setup and the retry
+/// path. Resolves workspace + zfb binary + `~/.claude`, runs `generate()`
+/// once, starts `watch()`, spawns `zfb dev`, polls readiness, then navigates.
+///
+/// `launch_gen` guards against a restart-race: a retry pressed mid-wait bumps
+/// the generation so the older launch thread skips its terminal navigate/emit.
+fn launch(app_handle: &AppHandle) {
+    let log_path = log_path(app_handle);
+    let sidecar_arc = app_handle.state::<AppState>().sidecar.clone();
+
+    // Claim a new generation; any in-flight launch is now stale.
+    let my_gen = app_handle
+        .state::<AppState>()
+        .launch_gen
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
+
+    log_to(&log_path, "launch: start");
+
+    // 1. Resolve a writable workspace.
+    let workspace = match resolve_workspace(app_handle, &log_path) {
+        Ok(w) => w.path().to_path_buf(),
+        Err(e) => {
+            log_to(&log_path, &format!("launch: workspace resolution failed: {e}"));
+            emit_launch_error_str(app_handle, "workspace_unavailable");
+            return;
+        }
+    };
+
+    // 2. Resolve the native zfb binary (missing node_modules → error UI).
+    let zfb_bin = match resolve_zfb_binary(&workspace) {
+        Ok(b) => b,
+        Err(e) => {
+            log_to(&log_path, &format!("launch: zfb binary unresolved: {e}"));
+            emit_launch_error_str(app_handle, "zfb_binary_missing");
+            return;
+        }
+    };
+
+    // 3. Resolve absolute ~/.claude (missing → error UI).
+    let claude = claude_dir();
+    if !claude.exists() {
+        log_to(&log_path, &format!("launch: ~/.claude missing at {}", claude.display()));
+        emit_launch_error_str(app_handle, "claude_dir_missing");
+        return;
+    }
+
+    // 4. Boot the Wave 2 generator once, then start the watcher in-process.
+    //    docs_dir is the workspace's zudo-doc content root.
+    let gen_config = GenConfig {
+        claude_dir: claude.clone(),
+        project_root: claude.clone(),
+        docs_dir: workspace.join("src").join("content").join("docs"),
+    };
+
+    match ccresdoc_claude_md::generate(&gen_config) {
+        Ok(report) => log_to(
+            &log_path,
+            &format!(
+                "launch: generate ok — claude_md={} commands={} skills={} agents={}",
+                report.claude_md, report.commands, report.skills, report.agents
+            ),
+        ),
+        Err(e) => {
+            log_to(&log_path, &format!("launch: generate failed: {e}"));
+            emit_launch_error_str(app_handle, "generate_failed");
+            return;
+        }
+    }
+
+    // Start the watcher; keep its handle in AppState so it lives for the
+    // process lifetime (dropping it stops the watch). On retry, drop the old
+    // watcher FIRST (before constructing the new one) so two watchers never
+    // run concurrently on ~/.claude.
+    {
+        let _ = app_handle.state::<AppState>().watch_handle.lock().unwrap().take();
+        let watch_log = log_path.clone();
+        match ccresdoc_claude_md::watch(gen_config, DEFAULT_DEBOUNCE, move |event| match event {
+            WatchEvent::Regenerated(report) => log_to(
+                &watch_log,
+                &format!(
+                    "watch: regenerated — claude_md={} commands={} skills={} agents={}",
+                    report.claude_md, report.commands, report.skills, report.agents
+                ),
+            ),
+            WatchEvent::Error(e) => log_to(&watch_log, &format!("watch: regeneration error: {e}")),
+        }) {
+            Ok(handle) => {
+                let state = app_handle.state::<AppState>();
+                *state.watch_handle.lock().unwrap() = Some(handle);
+                log_to(&log_path, "launch: watcher started");
+            }
+            Err(e) => {
+                // Non-fatal: one-shot content is already on disk, so the site
+                // still serves; only live updates are lost.
+                log_to(&log_path, &format!("launch: watch failed (continuing without live updates): {e}"));
+            }
+        }
+    }
+
+    // 5. Clear any stale port holder, then (re)spawn zfb dev.
+    {
+        let mut guard = sidecar_arc.lock().unwrap();
+        if let Some(mut old) = guard.take() {
+            kill_sidecar(&mut old, &log_path);
+        }
+    }
+    kill_port(&log_path);
+    {
+        let mut guard = sidecar_arc.lock().unwrap();
+        match spawn_zfb_dev(&zfb_bin, &workspace, &log_path) {
+            Ok(s) => *guard = Some(s),
+            Err(e) => {
+                drop(guard);
+                log_to(&log_path, &format!("launch: spawn failed: {e}"));
+                emit_launch_error_str(app_handle, "spawn_failed");
+                return;
+            }
+        }
+    }
+
+    // 6. Poll readiness on / (scaled for the cold first build).
+    let result = wait_for_ready(READY_TIMEOUT, &sidecar_arc, &log_path);
+
+    // 7. Skip navigate/emit if a newer launch superseded this one.
+    if app_handle.state::<AppState>().launch_gen.load(Ordering::SeqCst) != my_gen {
+        log_to(&log_path, "launch: superseded by a newer launch — skipping navigate/emit");
+        return;
+    }
+
+    match result {
+        ReadyResult::Ready => navigate_to_docs(app_handle),
+        ReadyResult::Timeout | ReadyResult::SidecarExited { .. } => {
+            emit_launch_error(app_handle, &result);
+        }
     }
 }
 
@@ -175,56 +680,54 @@ fn apply_zoom(app_handle: &AppHandle, level: f64) {
     }
 }
 
-#[tauri::command]
-fn refresh(app_handle: AppHandle) {
-    do_refresh(&app_handle);
-}
-
-/// Frontend-callable retry for the loading page's error panel.
-///
-/// Spawned on a thread so the IPC call returns immediately.
+/// Frontend-callable retry for the loading page's error panel. Spawned on a
+/// thread so the IPC call returns immediately. Re-runs the full `launch()`
+/// (which claims a new generation, tears down the old sidecar/watcher, and
+/// re-spawns) in both dev and prod — the host owns `zfb dev` in both modes.
 #[tauri::command]
 fn retry_launch(app_handle: AppHandle) {
-    log("retry_launch: invoked from frontend");
-    thread::spawn(move || do_refresh(&app_handle));
+    log_to(&log_path(&app_handle), "retry_launch: invoked from frontend");
+    thread::spawn(move || launch(&app_handle));
+}
+
+// ── Navigation filter ─────────────────────────────
+
+/// Allow in-window navigation only for localhost (the doc site), tauri/asset
+/// protocol URLs, and about:blank; open external http(s) links in the OS
+/// browser instead of inside the WebView.
+fn allow_navigation(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" | "asset" | "about" => true,
+        "http" | "https" => matches!(url.host_str(), Some("localhost") | Some("127.0.0.1")),
+        _ => false,
+    }
 }
 
 // ── Main ──────────────────────────────────────────
 
 fn main() {
-    if !IS_DEV {
-        kill_port();
-    }
+    let app_state = AppState {
+        sidecar: Arc::new(Mutex::new(None)),
+        watch_handle: Mutex::new(None),
+        zoom: Mutex::new(1.0),
+        log_path: Mutex::new(String::new()),
+        launch_gen: AtomicU64::new(0),
+    };
+    let sidecar_for_exit = app_state.sidecar.clone();
 
     tauri::Builder::default()
-        .manage(AppState {
-            zoom: Mutex::new(1.0),
-        })
-        .invoke_handler(tauri::generate_handler![refresh, retry_launch])
+        .manage(app_state)
+        .invoke_handler(tauri::generate_handler![retry_launch])
         .setup(move |app| {
-            // Resolve dist_dir for the embedded server.
-            // In production: Resources/app/dist (bundled via tauri.conf.json bundle.resources).
-            // In dev: fall back to $HOME/.claude/app/dist so `cargo tauri dev` works
-            // against a locally-built app/dist/ without requiring the full bundle.
-            let dist_dir = if IS_DEV {
-                std::path::PathBuf::from(home_dir())
-                    .join(".claude")
-                    .join("app")
-                    .join("dist")
-            } else {
-                // Tauri bundles resources from "../app/dist/**/*" (relative to src-tauri/).
-                // When resources are specified with a ".." traversal, Tauri places them under
-                // "_up_/<path>" inside Contents/Resources/ to represent the parent-dir step.
-                // So the actual bundle path is Resources/_up_/app/dist/, not Resources/app/dist/.
-                app.path()
-                    .resource_dir()
-                    .expect("resource_dir unavailable in production")
-                    .join("_up_")
-                    .join("app")
-                    .join("dist")
-            };
-
-            start_embedded_server(dist_dir);
+            // Resolve the log path under the app-data dir (always writable).
+            let app_data = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("/tmp"));
+            let _ = fs::create_dir_all(&app_data);
+            let log_path = app_data.join("ccresdoc.log").to_string_lossy().into_owned();
+            {
+                let state = app.state::<AppState>();
+                *state.log_path.lock().unwrap() = log_path.clone();
+            }
+            log_to(&log_path, "setup: starting CCResDoc");
 
             // ── Menu ──
             let app_menu = SubmenuBuilder::new(app, "CCResDoc")
@@ -281,10 +784,7 @@ fn main() {
             app.set_menu(menu)?;
 
             app.on_menu_event(|app_handle, event| match event.id().as_ref() {
-                "refresh" => {
-                    let handle = app_handle.clone();
-                    thread::spawn(move || do_refresh(&handle));
-                }
+                "refresh" => navigate_to_docs(app_handle),
                 "devtools" => {
                     if let Some(w) = app_handle.get_webview_window("main") {
                         if w.is_devtools_open() {
@@ -308,54 +808,42 @@ fn main() {
                 _ => {}
             });
 
-            // Show window immediately with the loading page, then navigate
-            // once the embedded server is ready.
-            if IS_DEV {
-                // In dev mode the server starts concurrently; navigate directly
-                // once it's ready rather than showing the bundled loading page.
-                let url: tauri::Url = docs_url()
-                    .parse()
-                    .expect("BUG: docs_url produced an invalid URL");
-                WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-                    .title("CCResDoc")
-                    .inner_size(1200.0, 800.0)
-                    .build()?;
-            } else {
-                // Production: open with loading page first, then navigate once server ready.
-                WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                    .title("CCResDoc")
-                    .inner_size(1200.0, 800.0)
-                    .build()?;
+            // ── Window ──
+            // Open immediately with the bundled loading page (anti-white-flash),
+            // then a background thread does the node-free boot and navigates.
+            // Use App("index.html") (the bundled frontendDist page) explicitly —
+            // NOT WebviewUrl::default(), which in dev resolves to `devUrl`
+            // (:4892) and would show connection-refused before zfb dev binds.
+            // The host owns `zfb dev` in BOTH dev and prod, so the loading page
+            // + readiness-navigate flow must run in both modes.
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("CCResDoc")
+                .inner_size(1200.0, 800.0)
+                .on_navigation(allow_navigation)
+                .build()?;
 
-                let handle = app.handle().clone();
-                thread::spawn(move || {
-                    let result = wait_for_ready(Duration::from_secs(30));
-                    match result {
-                        ReadyResult::Ready => {
-                            if let Some(w) = handle.get_webview_window("main") {
-                                let url: tauri::Url = docs_url()
-                                    .parse()
-                                    .expect("BUG: docs_url produced an invalid URL");
-                                let _ = w.navigate(url);
-                            }
-                        }
-                        ReadyResult::Timeout => {
-                            emit_launch_error(&handle, &result);
-                        }
-                    }
-                });
-            }
+            let handle = app.handle().clone();
+            thread::spawn(move || launch(&handle));
 
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
+        .run(move |app_handle, event| {
             if let tauri::RunEvent::WindowEvent {
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } = &event
             {
+                let log_path = log_path(app_handle);
+                // Stop the watcher and kill the sidecar process group so
+                // nothing is left holding port 4892.
+                let _ = app_handle.state::<AppState>().watch_handle.lock().unwrap().take();
+                if let Ok(mut g) = sidecar_for_exit.lock() {
+                    if let Some(mut s) = g.take() {
+                        kill_sidecar(&mut s, &log_path);
+                    }
+                }
                 app_handle.exit(0);
             }
         });
@@ -366,7 +854,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     fn read_tauri_conf() -> serde_json::Value {
         let conf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");
@@ -380,55 +867,68 @@ mod tests {
     }
 
     #[test]
-    fn docs_url_format_is_valid() {
-        let url_str = docs_url();
-        let url: Result<tauri::Url, _> = url_str.parse();
-        assert!(url.is_ok(), "Docs URL should be parseable: {url_str}");
+    fn docs_url_is_root_on_port() {
+        assert_eq!(docs_url(), format!("http://localhost:{PORT}/"));
+        let url: Result<tauri::Url, _> = docs_url().parse();
+        assert!(url.is_ok(), "docs_url should parse: {}", docs_url());
+    }
+
+    #[test]
+    fn claude_dir_is_absolute_and_not_home() {
+        let c = claude_dir();
+        assert!(c.is_absolute(), "claude_dir must be absolute");
+        assert!(c.ends_with(".claude"), "claude_dir must end with .claude, not be $HOME");
+    }
+
+    #[test]
+    fn zfb_platform_package_resolves_on_supported_targets() {
+        // On any host this crate compiles for here, the map must hit.
+        let pkg = zfb_platform_package();
+        assert!(
+            pkg.is_some(),
+            "no zfb platform package for {}-{}",
+            env::consts::OS,
+            env::consts::ARCH
+        );
+        assert!(pkg.unwrap().starts_with("@takazudo/zfb-"));
+    }
+
+    #[test]
+    fn zfb_binary_name_is_not_the_node_wrapper() {
+        // Must be the bare platform binary, never `.bin/zfb` (Node shebang).
+        let name = zfb_binary_name();
+        assert!(name == "zfb" || name == "zfb.exe");
+    }
+
+    #[test]
+    fn resolve_zfb_binary_errors_when_node_modules_absent() {
+        let tmp = std::env::temp_dir().join("ccresdoc-test-no-nm");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let res = resolve_zfb_binary(&tmp);
+        assert!(res.is_err(), "missing node_modules should error");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn navigation_filter_allows_localhost_only() {
+        let ok: tauri::Url = "http://localhost:4892/docs/".parse().unwrap();
+        let loop_ok: tauri::Url = "http://127.0.0.1:4892/".parse().unwrap();
+        let external: tauri::Url = "https://example.com/".parse().unwrap();
+        assert!(allow_navigation(&ok));
+        assert!(allow_navigation(&loop_ok));
+        assert!(!allow_navigation(&external), "external links must open in OS browser");
     }
 
     // ── tauri.conf.json assertions ──────────────────
 
     #[test]
-    fn tauri_conf_devurl_uses_correct_port() {
+    fn tauri_conf_devurl_points_to_port_4892_root() {
         let conf = read_tauri_conf();
-        let dev_url = conf["build"]["devUrl"]
-            .as_str()
-            .expect("devUrl must be a string");
-        let expected = format!("localhost:{PORT}");
-        assert!(
-            dev_url.contains(&expected),
-            "devUrl '{dev_url}' should reference port {PORT}"
-        );
+        let dev_url = conf["build"]["devUrl"].as_str().expect("devUrl must be a string");
+        assert_eq!(dev_url, docs_url(), "devUrl should equal http://localhost:{PORT}/");
     }
 
-    #[test]
-    fn tauri_conf_devurl_points_to_embedded_server() {
-        let conf = read_tauri_conf();
-        let dev_url = conf["build"]["devUrl"]
-            .as_str()
-            .expect("devUrl must be a string");
-        assert_eq!(
-            dev_url,
-            docs_url(),
-            "devUrl should equal http://localhost:{PORT}/"
-        );
-    }
-
-    /// No `beforeDevCommand` referencing pnpm dev:stable — the embedded server
-    /// starts inside the Tauri binary itself.
-    #[test]
-    fn tauri_conf_no_pnpm_dev_stable() {
-        let conf = read_tauri_conf();
-        // beforeDevCommand should either be absent or empty string
-        let cmd = conf["build"]["beforeDevCommand"].as_str().unwrap_or("");
-        assert!(
-            !cmd.contains("pnpm dev:stable"),
-            "beforeDevCommand must not reference pnpm dev:stable (got '{cmd}')"
-        );
-    }
-
-    /// `withGlobalTauri` must be true so the bundled loading page can reach
-    /// window.__TAURI__.event.listen and window.__TAURI__.core.invoke without a bundler.
     #[test]
     fn tauri_conf_enables_global_tauri() {
         let conf = read_tauri_conf();
@@ -440,41 +940,35 @@ mod tests {
         );
     }
 
-    /// beforeBuildCommand must run `zfb build` from the `app/` directory so
-    /// `cargo tauri build` compiles the frontend before bundling.
     #[test]
-    fn tauri_conf_before_build_command_builds_app() {
+    fn tauri_conf_keeps_product_and_identifier() {
         let conf = read_tauri_conf();
-        let cmd = conf["build"]["beforeBuildCommand"]
-            .as_str()
-            .expect("beforeBuildCommand must be a string");
-        assert!(
-            cmd.contains("../app") && cmd.contains("zfb build"),
-            "beforeBuildCommand '{cmd}' should run zfb build from ../app"
-        );
+        assert_eq!(conf["productName"].as_str(), Some("CCResDoc"));
+        assert_eq!(conf["identifier"].as_str(), Some("com.takazudo.ccresdoc"));
     }
 
-    /// bundle.resources must include app/dist/** so the dist is bundled into
-    /// the .app's Contents/Resources/ folder.
     #[test]
-    fn tauri_conf_resources_include_app_dist() {
+    fn tauri_conf_has_real_icon() {
+        let conf = read_tauri_conf();
+        let icons = conf["bundle"]["icon"].as_array().expect("bundle.icon must be an array");
+        assert!(!icons.is_empty(), "bundle.icon must be populated (was [])");
+    }
+
+    #[test]
+    fn tauri_conf_bundles_app_project_not_dist_only() {
+        // The writable workspace copy needs the whole app/ (incl. node_modules),
+        // so resources must bundle ../app/** — not just ../app/dist/**.
         let conf = read_tauri_conf();
         let resources = conf["bundle"]["resources"].clone();
-        // Accepts either a string or an array of strings.
-        let has_app_dist = match &resources {
-            serde_json::Value::String(s) => s.contains("app/dist"),
+        let bundles_app = match &resources {
+            serde_json::Value::String(s) => s.contains("app/"),
             serde_json::Value::Array(arr) => arr
                 .iter()
-                .any(|v| v.as_str().map(|s| s.contains("app/dist")).unwrap_or(false)),
+                .any(|v| v.as_str().map(|s| s.contains("app/")).unwrap_or(false)),
             _ => false,
         };
-        assert!(
-            has_app_dist,
-            "bundle.resources should include app/dist/**, got: {resources}"
-        );
+        assert!(bundles_app, "bundle.resources should include ../app/**, got: {resources}");
     }
-
-    // ── Loading page assertions ──────────────────
 
     #[test]
     fn loading_page_wires_launch_error_and_retry_launch() {
