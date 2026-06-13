@@ -6,6 +6,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use ccresdoc_claude_md::{generate, Config, GenerateError};
 
@@ -19,6 +20,13 @@ fn write(base: &Path, rel: &str, content: &str) {
 
 fn read(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {path:?}: {e}"))
+}
+
+fn mtime(path: &Path) -> SystemTime {
+    fs::metadata(path)
+        .unwrap_or_else(|e| panic!("failed to stat {path:?}: {e}"))
+        .modified()
+        .unwrap()
 }
 
 /// Build a Config where claude_dir == project_root (the real-world case) and a
@@ -419,6 +427,146 @@ fn regeneration_removes_stale_command_files() {
     assert!(
         !docs.join("claude-commands/remove-me.mdx").exists(),
         "stale command MDX should be removed on regeneration"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Idempotent writes: a no-op regen must not touch mtimes (Cause 2 fix).
+//
+// `zfb dev`'s content-watch keys off mtimes, so rewriting byte-identical MDX
+// would retrigger a full rebuild on every spurious regeneration. The generator
+// must skip the write when on-disk content is already identical.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn regeneration_is_idempotent_for_unchanged_inputs() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+
+    write(&claude, "CLAUDE.md", "root");
+    write(&claude, "commands/a.md", "---\ndescription: a\n---\nbody a");
+    write(&claude, "commands/b.md", "---\ndescription: b\n---\nbody b");
+    write(
+        &claude,
+        "agents/x.md",
+        "---\nname: X\ndescription: d\n---\nagent body",
+    );
+
+    // Run 1.
+    generate(&config_for(&claude, &docs)).unwrap();
+    let tracked = [
+        docs.join("claude-md/global.mdx"),
+        docs.join("claude-md/index.mdx"),
+        docs.join("claude-commands/a.mdx"),
+        docs.join("claude-commands/b.mdx"),
+        docs.join("claude-commands/index.mdx"),
+        docs.join("claude-agents/x.mdx"),
+        docs.join("claude/index.mdx"),
+    ];
+    let before: Vec<_> = tracked.iter().map(|p| mtime(p)).collect();
+
+    // Wait long enough that a *new* write would land on a distinguishable
+    // mtime (covers coarse-resolution filesystems).
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    // Run 2 with identical inputs — nothing should be rewritten.
+    generate(&config_for(&claude, &docs)).unwrap();
+    let after: Vec<_> = tracked.iter().map(|p| mtime(p)).collect();
+
+    for (i, p) in tracked.iter().enumerate() {
+        assert_eq!(
+            before[i], after[i],
+            "{p:?} was rewritten by a no-op regeneration (mtime changed)"
+        );
+    }
+}
+
+#[test]
+fn changing_one_source_rewrites_only_that_output() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+
+    write(&claude, "commands/a.md", "---\ndescription: a\n---\nbody a");
+    write(&claude, "commands/b.md", "---\ndescription: b\n---\nbody b");
+
+    generate(&config_for(&claude, &docs)).unwrap();
+    let a_path = docs.join("claude-commands/a.mdx");
+    let b_path = docs.join("claude-commands/b.mdx");
+    let a_before = mtime(&a_path);
+    let b_before = mtime(&b_path);
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    // Change only command `a`'s body.
+    write(
+        &claude,
+        "commands/a.md",
+        "---\ndescription: a\n---\nbody a EDITED",
+    );
+    generate(&config_for(&claude, &docs)).unwrap();
+
+    assert_ne!(
+        a_before,
+        mtime(&a_path),
+        "the changed command's output mtime should advance"
+    );
+    assert_eq!(
+        b_before,
+        mtime(&b_path),
+        "an unchanged command's output mtime must be preserved"
+    );
+    // And the edit is actually reflected.
+    assert!(read(&a_path).contains("body a EDITED"));
+}
+
+#[test]
+fn regeneration_prunes_stale_skill_subpages() {
+    // The skills category is the most complex keep-set (main page + ref/script/
+    // asset sub-pages, all flat in claude-skills/). Removing a reference must
+    // prune exactly that sub-page while leaving the skill's other outputs.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+
+    write(
+        &claude,
+        "skills/my-skill/SKILL.md",
+        "---\nname: My Skill\ndescription: d\n---\n\nbody",
+    );
+    write(
+        &claude,
+        "skills/my-skill/references/keep-ref.md",
+        "# Keep\n\nkept ref",
+    );
+    write(
+        &claude,
+        "skills/my-skill/references/drop-ref.md",
+        "# Drop\n\ndropped ref",
+    );
+
+    generate(&config_for(&claude, &docs)).unwrap();
+    let keep_page = docs.join("claude-skills/my-skill--ref-keep-ref.mdx");
+    let drop_page = docs.join("claude-skills/my-skill--ref-drop-ref.mdx");
+    assert!(keep_page.exists());
+    assert!(drop_page.exists());
+
+    // Remove one reference and regenerate.
+    fs::remove_file(claude.join("skills/my-skill/references/drop-ref.md")).unwrap();
+    generate(&config_for(&claude, &docs)).unwrap();
+
+    assert!(
+        keep_page.exists(),
+        "the surviving reference sub-page must remain"
+    );
+    assert!(
+        !drop_page.exists(),
+        "the removed reference's sub-page must be pruned"
+    );
+    assert!(
+        docs.join("claude-skills/my-skill.mdx").exists(),
+        "the main skill page must still exist"
     );
 }
 
