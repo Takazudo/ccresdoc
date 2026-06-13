@@ -40,11 +40,11 @@ else
 fi
 
 # ── Step 2: cargo clippy ─────────────────────────
-step "Step 2/4: cargo clippy --workspace --all-targets"
-if (cd "$ROOT_DIR" && cargo clippy --workspace --all-targets); then
+step "Step 2/4: cargo clippy --workspace --all-targets -- -D warnings"
+if (cd "$ROOT_DIR" && cargo clippy --workspace --all-targets -- -D warnings); then
   pass "cargo clippy passed"
 else
-  fail "cargo clippy --workspace --all-targets"
+  fail "cargo clippy --workspace --all-targets -- -D warnings"
 fi
 
 # ── Step 3: cargo test ───────────────────────────

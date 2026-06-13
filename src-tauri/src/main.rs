@@ -142,11 +142,11 @@ fn log_to(path: &str, msg: &str) {
 // ── Bundle version token (writable-workspace refresh gate) ─
 
 /// The version token used to decide whether the writable workspace copy is
-/// stale. We embed the app's Cargo package version at compile time; Wave 4's
-/// build step writes the same value into a `version.txt` beside the bundled
-/// `app/` so the check has a concrete file to compare against. We prefer the
-/// bundled `version.txt` (authoritative for what was actually shipped) and
-/// fall back to the compiled-in version when it is absent.
+/// stale. The effective token is the app's Cargo package version, embedded at
+/// compile time. An optional `version.txt` beside the bundled `app/` overrides
+/// it if present (so a build could emit a per-build token), but the build does
+/// NOT currently emit one — so the compiled-in version is what's used. Bump the
+/// crate version per release and the workspace refreshes on upgrade.
 fn bundled_version_token(resources_app_parent: &Path) -> String {
     let version_file = resources_app_parent.join("version.txt");
     if let Ok(v) = fs::read_to_string(&version_file) {

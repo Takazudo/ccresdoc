@@ -66,9 +66,13 @@ segment is Tauri's convention for the `..` traversal step).
 
 On bundled launch the host copies `Resources/_up_/app/` → `app-workspace/` and
 writes a sentinel `.ccresdoc-workspace-ready` containing the **version token**.
-The token is read from `Resources/_up_/version.txt` if present (authoritative
-for what shipped — Wave 4 writes it at build), else falls back to the compiled
-`CARGO_PKG_VERSION`. On the next launch:
+The token is read from `Resources/_up_/version.txt` if present (an optional
+override — the build does NOT currently emit one), else falls back to the
+compiled `CARGO_PKG_VERSION`. So in practice the effective token is the host
+crate's `CARGO_PKG_VERSION`: bump it per release and the workspace refreshes on
+upgrade. (Two builds sharing the same crate version would reuse the copy — a
+per-build `version.txt` token is a tracked enhancement, not yet wired.) On the
+next launch:
 
 - sentinel present **and** its token == bundled token → reuse the copy
 - token differs (newer bundle) **or** sentinel missing (interrupted/partial
@@ -165,9 +169,12 @@ navigate flow must run in both modes.
   Resources carry pre-installed `node_modules` (incl. the native
   `@takazudo/zfb-<platform>` binary + `@takazudo/zudo-doc`). Node is only
   needed at build time; runtime is node-free.
-- **`version.txt`** should be written into the bundled `app/` (or its `_up_`
-  parent) as the workspace-refresh token so the host can detect a newer bundle.
-  See the workspace resolution section above.
+- **`version.txt`** (optional, NOT currently emitted by the build): the host
+  reads `Resources/_up_/version.txt` as a workspace-refresh-token override if
+  present, else uses the compiled `CARGO_PKG_VERSION`. Wiring the build to emit
+  a per-build token (so any rebuilt bundle refreshes the workspace, not just a
+  crate-version bump) is a tracked enhancement. See the workspace resolution
+  section above.
 - **Bundling** of `../app/**/*` is set in `bundle.resources`; the icon set is
   under `icons/`.
 

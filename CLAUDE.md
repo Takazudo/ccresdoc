@@ -10,7 +10,7 @@ This repo uses zfb (Rust SSG orchestrator at `$HOME/repos/myoss/zfb`) for the fr
 - The host resolves the **native** zfb binary at `<workspace>/node_modules/@takazudo/zfb-<platform>/zfb` — NOT the `.bin/zfb` Node-shebang wrapper.
 - **Port 4892**: pinned in `app/zfb.config.ts` and `src-tauri/tauri.conf.json`.
 - **Node-free at runtime**: `zfb dev` with zero `.mjs` plugins spawns no Node host process.
-- **Writable workspace model**: bundled `.app` copies its `app/` tree to `<app_data_dir>/app-workspace/` on first launch, versioned by `version.txt` + `.ccresdoc-workspace-ready` sentinel.
+- **Writable workspace model**: bundled `.app` copies its `app/` tree to `<app_data_dir>/app-workspace/` on first launch, gated by a version token (the host's compiled `CARGO_PKG_VERSION`, with an optional `version.txt` override) + a `.ccresdoc-workspace-ready` sentinel.
 - **Rust `~/.claude`→MDX generator** (`crates/ccresdoc-claude-md`) is the live engine: `generate()` + `watch()` write MDX → `zfb dev` content-watch → HMR.
 - Readiness is polled on `GET /` (NOT `/___ready`).
 

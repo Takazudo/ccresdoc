@@ -35,7 +35,7 @@ jobs:
       # The only library crate is `ccresdoc-claude-md` (the ~/.claude→MDX
       # generator + watcher); it is pure Rust and runs cleanly on any platform.
       - name: cargo clippy --workspace --exclude ccresdoc --all-targets
-        run: cargo clippy --workspace --exclude ccresdoc --all-targets
+        run: cargo clippy --workspace --exclude ccresdoc --all-targets -- -D warnings
 
       - name: cargo test --workspace --exclude ccresdoc
         run: cargo test --workspace --exclude ccresdoc

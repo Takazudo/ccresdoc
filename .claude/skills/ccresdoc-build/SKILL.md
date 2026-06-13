@@ -55,8 +55,9 @@ cargo clean -p ccresdoc
 
 ### Step 3: Build app/ (zfb static shell) + .app bundle
 
-`cargo tauri build` runs `cd ../app && pnpm install && pnpm exec zfb build` automatically
-(via `beforeBuildCommand` in `src-tauri/tauri.conf.json`). This invokes the native zfb
+`cargo tauri build` runs `cd app && pnpm install && pnpm exec zfb build` automatically
+(via `beforeBuildCommand` in `src-tauri/tauri.conf.json`; Tauri runs build hooks from the
+project root, so the path is `app`, not `../app`). This invokes the native zfb
 binary through pnpm — no global `zfb` on PATH required. Produces both `.app` and `.dmg`
 bundles under `target/release/bundle/`.
 
