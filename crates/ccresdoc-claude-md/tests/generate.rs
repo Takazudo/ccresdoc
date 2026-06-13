@@ -1,0 +1,407 @@
+//! Integration tests for the MDX generator.
+//!
+//! Each test builds a minimal `~/.claude`-shaped fixture in a `TempDir`,
+//! generates into a separate temp `docs_dir`, and asserts the emitted MDX.
+//! No real `$HOME/.claude` is mutated.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use ccresdoc_claude_md::{generate, Config, GenerateError};
+
+fn write(base: &Path, rel: &str, content: &str) {
+    let full = base.join(rel);
+    if let Some(parent) = full.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    fs::write(full, content).unwrap();
+}
+
+fn read(path: &Path) -> String {
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {path:?}: {e}"))
+}
+
+/// Build a Config where claude_dir == project_root (the real-world case) and a
+/// distinct docs_dir under the same temp root.
+fn config_for(claude_dir: &Path, docs_dir: &Path) -> Config {
+    Config {
+        claude_dir: claude_dir.to_path_buf(),
+        project_root: claude_dir.to_path_buf(),
+        docs_dir: docs_dir.to_path_buf(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CLAUDE.md hierarchy → claude-md/{global,project-*}.mdx
+// ---------------------------------------------------------------------------
+
+#[test]
+fn root_claude_md_emits_global_mdx() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+    write(&claude, "CLAUDE.md", "# Root instructions\n\nHello.");
+
+    let report = generate(&config_for(&claude, &docs)).unwrap();
+    assert_eq!(report.claude_md, 1);
+
+    let global = read(&docs.join("claude-md/global.mdx"));
+    assert!(global.contains("title: \"/CLAUDE.md\""));
+    assert!(global.contains("sidebar_position: 1"));
+    assert!(global.contains("**Path:** `CLAUDE.md`"));
+    assert!(global.contains("Root instructions"));
+
+    // Category index header.
+    let idx = read(&docs.join("claude-md/index.mdx"));
+    assert!(idx.contains("sidebar_position: 900"));
+    assert!(idx.contains("category_no_page: true"));
+    assert!(idx.contains("title: \"CLAUDE.md\""));
+}
+
+#[test]
+fn nested_claude_md_emits_project_prefixed_file() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+    write(&claude, "CLAUDE.md", "root");
+    write(&claude, "some/nested/CLAUDE.md", "nested");
+
+    generate(&config_for(&claude, &docs)).unwrap();
+
+    assert!(docs.join("claude-md/global.mdx").exists());
+    let nested = read(&docs.join("claude-md/project-some--nested.mdx"));
+    assert!(nested.contains("title: \"/some/nested/CLAUDE.md\""));
+    assert!(nested.contains("sidebar_label: \"some/nested/CLAUDE.md\""));
+}
+
+// ---------------------------------------------------------------------------
+// Commands → claude-commands/<name>.mdx
+// ---------------------------------------------------------------------------
+
+#[test]
+fn commands_emit_one_file_each_with_description() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+    write(
+        &claude,
+        "commands/my-cmd.md",
+        "---\ndescription: Does things\n---\n\nActual body here.",
+    );
+
+    let report = generate(&config_for(&claude, &docs)).unwrap();
+    assert_eq!(report.commands, 1);
+
+    let cmd = read(&docs.join("claude-commands/my-cmd.mdx"));
+    assert!(cmd.contains("title: \"my-cmd\""));
+    assert!(cmd.contains("description: \"Does things\""));
+    assert!(cmd.contains("Actual body here."));
+    // The body must NOT contain the frontmatter delimiters.
+    let body = cmd.splitn(3, "---").nth(2).unwrap();
+    assert!(!body.contains("description: Does things"));
+
+    let idx = read(&docs.join("claude-commands/index.mdx"));
+    assert!(idx.contains("sidebar_position: 901"));
+}
+
+// ---------------------------------------------------------------------------
+// Skills → claude-skills/<dir>.mdx + unlisted sub-pages
+// ---------------------------------------------------------------------------
+
+#[test]
+fn skills_emit_page_tree_and_subpages() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+
+    write(
+        &claude,
+        "skills/my-skill/SKILL.md",
+        "---\nname: My Skill\ndescription: A test skill\n---\n\nSkill body. See [the ref](references/ref-a.md).",
+    );
+    write(
+        &claude,
+        "skills/my-skill/references/ref-a.md",
+        "# Reference A\n\nReference content.",
+    );
+    write(
+        &claude,
+        "skills/my-skill/scripts/run.md",
+        "# Run Script\n\nScript body.",
+    );
+    write(&claude, "skills/my-skill/scripts/run.sh", "#!/bin/sh\necho hi");
+
+    let report = generate(&config_for(&claude, &docs)).unwrap();
+    assert_eq!(report.skills, 1);
+
+    let skill = read(&docs.join("claude-skills/my-skill.mdx"));
+    assert!(skill.contains("title: \"My Skill\""));
+    assert!(skill.contains("## File Structure"));
+    // File tree lists both md and binary scripts + the reference.
+    assert!(skill.contains("SKILL.md"));
+    assert!(skill.contains("run.sh"));
+    assert!(skill.contains("ref-a.md"));
+    // Body links rewritten to doc-site URLs: `references/ref-a.md` →
+    // `./ref-` + `ref-a` (the captured stem), matching the JS regex.
+    assert!(skill.contains("[the ref](./ref-ref-a)"));
+    // Link list points to the sub-pages (href is `./ref-` + the file stem).
+    assert!(skill.contains("[references/ref-a.md](./ref-ref-a)"));
+    assert!(skill.contains("[scripts/run.md](./script-run)"));
+
+    // Unlisted reference sub-page with custom slug.
+    let ref_page = read(&docs.join("claude-skills/my-skill--ref-ref-a.mdx"));
+    assert!(ref_page.contains("slug: \"claude-skills/my-skill/ref-ref-a\""));
+    assert!(ref_page.contains("unlisted: true"));
+    assert!(ref_page.contains("Reference content."));
+
+    // Unlisted markdown-script sub-page.
+    let script_page = read(&docs.join("claude-skills/my-skill--script-run.mdx"));
+    assert!(script_page.contains("slug: \"claude-skills/my-skill/script-run\""));
+    assert!(script_page.contains("Script body."));
+
+    // No sub-page for the binary script.
+    assert!(!docs.join("claude-skills/my-skill--script-run.sh.mdx").exists());
+
+    let idx = read(&docs.join("claude-skills/index.mdx"));
+    assert!(idx.contains("sidebar_position: 902"));
+}
+
+#[test]
+fn skill_description_truncated_to_200_chars() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+    let long = "x".repeat(300);
+    write(
+        &claude,
+        "skills/big/SKILL.md",
+        &format!("---\nname: Big\ndescription: {long}\n---\n\nBody."),
+    );
+
+    generate(&config_for(&claude, &docs)).unwrap();
+    let page = read(&docs.join("claude-skills/big.mdx"));
+    // 200 'x' + "..." should be present, but not the full 300.
+    assert!(page.contains(&format!("{}...", "x".repeat(200))));
+    assert!(!page.contains(&"x".repeat(201)));
+}
+
+#[test]
+fn skill_without_frontmatter_is_skipped() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+    write(&claude, "skills/no-fm/SKILL.md", "Just a body, no frontmatter.");
+    write(
+        &claude,
+        "skills/has-fm/SKILL.md",
+        "---\nname: Has FM\ndescription: ok\n---\n\nbody",
+    );
+
+    let report = generate(&config_for(&claude, &docs)).unwrap();
+    assert_eq!(report.skills, 1, "skill lacking frontmatter must be skipped");
+    assert!(docs.join("claude-skills/has-fm.mdx").exists());
+    assert!(!docs.join("claude-skills/no-fm.mdx").exists());
+}
+
+// ---------------------------------------------------------------------------
+// Agents → claude-agents/<name>.mdx
+// ---------------------------------------------------------------------------
+
+#[test]
+fn agents_emit_with_model_badge() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+    write(
+        &claude,
+        "agents/code-review.md",
+        "---\nname: Code Reviewer\ndescription: Reviews code\nmodel: claude-opus-4\n---\n\nAgent instructions.",
+    );
+
+    let report = generate(&config_for(&claude, &docs)).unwrap();
+    assert_eq!(report.agents, 1);
+
+    let agent = read(&docs.join("claude-agents/code-review.mdx"));
+    assert!(agent.contains("title: \"Code Reviewer\""));
+    assert!(agent.contains("**Model:** `claude-opus-4`"));
+    assert!(agent.contains("Agent instructions."));
+
+    let idx = read(&docs.join("claude-agents/index.mdx"));
+    assert!(idx.contains("sidebar_position: 903"));
+}
+
+// ---------------------------------------------------------------------------
+// Overview index
+// ---------------------------------------------------------------------------
+
+#[test]
+fn overview_index_lists_only_generated_categories() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+    write(&claude, "CLAUDE.md", "root");
+    write(
+        &claude,
+        "agents/a.md",
+        "---\nname: A\ndescription: d\n---\nbody",
+    );
+    // no commands, no skills
+
+    generate(&config_for(&claude, &docs)).unwrap();
+    let overview = read(&docs.join("claude/index.mdx"));
+    assert!(overview.contains("sidebar_position: 899"));
+    assert!(overview.contains("category_no_page: true"));
+    // Only claude-md and claude-agents present; in contract order.
+    assert!(overview.contains(r#"<CategoryNav categories={["claude-md","claude-agents"]} />"#));
+}
+
+// ---------------------------------------------------------------------------
+// Boundary: project_root = $HOME is rejected
+// ---------------------------------------------------------------------------
+
+#[test]
+fn project_root_home_returns_err() {
+    let home = std::env::var_os("HOME").expect("HOME not set");
+    let home_path = PathBuf::from(home);
+    let docs = tempfile::TempDir::new().unwrap();
+
+    let config = Config {
+        claude_dir: home_path.join(".claude"),
+        project_root: home_path,
+        docs_dir: docs.path().to_path_buf(),
+    };
+    match generate(&config) {
+        Err(GenerateError::ProjectRootTooBroad(_)) => {}
+        other => panic!("expected ProjectRootTooBroad, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Boundary: the CLAUDE.md walk does NOT escape project_root (~/.claude)
+//
+// Build a tree where a sibling of ~/.claude (i.e. directly under $HOME-like
+// root) also has a CLAUDE.md. The walk rooted at claude_dir must NOT pick it
+// up — proving the scope stays inside ~/.claude.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn walk_is_scoped_to_claude_dir_not_parent() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let fake_home = tmp.path();
+    let claude = fake_home.join(".claude");
+    let docs = fake_home.join("out");
+
+    // Inside ~/.claude — should be found.
+    write(&claude, "CLAUDE.md", "inside claude");
+    write(&claude, "sub/CLAUDE.md", "inside claude sub");
+
+    // OUTSIDE ~/.claude (a sibling project under the fake home) — must NOT be
+    // walked, because project_root is scoped to ~/.claude.
+    write(fake_home, "other-project/CLAUDE.md", "OUTSIDE — must not appear");
+    write(fake_home, "CLAUDE.md", "HOME-level — must not appear");
+
+    let report = generate(&config_for(&claude, &docs)).unwrap();
+    assert_eq!(
+        report.claude_md, 2,
+        "only the two CLAUDE.md files inside ~/.claude should be discovered"
+    );
+
+    // Confirm no emitted page contains the outside content.
+    let global = read(&docs.join("claude-md/global.mdx"));
+    assert!(global.contains("inside claude"));
+    let dir = fs::read_dir(docs.join("claude-md")).unwrap();
+    for entry in dir {
+        let p = entry.unwrap().path();
+        let content = fs::read_to_string(&p).unwrap();
+        assert!(
+            !content.contains("OUTSIDE"),
+            "{p:?} leaked content from outside ~/.claude"
+        );
+        assert!(
+            !content.contains("HOME-level"),
+            "{p:?} leaked HOME-level CLAUDE.md content"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Exclude dirs: .git / node_modules / worktrees skipped within ~/.claude
+// ---------------------------------------------------------------------------
+
+#[test]
+fn exclude_dirs_are_not_walked() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+    write(&claude, "CLAUDE.md", "root");
+    write(&claude, ".git/CLAUDE.md", "excluded");
+    write(&claude, "node_modules/CLAUDE.md", "excluded");
+    write(&claude, "worktrees/CLAUDE.md", "excluded");
+    write(&claude, "real/CLAUDE.md", "kept");
+
+    let report = generate(&config_for(&claude, &docs)).unwrap();
+    assert_eq!(report.claude_md, 2, "root + real only");
+}
+
+// ---------------------------------------------------------------------------
+// Regeneration cleans stale files (clean_dir semantics)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn regeneration_removes_stale_command_files() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+    write(&claude, "commands/keep.md", "---\ndescription: k\n---\nbody");
+    write(&claude, "commands/remove-me.md", "---\ndescription: r\n---\nbody");
+
+    generate(&config_for(&claude, &docs)).unwrap();
+    assert!(docs.join("claude-commands/remove-me.mdx").exists());
+
+    // Remove one command and regenerate.
+    fs::remove_file(claude.join("commands/remove-me.md")).unwrap();
+    generate(&config_for(&claude, &docs)).unwrap();
+
+    assert!(docs.join("claude-commands/keep.mdx").exists());
+    assert!(
+        !docs.join("claude-commands/remove-me.mdx").exists(),
+        "stale command MDX should be removed on regeneration"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// MDX escaping fidelity in emitted content
+// ---------------------------------------------------------------------------
+
+#[test]
+fn emitted_command_body_escapes_jsx_and_braces() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+    write(
+        &claude,
+        "commands/escapes.md",
+        "---\ndescription: e\n---\n\nUse <Widget> and {value} but keep `<Code>` and <div> intact.",
+    );
+
+    generate(&config_for(&claude, &docs)).unwrap();
+    let page = read(&docs.join("claude-commands/escapes.mdx"));
+    assert!(page.contains("&lt;Widget&gt;"));
+    assert!(page.contains("&#123;value&#125;"));
+    assert!(page.contains("`<Code>`")); // inline code preserved
+    assert!(page.contains("<div>")); // known HTML tag preserved
+}
+
+// ---------------------------------------------------------------------------
+// Absolute-path validation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn relative_paths_are_rejected() {
+    let config = Config {
+        claude_dir: PathBuf::from("relative/claude"),
+        project_root: PathBuf::from("relative/claude"),
+        docs_dir: PathBuf::from("relative/docs"),
+    };
+    assert!(generate(&config).is_err());
+}
