@@ -156,15 +156,18 @@ page) **explicitly** — NOT `WebviewUrl::default()`, which in dev resolves to
 host owns `zfb dev` in both dev and prod, so the loading-page → readiness →
 navigate flow must run in both modes.
 
-## What Wave 4 must wire
+## Build-time wiring (Wave 4 — completed)
 
-- **Build-time `pnpm install`** in `app/` so the bundled Resources carry a
-  pre-installed `node_modules` (incl. the native `@takazudo/zfb-<platform>`
-  binary + `@takazudo/zudo-doc`). `beforeBuildCommand` runs
-  `cd ../app && pnpm install && pnpm exec zfb build`; the build skill owns this.
-- **`version.txt`** written into the bundled `app/` (or its `_up_` parent) so
-  the workspace-refresh token matches what shipped.
-- Bundling of `../app/**/*` (already set in `bundle.resources`) and the icon set.
+- **`beforeBuildCommand`** in `src-tauri/tauri.conf.json` runs
+  `cd ../app && pnpm install && pnpm exec zfb build`, ensuring the bundled
+  Resources carry pre-installed `node_modules` (incl. the native
+  `@takazudo/zfb-<platform>` binary + `@takazudo/zudo-doc`). Node is only
+  needed at build time; runtime is node-free.
+- **`version.txt`** should be written into the bundled `app/` (or its `_up_`
+  parent) as the workspace-refresh token so the host can detect a newer bundle.
+  See the workspace resolution section above.
+- **Bundling** of `../app/**/*` is set in `bundle.resources`; the icon set is
+  under `icons/`.
 
 ## Platform
 

@@ -1,6 +1,6 @@
-# app/ — CCResDoc zfb project
+# app/ — CCResDoc zfb frontend project
 
-zudo-doc consumer project built by zfb. Output in `dist/` is served by the axum runtime server.
+zudo-doc consumer project built by zfb. Output in `dist/` is served by `zfb dev` (sidecar, port 4892, node-free at runtime).
 
 ## Architecture
 
@@ -12,12 +12,12 @@ zudo-doc consumer project built by zfb. Output in `dist/` is served by the axum 
 
 ## Build
 
-The `node_modules/.bin/zfb` launcher runs the native Rust binary. Build:
+`node_modules` must be populated at setup time via `pnpm install` (Node at setup only — not at runtime). The native `@takazudo/zfb-<platform>/zfb` binary is then invoked via `pnpm exec zfb` — do NOT use `node_modules/.bin/zfb`, which is a Node-shebang wrapper that requires Node at runtime.
 
 ```sh
 cd app
-pnpm install    # once
-pnpm build      # or: pnpm zfb build
+pnpm install          # once — populates node_modules incl. native zfb binary
+pnpm exec zfb build   # node-free: invokes native binary directly
 ```
 
 ## Structure
@@ -73,9 +73,10 @@ app/
 
 ## MDX Content Contract (Wave 2)
 
-The Rust generator (Wave 2, `crates/claude-resources/`) writes MDX to
+The Rust generator (`crates/ccresdoc-claude-md`) writes MDX to
 `src/content/docs/claude*/`. These directories are **gitignored** — they are
-rebuilt on every app launch by the sidecar (Wave 3 / `src-tauri/`).
+rebuilt on every app launch by the Tauri host (`src-tauri/`) running the
+generator in-process.
 
 ### Directory layout
 
