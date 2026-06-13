@@ -159,7 +159,9 @@ navigate flow must run in both modes.
 ## Build-time wiring (Wave 4 — completed)
 
 - **`beforeBuildCommand`** in `src-tauri/tauri.conf.json` runs
-  `cd ../app && pnpm install && pnpm exec zfb build`, ensuring the bundled
+  `cd app && pnpm install && pnpm exec zfb build` (Tauri runs hooks from the
+  **project root** — the parent of `src-tauri/` — so the path is `app`, not
+  `../app`), ensuring the bundled
   Resources carry pre-installed `node_modules` (incl. the native
   `@takazudo/zfb-<platform>` binary + `@takazudo/zudo-doc`). Node is only
   needed at build time; runtime is node-free.
