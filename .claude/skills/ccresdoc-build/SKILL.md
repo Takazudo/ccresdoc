@@ -73,8 +73,10 @@ Check that the bundled `app/dist/` exists and `node_modules` includes the native
 ```bash
 BUNDLE=target/release/bundle/macos/CCResDoc.app/Contents/Resources/_up_/app
 [ -d "$BUNDLE/dist" ] || { echo "FAIL: bundled dist/ missing"; exit 1; }
-[ -f "$BUNDLE/node_modules/@takazudo/zfb-darwin-arm64/zfb" ] || \
-  { echo "FAIL: native zfb binary missing from bundle"; exit 1; }
+# Verify any @takazudo/zfb-* native binary exists in the bundled node_modules.
+# On the primary build host (macOS arm64) this is @takazudo/zfb-darwin-arm64.
+ls "$BUNDLE/node_modules/@takazudo"/zfb-*/zfb 2>/dev/null | grep -q . || \
+  { echo "FAIL: no native zfb binary found in bundled node_modules/@takazudo/"; exit 1; }
 echo "Bundle looks good: $(du -sh $BUNDLE/dist | cut -f1) dist"
 ```
 

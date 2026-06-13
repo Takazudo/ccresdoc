@@ -60,18 +60,26 @@ step "Step 4/4: pnpm install + zfb build (app/)"
 
 # 4a: ensure node_modules (including native zfb binary) are present.
 # Node is only needed here at setup time; zfb dev/build is node-free at runtime.
+INSTALL_OK=0
 if (cd "$ROOT_DIR/app" && pnpm install); then
   pass "pnpm install (app/) passed"
+  INSTALL_OK=1
 else
   fail "pnpm install (app/)"
 fi
 
 # 4b: invoke zfb build via pnpm exec so the native @takazudo/zfb-<platform>/zfb
 # binary is used — no global zfb on PATH required.
-if (cd "$ROOT_DIR/app" && pnpm exec zfb build); then
-  pass "zfb build (app/) passed"
+# Skip if pnpm install failed: node_modules may be incomplete, causing misleading errors.
+if [ "$INSTALL_OK" -eq 1 ]; then
+  if (cd "$ROOT_DIR/app" && pnpm exec zfb build); then
+    pass "zfb build (app/) passed"
+  else
+    fail "zfb build (app/)"
+  fi
 else
-  fail "zfb build (app/)"
+  echo "⏭ skipping zfb build (pnpm install failed)"
+  FAILURES+=("zfb build (app/) — skipped: pnpm install failed")
 fi
 
 # ── Summary ─────────────────────────────────────
