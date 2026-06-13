@@ -8,6 +8,7 @@ src-tauri/target/
 
 # Node
 node_modules/
+app/.zfb-build/
 app/dist/**
 !app/dist/placeholder.txt
 
