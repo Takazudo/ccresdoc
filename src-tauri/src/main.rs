@@ -257,8 +257,12 @@ fn resolve_workspace(app: &AppHandle, log_path: &str) -> Result<WorkspaceResolut
     if workspace.exists() {
         fs::remove_dir_all(&workspace).map_err(|e| format!("clear stale workspace: {e}"))?;
     }
-    copy_dir_recursive(&bundled_app, &workspace)
+    copy_workspace(&bundled_app, &workspace, log_path)
         .map_err(|e| format!("copy bundled app into workspace: {e}"))?;
+    // The sentinel is written LAST (after the copy succeeds) so a partial copy
+    // is detected as not-ready. The bundled app/ has no sentinel of its own, so
+    // a fast `cp` cannot drag a stale "ready" marker into a partial dest; still,
+    // writing it here unconditionally after success keeps the invariant.
     fs::write(&ready_sentinel, &bundled_token).map_err(|e| format!("write ready sentinel: {e}"))?;
 
     log_to(
@@ -268,9 +272,107 @@ fn resolve_workspace(app: &AppHandle, log_path: &str) -> Result<WorkspaceResolut
     Ok(WorkspaceResolution::AppDataCopy(workspace))
 }
 
+/// Copy the bundled `src` tree into `dst`, preserving permissions and symlinks.
+///
+/// The workspace is large (~636MB; ~413MB is `node_modules` of many small
+/// files). A byte-for-byte [`copy_dir_recursive`] of it measured ~41s on cold
+/// first launch, which alone blows the 60s acceptance budget. So on macOS we
+/// prefer **APFS clonefile** (copy-on-write — near-instant, no data is moved):
+///
+///   1. `cp -Rc src/. dst` — `-c` uses `clonefile(2)`, `-R` recurses,
+///      symlinks are copied as symlinks and permissions preserved (matching
+///      [`copy_dir_recursive`]'s semantics). The `src/.` form copies the
+///      CONTENTS of `src` into `dst` (so `dst/node_modules/…`, NOT
+///      `dst/app/node_modules/…`).
+///   2. If that fails (clonefile only works within one APFS volume — a
+///      cross-volume app-data dir returns non-zero), fall back to `cp -R`
+///      (still a fast native copy).
+///   3. If `cp` is unavailable/fails entirely, fall back to the portable
+///      [`copy_dir_recursive`] byte copy.
+///
+/// On non-macOS we always use [`copy_dir_recursive`].
+///
+/// `dst` is expected to be freshly created/empty (the caller removes any stale
+/// copy first); the sentinel is written by the caller AFTER this returns Ok.
+fn copy_workspace(src: &Path, dst: &Path, log_path: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        // `cp -Rc src/. dst` clones the CONTENTS of src into dst via clonefile.
+        let src_contents = format!("{}/.", src.display());
+        if run_cp(
+            dst,
+            &["-Rc", &src_contents, &dst.to_string_lossy()],
+            log_path,
+        ) {
+            log_to(log_path, "copy_workspace: used clonefile (cp -Rc)");
+            return Ok(());
+        }
+        log_to(
+            log_path,
+            "copy_workspace: cp -Rc failed (cross-volume?) — falling back to cp -R",
+        );
+        if run_cp(
+            dst,
+            &["-R", &src_contents, &dst.to_string_lossy()],
+            log_path,
+        ) {
+            log_to(log_path, "copy_workspace: used native copy (cp -R)");
+            return Ok(());
+        }
+        log_to(
+            log_path,
+            "copy_workspace: cp -R failed — falling back to byte copy",
+        );
+        // Start the byte-copy fallback from a clean dest so a partially-written
+        // failed `cp` cannot leave stray files behind.
+        let _ = fs::remove_dir_all(dst);
+    }
+    log_to(
+        log_path,
+        "copy_workspace: using byte copy (copy_dir_recursive)",
+    );
+    copy_dir_recursive(src, dst)
+}
+
+/// Run `/bin/cp` with the given args; returns true on a zero exit status. `dst`
+/// is wiped and recreated empty first so each attempt starts clean — a failed
+/// `cp` (e.g. cross-volume `-Rc`) cannot leave a partial tree for the next
+/// fallback hop, and the `src/. → dst` form writes contents INTO an existing
+/// `dst` rather than erroring. `cp`'s stderr is logged on failure so a field
+/// diagnosis can see WHY the fast path was rejected (cross-volume, perms, …).
+#[cfg(target_os = "macos")]
+fn run_cp(dst: &Path, args: &[&str], log_path: &str) -> bool {
+    let _ = fs::remove_dir_all(dst);
+    if fs::create_dir_all(dst).is_err() {
+        return false;
+    }
+    match Command::new("/bin/cp").args(args).output() {
+        Ok(out) if out.status.success() => true,
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            log_to(
+                log_path,
+                &format!(
+                    "run_cp: cp {args:?} failed ({}): {}",
+                    out.status,
+                    stderr.trim()
+                ),
+            );
+            false
+        }
+        Err(e) => {
+            log_to(log_path, &format!("run_cp: cp {args:?} spawn error: {e}"));
+            false
+        }
+    }
+}
+
 /// Recursively copy `src` into `dst`, preserving Unix permissions (the native
 /// `zfb` binary and `node_modules/.bin` shims must stay executable). Symlinks
 /// are recreated as symlinks (pnpm's `node_modules` is symlink-heavy).
+///
+/// Cross-platform fallback for [`copy_workspace`]; used directly on non-macOS
+/// and when the macOS `cp` fast paths fail.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
@@ -1066,6 +1168,85 @@ mod tests {
             bundles_app,
             "bundle.resources should include ../app/**, got: {resources}"
         );
+    }
+
+    // ── copy_workspace / copy_dir_recursive ─────────
+
+    /// Build a small source tree: a file, a nested subdir with a file, and a
+    /// symlink. Returns the temp dir root (caller removes it).
+    fn make_sample_tree(root: &Path) {
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("top.txt"), b"top-contents").unwrap();
+        std::fs::write(root.join("sub").join("nested.txt"), b"nested-contents").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("top.txt", root.join("link-to-top")).unwrap();
+    }
+
+    /// Assert `dst` mirrors the tree `make_sample_tree` created in `src`:
+    /// identical file contents, nested structure, and a preserved symlink.
+    fn assert_tree_copied(dst: &Path) {
+        assert_eq!(
+            std::fs::read(dst.join("top.txt")).unwrap(),
+            b"top-contents",
+            "top file contents must match"
+        );
+        assert_eq!(
+            std::fs::read(dst.join("sub").join("nested.txt")).unwrap(),
+            b"nested-contents",
+            "nested file contents must match"
+        );
+        #[cfg(unix)]
+        {
+            let link = dst.join("link-to-top");
+            let meta =
+                std::fs::symlink_metadata(&link).expect("symlink entry must exist in the copy");
+            assert!(
+                meta.file_type().is_symlink(),
+                "link-to-top must be preserved AS a symlink, not dereferenced into a regular file"
+            );
+            assert_eq!(
+                std::fs::read_link(&link).unwrap(),
+                Path::new("top.txt"),
+                "symlink target must be preserved"
+            );
+        }
+    }
+
+    /// `copy_workspace` produces a faithful copy regardless of which path it
+    /// took (clonefile/native `cp` on macOS, byte copy elsewhere or on `cp`
+    /// failure). This exercises the macOS fast path on macOS and the portable
+    /// fallback on other platforms.
+    #[test]
+    fn copy_workspace_preserves_files_and_symlinks() {
+        let base =
+            std::env::temp_dir().join(format!("ccresdoc-test-copyws-{}", std::process::id()));
+        let src = base.join("src");
+        let dst = base.join("dst");
+        let _ = std::fs::remove_dir_all(&base);
+        make_sample_tree(&src);
+
+        copy_workspace(&src, &dst, "").expect("copy_workspace should succeed");
+        assert_tree_copied(&dst);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The portable fallback copies an identical tree (file contents, nested
+    /// dirs, symlink preserved as a symlink) — this is the path used on
+    /// non-macOS and whenever the macOS `cp` fast paths fail.
+    #[test]
+    fn copy_dir_recursive_preserves_files_and_symlinks() {
+        let base =
+            std::env::temp_dir().join(format!("ccresdoc-test-copyrec-{}", std::process::id()));
+        let src = base.join("src");
+        let dst = base.join("dst");
+        let _ = std::fs::remove_dir_all(&base);
+        make_sample_tree(&src);
+
+        copy_dir_recursive(&src, &dst).expect("copy_dir_recursive should succeed");
+        assert_tree_copied(&dst);
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// `Option::take()` on the shared sidecar state yields the value exactly
