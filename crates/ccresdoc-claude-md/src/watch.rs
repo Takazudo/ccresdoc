@@ -13,7 +13,6 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -37,11 +36,10 @@ pub enum WatchEvent {
     Error(GenerateError),
 }
 
-/// A running watch session. Dropping the handle stops the watcher and joins its
-/// background thread.
+/// A running watch session. Dropping the handle signals the worker thread to
+/// stop and joins it; the worker owns the `notify` debouncer, so joining it is
+/// what actually tears the watch down.
 pub struct WatchHandle {
-    // Kept alive for the lifetime of the watch; dropping it stops notify.
-    _debouncer_alive: Arc<Mutex<()>>,
     stop_tx: Option<mpsc::Sender<()>>,
     join: Option<JoinHandle<()>>,
 }
@@ -116,15 +114,7 @@ where
             .map_err(|e| GenerateError::Watch(format!("failed to watch {path:?}: {e}")))?;
     }
 
-    // Serialize regenerations: the worker thread is the only writer, so a
-    // dedicated mutex guards the (single) regeneration critical section. Holding
-    // it across generate() guarantees no two regenerations overlap even if a
-    // future caller adds more writers.
-    let regen_lock = Arc::new(Mutex::new(()));
-    let alive = Arc::new(Mutex::new(()));
-
     let worker_config = config.clone();
-    let worker_lock = Arc::clone(&regen_lock);
     // Move the debouncer into the worker thread so it lives exactly as long as
     // the watch session and is dropped (stopping notify) when the thread ends.
     let join = std::thread::Builder::new()
@@ -142,10 +132,11 @@ where
                     Ok(()) => {
                         // Drain any additional queued pulses so a burst that
                         // produced several debounced batches collapses into one
-                        // regeneration.
+                        // regeneration. The worker thread is the sole writer, so
+                        // regenerations are inherently serialized — no two ever
+                        // write the same MDX concurrently.
                         while event_rx.try_recv().is_ok() {}
 
-                        let _guard = worker_lock.lock().unwrap_or_else(|p| p.into_inner());
                         match generate::run(&worker_config) {
                             Ok(report) => on_change(WatchEvent::Regenerated(report)),
                             Err(e) => on_change(WatchEvent::Error(e)),
@@ -159,7 +150,6 @@ where
         .map_err(|e| GenerateError::Watch(format!("failed to spawn watch thread: {e}")))?;
 
     Ok(WatchHandle {
-        _debouncer_alive: alive,
         stop_tx: Some(stop_tx),
         join: Some(join),
     })

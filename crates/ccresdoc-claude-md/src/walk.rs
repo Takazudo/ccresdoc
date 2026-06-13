@@ -24,10 +24,8 @@ pub(crate) struct ClaudeMdItem {
     pub slug: String,
     /// Relative path from project_root
     pub rel_path: String,
-    /// File body after frontmatter is stripped (raw content if no frontmatter)
+    /// Full file contents (CLAUDE.md is embedded verbatim, frontmatter and all).
     pub raw_content: String,
-    /// Whether the source file began with a `---` frontmatter block.
-    pub has_frontmatter: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,7 +155,19 @@ fn is_real_dir(path: &Path) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Directory names skipped while walking for CLAUDE.md files.
-const EXCLUDE_DIR_NAMES: &[&str] = &[".git", "node_modules", "worktrees"];
+/// Directory names skipped while walking for CLAUDE.md files. Mirrors upstream
+/// `generate.ts`'s `excludeDirs` (the name-based subset); the path-based
+/// `e2e/fixtures` and the live `docs_dir` are passed in as `exclude_paths`.
+const EXCLUDE_DIR_NAMES: &[&str] = &[
+    ".git",
+    "node_modules",
+    "worktrees",
+    "dist",
+    "out",
+    "public",
+    "__inbox",
+    "test-results",
+];
 
 fn find_claude_md_files(dir: &Path, exclude_paths: &[PathBuf]) -> Vec<PathBuf> {
     use walkdir::WalkDir;
@@ -183,7 +193,10 @@ fn find_claude_md_files(dir: &Path, exclude_paths: &[PathBuf]) -> Vec<PathBuf> {
             }
             if entry.file_type().is_dir() {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if EXCLUDE_DIR_NAMES.contains(&name) {
+                    // Skip excluded names AND any dotdir (matches upstream's
+                    // `item.startsWith(".")` guard) — keeps the walk out of
+                    // .git, .cache, .venv, etc.
+                    if EXCLUDE_DIR_NAMES.contains(&name) || name.starts_with('.') {
                         return false;
                     }
                 }
@@ -245,19 +258,13 @@ fn collect_claude_mds(project_root: &Path, exclude_paths: &[PathBuf]) -> Result<
             dir_part.replace('/', "--")
         };
 
-        // CLAUDE.md files carry no useful frontmatter, but parse anyway so the
-        // body excludes any leading `---` block, matching the generator which
-        // emits the file's content directly.
-        let (_fm, _body, has_frontmatter) = parse_frontmatter(&raw_content);
-
+        // The generator embeds the FULL trimmed file content (frontmatter and
+        // all), so we keep raw_content as the whole file — no frontmatter parse.
         items.push(ClaudeMdItem {
             display_path,
             slug,
             rel_path: rel.to_string(),
-            // The generator embeds the FULL trimmed content (not the body), so
-            // keep raw_content as the whole file.
             raw_content,
-            has_frontmatter,
         });
     }
 
@@ -300,12 +307,9 @@ fn collect_commands(commands_dir: &Path) -> Result<Vec<CommandItem>> {
     for entry in &entries {
         let path = entry.path();
         let raw = read_file(&path)?;
-        let (fm, body, has_frontmatter) = parse_frontmatter(&raw);
-        // Generator skips files lacking frontmatter (parseFrontmatter returns
-        // an object but the JS only proceeds when matter() succeeds; gray-matter
-        // never throws, so it keeps all .md. We match the Rust walker's prior
-        // behaviour AND the JS by keeping all .md files but tracking the flag).
-        let _ = has_frontmatter;
+        // Upstream keeps every command .md (gray-matter never throws; a missing
+        // block just yields empty `data`), so we do too — no frontmatter skip.
+        let (fm, body, _had_fm) = parse_frontmatter(&raw);
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -541,25 +545,31 @@ fn collect_agents(agents_dir: &Path) -> Result<Vec<AgentItem>> {
 /// Walk `claude_dir` / `project_root` and return the full [`ResourceTree`].
 ///
 /// `project_root` must NOT be the user's home directory itself — the CLAUDE.md
-/// walk is scoped to `~/.claude` (zudolab/zudo-doc#2115). Passing `$HOME`
-/// returns [`GenerateError::ProjectRootTooBroad`].
-pub(crate) fn walk_claude_dir(claude_dir: &Path, project_root: &Path) -> Result<ResourceTree> {
-    if let Some(ref home_path) = dirs_home() {
-        let pr = project_root
-            .canonicalize()
-            .unwrap_or_else(|_| project_root.to_owned());
-        let home_canon = home_path
-            .canonicalize()
-            .unwrap_or_else(|_| home_path.to_owned());
-        if pr == home_canon {
-            return Err(GenerateError::ProjectRootTooBroad(project_root.to_owned()));
-        }
-    }
-
-    let exclude_paths: Vec<PathBuf> = EXCLUDE_DIR_NAMES
+/// walk is scoped to `~/.claude` (zudolab/zudo-doc#2115). That guard runs
+/// up-front in [`crate::Config::validate`]; this function trusts it.
+///
+/// `docs_dir` is excluded from the CLAUDE.md walk so the generated `claude*/`
+/// tree is never re-walked if it ever lands under `project_root`.
+pub(crate) fn walk_claude_dir(
+    claude_dir: &Path,
+    project_root: &Path,
+    docs_dir: &Path,
+) -> Result<ResourceTree> {
+    // Name-based excludes anchored at project_root, plus the path-based
+    // `e2e/fixtures` and the live `docs_dir` (canonicalized so a symlinked
+    // path — e.g. macOS /var -> /private/var temp dirs — still matches the
+    // canonicalized walk entries).
+    let mut exclude_paths: Vec<PathBuf> = EXCLUDE_DIR_NAMES
         .iter()
         .map(|name| project_root.join(name))
         .collect();
+    exclude_paths.push(project_root.join("e2e").join("fixtures"));
+    exclude_paths.push(
+        docs_dir
+            .canonicalize()
+            .unwrap_or_else(|_| docs_dir.to_owned()),
+    );
+    exclude_paths.push(docs_dir.to_owned());
 
     let claude_mds = collect_claude_mds(project_root, &exclude_paths)?;
     let commands = collect_commands(&claude_dir.join("commands"))?;
@@ -572,8 +582,4 @@ pub(crate) fn walk_claude_dir(claude_dir: &Path, project_root: &Path) -> Result<
         skills,
         agents,
     })
-}
-
-fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
 }

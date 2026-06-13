@@ -107,8 +107,11 @@ pub struct Config {
 }
 
 impl Config {
-    /// Validate the config before generating: paths must be absolute, and
-    /// `project_root` must not be `$HOME`.
+    /// Validate the config up front (before any walk or watch): paths must be
+    /// absolute, and `project_root` must not be `$HOME` — the CLAUDE.md walk is
+    /// scoped to `~/.claude` (zudolab/zudo-doc#2115). Running this in both
+    /// `generate()` and `watch()` means `watch()` rejects a bad config
+    /// synchronously rather than failing later as a `WatchEvent::Error`.
     pub(crate) fn validate(&self) -> Result<()> {
         for (label, p) in [
             ("claude_dir", &self.claude_dir),
@@ -116,9 +119,22 @@ impl Config {
             ("docs_dir", &self.docs_dir),
         ] {
             if !p.is_absolute() {
-                return Err(GenerateError::Watch(format!(
+                return Err(GenerateError::InvalidConfig(format!(
                     "{label} must be an absolute path, got {p:?}"
                 )));
+            }
+        }
+
+        // Refuse project_root == $HOME. Both sides are canonicalized so
+        // trailing slashes / symlinks don't matter.
+        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+            let pr = self
+                .project_root
+                .canonicalize()
+                .unwrap_or_else(|_| self.project_root.clone());
+            let home_canon = home.canonicalize().unwrap_or(home);
+            if pr == home_canon {
+                return Err(GenerateError::ProjectRootTooBroad(self.project_root.clone()));
             }
         }
         Ok(())

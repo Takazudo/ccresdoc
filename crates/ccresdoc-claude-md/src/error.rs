@@ -13,6 +13,12 @@ pub enum GenerateError {
     #[error("project_root is too broad: {0:?}. Pass a specific directory such as ~/.claude, not $HOME.")]
     ProjectRootTooBroad(PathBuf),
 
+    /// A `Config` field is malformed (e.g. a non-absolute path). Distinct from
+    /// [`GenerateError::Watch`] so the host can tell a bad config from a runtime
+    /// watcher failure.
+    #[error("invalid config: {0}")]
+    InvalidConfig(String),
+
     /// A discovered resource slug collided with the reserved `index` name used
     /// for the category metadata file.
     #[error("reserved slug conflict: {0}")]

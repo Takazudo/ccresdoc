@@ -39,9 +39,15 @@ pub fn escape_for_mdx(content: &str) -> String {
     let mut out = String::with_capacity(with_placeholders.len());
     for segment in split_placeholders(&with_placeholders, CODE_PLACEHOLDER) {
         match segment {
-            Segment::Placeholder(idx) => {
-                out.push_str(&code_blocks[idx]);
-            }
+            // A real placeholder restores its code block. A forged sentinel
+            // present in the SOURCE (e.g. literal `\0CODEBLOCK_99\0`) whose
+            // index is out of range is emitted as escaped text rather than
+            // panicking — generate::run runs on the watcher worker thread, so a
+            // panic here would silently kill the watcher.
+            Segment::Placeholder { idx, raw } => match code_blocks.get(idx) {
+                Some(block) => out.push_str(block),
+                None => out.push_str(&escape_text_segment(raw)),
+            },
             Segment::Text(text) => {
                 out.push_str(&escape_text_segment(text));
             }
@@ -161,7 +167,9 @@ fn find_closing_fence(content: &str, from: usize, fence_len: usize) -> Option<us
 
 enum Segment<'a> {
     Text(&'a str),
-    Placeholder(usize),
+    /// `idx` is the parsed placeholder index; `raw` is the full matched
+    /// placeholder slice, used as a fallback when `idx` is out of range.
+    Placeholder { idx: usize, raw: &'a str },
 }
 
 /// Split `s` into alternating text / placeholder segments. A placeholder has
@@ -180,10 +188,11 @@ fn split_placeholders<'a>(s: &'a str, prefix: &str) -> Vec<Segment<'a>> {
             if pos > 0 {
                 segments.push(Segment::Text(&rest[..pos]));
             }
-            let idx: usize = after_prefix[..digit_end].parse().unwrap_or(0);
-            segments.push(Segment::Placeholder(idx));
+            let idx: usize = after_prefix[..digit_end].parse().unwrap_or(usize::MAX);
             // advance past digits + NUL
             let consumed = pos + prefix.len() + digit_end + 1;
+            let raw = &rest[pos..consumed];
+            segments.push(Segment::Placeholder { idx, raw });
             rest = &rest[consumed..];
         } else {
             // Not a real placeholder; treat the prefix occurrence as text by
@@ -218,6 +227,12 @@ fn escape_text_segment(part: &str) -> String {
 
 /// Extract inline code spans, mirroring the JS regex
 /// `/(`{1,3})(?!`)([\s\S]*?[^`])\1(?!`)/g`.
+///
+/// The regex engine tries every starting position left-to-right and advances by
+/// ONE on failure, so a run of 4+ backticks does not block an inline span that
+/// opens on a *later* backtick of the run (e.g. ` ````<=` ` matches ` `<=` `
+/// using the 4th backtick as the opener). We replicate that by scanning
+/// position-by-position rather than consuming whole backtick runs.
 fn extract_inline_code(part: &str) -> (String, Vec<String>) {
     let bytes = part.as_bytes();
     let len = bytes.len();
@@ -227,28 +242,16 @@ fn extract_inline_code(part: &str) -> (String, Vec<String>) {
 
     while i < len {
         if bytes[i] == b'`' {
-            // Count opening backticks (1..=3, NOT followed by a 4th — the
-            // `(?!`)` after the group).
-            let open_start = i;
-            let mut open = 0;
-            while i < len && bytes[i] == b'`' {
-                open += 1;
-                i += 1;
-            }
-            // The JS group only captures 1..=3 backticks; if a 4+ run, the
-            // `{1,3}` matches 3 then `(?!`)` fails, so the whole match fails at
-            // this position. Replicate: only attempt when open in 1..=3.
-            if (1..=3).contains(&open) {
-                // Find the closing run of exactly `open` backticks where the
-                // char just before is not a backtick ([^`]\1) and the char
-                // after is not a backtick ((?!`)).
-                if let Some((content_end, close_end)) = find_inline_close(part, i, open) {
-                    // body is part[i..content_end]; full match is
-                    // part[open_start..close_end]
-                    let full = &part[open_start..close_end];
-                    // The JS body group requires at least one char ([\s\S]*?[^`]),
-                    // so an empty body (`` `` ``) does NOT match.
-                    if content_end > i {
+            // Greedy `{1,3}` with the `(?!`)` lookahead: pick the largest opener
+            // length L in 1..=3 such that the char at i+L is NOT a backtick.
+            let run = backtick_run_len(bytes, i);
+            if let Some(open) = greedy_opener_len(bytes, i, run) {
+                if let Some((content_end, close_end)) = find_inline_close(part, i + open, open)
+                {
+                    // The JS body group requires at least one char
+                    // (`[\s\S]*?[^`]`), so an empty body does NOT match.
+                    if content_end > i + open {
+                        let full = &part[i..close_end];
                         let idx = codes.len();
                         codes.push(full.to_string());
                         out.push_str(INLINE_PLACEHOLDER);
@@ -258,14 +261,12 @@ fn extract_inline_code(part: &str) -> (String, Vec<String>) {
                         continue;
                     }
                 }
-                // No valid close — emit the opening backticks verbatim.
-                out.push_str(&part[open_start..i]);
-                continue;
-            } else {
-                // 4+ backtick run: emit verbatim.
-                out.push_str(&part[open_start..i]);
-                continue;
             }
+            // No match anchored at i — emit this single backtick and advance by
+            // one (regex engine bumps the start position by one on failure).
+            out.push('`');
+            i += 1;
+            continue;
         }
         let ch_start = i;
         i += utf8_char_len(bytes[i]);
@@ -273,6 +274,33 @@ fn extract_inline_code(part: &str) -> (String, Vec<String>) {
     }
 
     (out, codes)
+}
+
+/// Number of consecutive backticks starting at `i`.
+fn backtick_run_len(bytes: &[u8], i: usize) -> usize {
+    let mut n = 0;
+    while i + n < bytes.len() && bytes[i + n] == b'`' {
+        n += 1;
+    }
+    n
+}
+
+/// The greedy opener length the regex `(`{1,3})(?!`)` would capture at `i`,
+/// given the run length: the largest L in 1..=min(run,3) with `bytes[i+L]` not a
+/// backtick. Returns `None` if no such L exists (i.e. run length forces a
+/// trailing backtick for every L ≤ 3 — only when run > 3 and the opener can't
+/// reach the end of the run; the regex then fails at `i`).
+fn greedy_opener_len(bytes: &[u8], i: usize, run: usize) -> Option<usize> {
+    let max = run.min(3);
+    // Greedy: try 3, then 2, then 1.
+    for l in (1..=max).rev() {
+        let next = i + l;
+        let next_is_backtick = bytes.get(next) == Some(&b'`');
+        if !next_is_backtick {
+            return Some(l);
+        }
+    }
+    None
 }
 
 /// Find an inline-code closing fence of exactly `open` backticks starting at
@@ -345,7 +373,7 @@ fn escape_open_tags(input: &str) -> String {
             let name = &input[i + 1..j];
             // Optional (\s[^>]*)? then `>`.
             let mut k = j;
-            if k < len && (bytes[k] as char).is_whitespace() {
+            if k < len && bytes[k].is_ascii_whitespace() {
                 // consume [^>]* up to the next '>'
                 while k < len && bytes[k] != b'>' {
                     k += 1;
@@ -418,13 +446,13 @@ fn escape_self_closing_tags(input: &str) -> String {
             }
             let name = &input[i + 1..j];
             let mut k = j;
-            if k < len && (bytes[k] as char).is_whitespace() {
+            if k < len && bytes[k].is_ascii_whitespace() {
                 while k < len && bytes[k] != b'>' && bytes[k] != b'/' {
                     k += 1;
                 }
             }
             // optional trailing whitespace then "/>"
-            while k < len && (bytes[k] as char).is_whitespace() {
+            while k < len && bytes[k].is_ascii_whitespace() {
                 k += 1;
             }
             if k + 1 < len && bytes[k] == b'/' && bytes[k + 1] == b'>' {
@@ -582,5 +610,30 @@ mod tests {
         // Only backtick fences are recognized; angle brackets outside are escaped.
         let out = escape_for_mdx("text <Comp> more");
         assert_eq!(out, "text &lt;Comp&gt; more");
+    }
+
+    #[test]
+    fn inline_opener_inside_longer_backtick_run() {
+        // Regression (C1): a 4-backtick run followed by `<=` then one backtick.
+        // The regex opens the inline span on the LAST backtick of the run, so
+        // `<=` stays unescaped (matches escape-for-mdx.ts behaviour).
+        let out = escape_for_mdx("````<=`");
+        assert_eq!(out, "````<=`");
+    }
+
+    #[test]
+    fn forged_codeblock_sentinel_does_not_panic() {
+        // Regression (C2): a literal CODEBLOCK sentinel with an out-of-range
+        // index must not panic; it is emitted as escaped text.
+        let forged = "\u{0}CODEBLOCK_99\u{0} and <Foo>";
+        let out = escape_for_mdx(forged);
+        // Must not panic and must still escape the trailing JSX tag.
+        assert!(out.contains("&lt;Foo&gt;"));
+    }
+
+    #[test]
+    fn quadruple_backtick_run_alone_is_unchanged() {
+        // A lone 4-backtick run with no valid close stays verbatim.
+        assert_eq!(escape_for_mdx("````"), "````");
     }
 }

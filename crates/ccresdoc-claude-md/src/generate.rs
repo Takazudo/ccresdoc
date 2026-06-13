@@ -515,7 +515,8 @@ fn generate_overview_index(docs_dir: &Path, kinds: ResourceItemKinds) -> Result<
 pub(crate) fn run(config: &Config) -> Result<GenerateReport> {
     config.validate()?;
 
-    let tree = walk::walk_claude_dir(&config.claude_dir, &config.project_root)?;
+    let tree =
+        walk::walk_claude_dir(&config.claude_dir, &config.project_root, &config.docs_dir)?;
 
     let docs_dir = &config.docs_dir;
     ensure_dir(docs_dir)?;
