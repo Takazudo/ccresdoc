@@ -8,9 +8,10 @@ edition = "2021"
 
 [dependencies]
 tauri = { version = "2", features = ["devtools"] }
-# TODO(#44): Wave 3 re-adds `ccresdoc-claude-md = { path = "../crates/ccresdoc-claude-md" }`
-# (and tokio if the sidecar host needs an async runtime). Wave 2 removed the
-# deleted `ccresdoc-server` dependency to keep the workspace compiling.
+# Wave 3 (#44): the node-free live-update engine — generate() at boot + watch()
+# in-process. The host spawns the native `zfb dev` separately (process group),
+# so no async runtime is needed here (the watcher owns its own thread).
+ccresdoc-claude-md = { path = "../crates/ccresdoc-claude-md" }
 libc = "0.2"
 serde_json = "1"
 
