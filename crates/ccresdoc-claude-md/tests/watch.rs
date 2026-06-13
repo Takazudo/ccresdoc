@@ -31,14 +31,10 @@ fn config_for(claude_dir: &Path, docs_dir: &Path) -> Config {
 /// Wait up to `timeout` for the next successful regeneration, returning its
 /// command count. Panics on timeout or a regeneration error.
 fn wait_regen(rx: &mpsc::Receiver<WatchEvent>, timeout: Duration) -> usize {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        match rx.recv_timeout(remaining) {
-            Ok(WatchEvent::Regenerated(report)) => return report.commands,
-            Ok(WatchEvent::Error(e)) => panic!("regeneration error: {e}"),
-            Err(_) => panic!("timed out waiting for regeneration"),
-        }
+    match rx.recv_timeout(timeout) {
+        Ok(WatchEvent::Regenerated(report)) => report.commands,
+        Ok(WatchEvent::Error(e)) => panic!("regeneration error: {e}"),
+        Err(_) => panic!("timed out waiting for regeneration"),
     }
 }
 
