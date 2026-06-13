@@ -3,9 +3,9 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    branches: [main, "base/ccresdoc-zfb-restructure"]
+    branches: [main, "base/ccresdoc-zudo-doc-rewrite"]
   push:
-    branches: [main, "base/ccresdoc-zfb-restructure"]
+    branches: [main, "base/ccresdoc-zudo-doc-rewrite"]
 
 concurrency:
   group: ci-${{ github.head_ref || github.ref }}
@@ -31,9 +31,9 @@ jobs:
 
       # Exclude the src-tauri crate (`ccresdoc`) from Linux CI: tauri v2 pulls
       # in webkit2gtk / gtk3 system libs that aren't on ubuntu-latest by default.
-      # The Tauri shell is verified locally via `cargo tauri build` (mac-only v1)
-      # and `cargo tauri dev`. The library crates (ccresdoc-{resources,renderer,server})
-      # are pure Rust and run cleanly on any platform.
+      # The Tauri host is verified locally via `cargo tauri build` (mac-only).
+      # The only library crate is `ccresdoc-claude-md` (the ~/.claude→MDX
+      # generator + watcher); it is pure Rust and runs cleanly on any platform.
       - name: cargo clippy --workspace --exclude ccresdoc --all-targets
         run: cargo clippy --workspace --exclude ccresdoc --all-targets
 
@@ -42,9 +42,10 @@ jobs:
 
 # NOTE: `zfb build` (app/ frontend) is deferred from CI (v1).
 #
-# The app build requires the `zfb` Rust binary in PATH — built from
+# The app build requires the `zfb` Rust binary — installed from
 # $HOME/repos/myoss/zfb, which is a separate private repo not available
 # on CI runners. The Rust checks (fmt + clippy + test) cover the core
 # library code. The app build is verified locally via `bash scripts/run-b4push.sh`
-# before every push, and is exercised end-to-end by `cargo tauri build`
-# before each release. Re-enable once zfb is published to crates.io.
+# (which runs `pnpm install` then `pnpm exec zfb build`) before every push,
+# and is exercised end-to-end by `cargo tauri build` before each release.
+# Re-enable once zfb is published to crates.io.

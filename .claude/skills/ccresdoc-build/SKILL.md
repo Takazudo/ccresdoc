@@ -14,12 +14,38 @@ None. Always builds the single Tauri target defined in `src-tauri/tauri.conf.jso
 ## Prerequisites
 
 - macOS arm64
-- `zfb` Rust binary in PATH: `cargo install --path $HOME/repos/myoss/zfb/crates/zfb` (one-time; auto-downloads esbuild + tailwind binaries)
+- Rust stable toolchain + Tauri CLI (`cargo install tauri-cli` or `cargo binstall tauri-cli`)
+- `pnpm` (Node at setup time only — **not** required at runtime)
 - The user is in the `admin` group (default on personal Macs) — `/Applications/` write needs no sudo
+
+## Architecture recap
+
+`CCResDoc.app` is a thin Tauri host with **node-free runtime**:
+- The bundled `app/` tree (under `Contents/Resources/_up_/app/`) carries a pre-installed
+  `node_modules` that includes the native `@takazudo/zfb-<platform>/zfb` binary.
+- At launch the Tauri host resolves a **writable workspace**: dev = the repo `app/`
+  (already has `node_modules`); bundled = a versioned copy placed at
+  `<app_data_dir>/app-workspace/`.
+- The host spawns the in-process Rust watcher (`ccresdoc-claude-md`: walks `~/.claude/`
+  → writes MDX), then spawns `node_modules/@takazudo/zfb-<platform>/zfb dev --port 4892`
+  (the native binary, NOT the `.bin/zfb` Node-shebang wrapper), polls `GET /` on
+  `http://localhost:4892/`, and navigates the WebView once ready.
 
 ## Workflow
 
-### Step 1: Clean
+### Step 1: Ensure app/ deps are installed
+
+`cargo tauri build`'s `beforeBuildCommand` runs this automatically, but a manual
+pre-check speeds up debugging if `node_modules` is stale:
+
+```bash
+cd app && pnpm install
+```
+
+This populates `node_modules` including the native `@takazudo/zfb-darwin-arm64/zfb` binary.
+Node is only needed here — not at runtime.
+
+### Step 2: Clean
 
 Cargo can cache stale `Resources/` artifacts when `app/dist/` changes. Always clean the Tauri crate first:
 
@@ -27,9 +53,12 @@ Cargo can cache stale `Resources/` artifacts when `app/dist/` changes. Always cl
 cargo clean -p ccresdoc
 ```
 
-### Step 2: Build app/ (zfb static shell) + .app bundle
+### Step 3: Build app/ (zfb static shell) + .app bundle
 
-`cargo tauri build` runs `cd ../app && zfb build` automatically (via `beforeBuildCommand`). Produces both `.app` and `.dmg` bundles under `target/release/bundle/`.
+`cargo tauri build` runs `cd ../app && pnpm install && pnpm exec zfb build` automatically
+(via `beforeBuildCommand` in `src-tauri/tauri.conf.json`). This invokes the native zfb
+binary through pnpm — no global `zfb` on PATH required. Produces both `.app` and `.dmg`
+bundles under `target/release/bundle/`.
 
 ```bash
 cargo tauri build
@@ -37,30 +66,29 @@ cargo tauri build
 
 Build time on a warm cache: ~1.5 min Rust + ~10 s bundling. Cold cache: ~3-5 min total.
 
-### Step 3: Verify bundle freshness
+### Step 4: Verify bundle freshness
 
-Check that the bundled shell has both runtime sentinels (which means zfb's build output was actually included):
-
-```bash
-SHELL=target/release/bundle/macos/CCResDoc.app/Contents/Resources/_up_/app/dist/_shell/index.html
-[ -f "$SHELL" ] || { echo "FAIL: bundled shell missing"; exit 1; }
-grep -c '☃CCRESDOC_TITLE_SLOT☃' "$SHELL"     # must be 1
-grep -c '☃CCRESDOC_CONTENT_SLOT☃' "$SHELL"   # must be 1
-```
-
-Note: Tauri encodes the `bundle.resources` parent-dir traversal (`../app/dist/**/*`) as the `_up_/` prefix inside `Contents/Resources/`. `src-tauri/src/main.rs` joins `_up_` at runtime to find the real dist.
-
-If verification fails, the build is stale or zfb didn't run. Inspect:
+Check that the bundled `app/dist/` exists and `node_modules` includes the native binary:
 
 ```bash
-cd app && zfb build   # re-run zfb manually
+BUNDLE=target/release/bundle/macos/CCResDoc.app/Contents/Resources/_up_/app
+[ -d "$BUNDLE/dist" ] || { echo "FAIL: bundled dist/ missing"; exit 1; }
+[ -f "$BUNDLE/node_modules/@takazudo/zfb-darwin-arm64/zfb" ] || \
+  { echo "FAIL: native zfb binary missing from bundle"; exit 1; }
+echo "Bundle looks good: $(du -sh $BUNDLE/dist | cut -f1) dist"
 ```
 
-Then go back to Step 1.
+If verification fails, the build is stale or `pnpm install` did not run. Inspect:
 
-### Step 4: Kill running instance + free port 4892
+```bash
+cd app && pnpm install && pnpm exec zfb build   # re-run manually
+```
 
-The embedded axum server binds `127.0.0.1:4892`. Old instances must be killed before reinstall, otherwise the new instance will fail `wait_for_ready` polling.
+Then go back to Step 2.
+
+### Step 5: Kill running instance + free port 4892
+
+`zfb dev` binds `127.0.0.1:4892`. Old instances must be killed before reinstall.
 
 ```bash
 killall CCResDoc 2>/dev/null
@@ -69,16 +97,17 @@ sleep 1
 lsof -i :4892 2>&1 | head -3   # should be empty
 ```
 
-### Step 5: Move old, copy fresh
+### Step 6: Move old, copy fresh
 
 **CRITICAL:** `cp -rf` does NOT reliably update macOS `.app` bundles in-place. Always move the old bundle aside first.
 
 ```bash
 mv /Applications/CCResDoc.app /tmp/CCResDoc-old-$$.app 2>/dev/null
 cp -R target/release/bundle/macos/CCResDoc.app /Applications/CCResDoc.app
+xattr -dr com.apple.quarantine /Applications/CCResDoc.app
 ```
 
-### Step 6: Verify binary timestamp
+### Step 7: Verify binary timestamp
 
 ```bash
 stat -f "%Sm" /Applications/CCResDoc.app/Contents/MacOS/CCResDoc
@@ -86,22 +115,22 @@ stat -f "%Sm" /Applications/CCResDoc.app/Contents/MacOS/CCResDoc
 
 Timestamp must be from just now. If older, the copy failed — surface it loudly.
 
-### Step 7: Launch
+### Step 8: Launch
 
 ```bash
 open /Applications/CCResDoc.app
 ```
 
-Optionally probe `/___ready` to confirm the server bound:
+Poll `GET /` to confirm `zfb dev` bound and the doc site is up:
 
 ```bash
-sleep 2
-curl -s -o /dev/null -w "ready: HTTP %{http_code}\n" http://localhost:4892/___ready
+sleep 5
+curl -s -o /dev/null -w "ready: HTTP %{http_code}\n" http://localhost:4892/
 ```
 
 Report:
 
 - Bundle size (`du -sh /Applications/CCResDoc.app`)
 - Binary timestamp
-- `/___ready` response
+- `GET /` HTTP response (expect 200)
 - Anything unexpected

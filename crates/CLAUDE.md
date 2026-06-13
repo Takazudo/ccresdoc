@@ -10,9 +10,8 @@ crates/
   ccresdoc-claude-md/   Generator + watcher: ~/.claude/ → zudo-doc MDX
 ```
 
-`src-tauri/` is also a workspace member (the Tauri binary). Wave 2 removed its
-dependency on the old `ccresdoc-server`; Wave 3 (#44) will add a dependency on
-`ccresdoc-claude-md`.
+`src-tauri/` is also a workspace member (the Tauri binary). It depends on
+`ccresdoc-claude-md` for in-process generation + watching.
 
 > History: Waves 1-2 replaced the old three-crate pipeline
 > (`ccresdoc-resources` walker, `ccresdoc-renderer`, `ccresdoc-server`) with the
@@ -55,7 +54,7 @@ Key invariants:
 
 ```
 ccresdoc-claude-md  (no internal deps; external: notify, walkdir, serde_yaml, ...)
-src-tauri           → (Wave 3) ccresdoc-claude-md
+src-tauri           → ccresdoc-claude-md
 ```
 
 ## Adding a new crate
