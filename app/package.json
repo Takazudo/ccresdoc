@@ -3,15 +3,22 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "CCResDoc static shell — built by zfb, served by axum at runtime",
+  "description": "CCResDoc zudo-doc consumer — built by zfb, served by axum at runtime",
   "scripts": {
     "dev": "zfb dev",
     "build": "zfb build",
     "preview": "zfb preview",
     "zfb": "zfb"
   },
+  "dependencies": {
+    "@takazudo/zudo-doc": "^0.2.4"
+  },
   "devDependencies": {
+    "@takazudo/zfb": "0.1.0-next.43",
+    "clsx": "^2.1.1",
     "preact": "^10.22.0",
-    "typescript": "^5.6.0"
+    "preact-render-to-string": "^6.6.6",
+    "typescript": "^5.6.0",
+    "zod": "^3.24.0"
   }
 }

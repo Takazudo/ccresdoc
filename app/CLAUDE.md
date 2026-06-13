@@ -1,37 +1,152 @@
 # app/ — CCResDoc zfb project
 
-Static shell built by zfb. Output in `dist/` is served by the axum runtime server (S5).
+zudo-doc consumer project built by zfb. Output in `dist/` is served by the axum runtime server.
 
-zfb embeds `@takazudo/zfb`, `@takazudo/zfb-runtime`, `preact`, `preact-render-to-string`, and `hono` in its binary; ccresdoc has no `app/node_modules/` requirement.
+## Architecture
 
-Config is JSON (`zfb.config.json`) — no Node.js needed for config loading.
+- **Framework**: Preact + zfb SSG
+- **Package**: `@takazudo/zfb@0.1.0-next.43` (binary) + `@takazudo/zudo-doc@^0.2.4` (components)
+- **Port**: 4892 (pinned in `zfb.config.ts`)
+- **Node-free mode**: Zero `.mjs` plugins → no `plugin-host.mjs` spawned
+- **Collections**: single `"docs"` collection at `src/content/docs/`
 
 ## Build
 
-The zfb Rust binary must be in PATH. Build or install it once:
+The `node_modules/.bin/zfb` launcher runs the native Rust binary. Build:
 
-  cargo install --path $HOME/repos/myoss/zfb/crates/zfb
+```sh
+cd app
+pnpm install    # once
+pnpm build      # or: pnpm zfb build
+```
 
-The zfb binary embeds esbuild + tailwindcss-v4 standalone binaries via
-`include_dir!` and extracts them at runtime; consumer projects no longer need
-to point at the zfb source tree via env vars. Embedded framework packages
-(preact, preact-render-to-string, hono, @takazudo/*) also resolve from the
-binary's `include_dir!` snapshot when `app/node_modules/` does not exist.
+## Structure
 
-## Known zfb feature gaps worked around
+```
+app/
+  zfb.config.ts           — zfb config (port 4892, node-free)
+  package.json            — deps: @takazudo/zudo-doc + zfb devDep
+  tsconfig.json           — paths: @/* → src/*
+  zfb-shim.d.ts           — type shims for zfb/config, zfb/content
+  pages/
+    index.tsx             — home page
+    404.tsx               — 404 page
+    _data.ts              — zfb collection → DocsEntry bridge
+    _mdx-components.ts    — MDX component map (CategoryNav, admonitions, etc.)
+    docs/
+      [[...slug]].tsx     — catch-all docs route
+    lib/
+      _head-with-defaults.tsx     — <head> slot with ColorSchemeProvider
+      _header-with-defaults.tsx   — site header wrapper
+      _footer-with-defaults.tsx   — minimal footer wrapper
+      _sidebar-with-defaults.tsx  — SidebarTree island wrapper
+      _body-end-islands.tsx       — ClientRouterBootstrap island
+      _compose-meta-title.ts      — "<page> | CCResDoc" title helper
+  src/
+    config/
+      settings.ts         — site settings (siteName, colorMode, headerNav, etc.)
+      i18n.ts             — single-locale "en" helpers
+      docs-schema.ts      — Zod schema for docs frontmatter
+      color-schemes.ts    — light/dark color scheme definitions
+      color-scheme-utils.ts — builds ColorSchemeProvider cssText
+    types/
+      docs-entry.ts       — DocsEntry interface
+      locale.ts           — LocaleLink (single-locale stub)
+    utils/
+      base.ts             — withBase, stripBase, navHref, docsUrl
+      slug.ts             — toRouteSlug, toSlugParams
+      docs.ts             — NavNode type + buildNavTree (SidebarNode → NavNode bridge)
+      smart-break.tsx     — smart word-break for path-like labels
+    components/
+      sidebar-tree.tsx    — SidebarTree island (filter + tree nav)
+      sidebar-toggle.tsx  — mobile hamburger + slide-in aside
+      desktop-sidebar-toggle.tsx — no-op stub (feature not enabled)
+      tree-nav-shared.tsx — connector lines, icons shared by sidebar components
+      client-router-bootstrap.tsx — SPA router activation island
+    content/
+      docs/               — MDX content root
+        welcome.mdx       — placeholder page (removed once Wave 2 runs)
+        claude*/          — Wave 2 generated (gitignored — see below)
+    styles/
+      global.css          — Tailwind CSS v4 + @theme tokens (from zudo-doc template)
+```
 
-1. **Underscore pages skipped by router** — zfb skips any page whose filename
-   starts with `_` (conventionally: framework internals). The shell template
-   page (which must output to `dist/_shell/index.html`) is therefore named
-   `pages/shell.tsx` instead of `pages/_shell.tsx`. The `plugins/rename-shell.mjs`
-   postBuild plugin renames `dist/shell/index.html` → `dist/_shell/index.html`.
-   Remove this rename once zfb supports an opt-in escape hatch for
-   underscore-prefixed pages (e.g., frontmatter `includeUnderscore: true`).
+## MDX Content Contract (Wave 2)
 
-## Sentinels
+The Rust generator (Wave 2, `crates/claude-resources/`) writes MDX to
+`src/content/docs/claude*/`. These directories are **gitignored** — they are
+rebuilt on every app launch by the sidecar (Wave 3 / `src-tauri/`).
 
-`dist/_shell/index.html` contains two runtime substitution sentinels:
-- `☃CCRESDOC_TITLE_SLOT☃` — inside `<title>`, replaced with the page title
-- `☃CCRESDOC_CONTENT_SLOT☃` — inside `<main>`, replaced with rendered HTML
+### Directory layout
 
-S5 (axum server) loads this file and string-replaces both sentinels at request time.
+```
+src/content/docs/
+  claude/                    ← overview category (no route)
+    index.mdx                ← category_no_page: true, sidebar_position: 899
+  claude-md/                 ← CLAUDE.md category
+    index.mdx                ← category_no_page: true, sidebar_position: 900
+    global.mdx               ← ~/.claude/CLAUDE.md
+    project-<name>.mdx       ← per-project CLAUDE.md
+  claude-commands/           ← commands category
+    index.mdx                ← category_no_page: true, sidebar_position: 901
+    <command-name>.mdx       ← one file per command
+  claude-skills/             ← skills category
+    index.mdx                ← category_no_page: true, sidebar_position: 902
+    <skill-name>.mdx         ← one file per skill
+  claude-agents/             ← agents category
+    index.mdx                ← category_no_page: true, sidebar_position: 903
+    <agent-name>.mdx         ← one file per agent
+```
+
+### Frontmatter fields
+
+All generated MDX files use a subset of the `DocsData` schema:
+
+```yaml
+---
+title: string          # required — page title
+description: string    # optional — card description
+sidebar_position: number  # required — controls sidebar order
+sidebar_label: string  # optional — override sidebar display label
+generated: true        # marks file as auto-generated (Wave 2)
+category_no_page: true # set ONLY on category index.mdx files
+---
+```
+
+### Category index pattern
+
+Category `index.mdx` files use `category_no_page: true` so the sidebar
+renders them as non-linked headers (no route is built for them). The
+path is NOT emitted as a docs page.
+
+### Claude overview page
+
+`claude/index.mdx` includes a `<CategoryNav>` component that renders
+the category cards:
+
+```mdx
+---
+title: Claude Resources
+sidebar_position: 899
+category_no_page: true
+generated: true
+---
+
+<CategoryNav categories={["claude-md", "claude-commands", "claude-skills", "claude-agents"]} />
+```
+
+The `CategoryNavWrapper` in `pages/_mdx-components.ts` resolves the
+slug strings to `NavNode[]` from the built sidebar tree.
+
+### Route building
+
+The `[[...slug]].tsx` catch-all route filters `category_no_page: true`
+entries so no page is built for category headers. Wave 2 must not set
+`draft: true` on any content page (only on placeholder stubs).
+
+### Content escaping
+
+MDX bodies must escape or avoid sequences that break MDX parsing:
+- `<`, `>` in prose → use HTML entities
+- `{`, `}` in prose → wrap in backticks or JSX expression `{'{'}`
+- Backtick content inside code fences is safe
