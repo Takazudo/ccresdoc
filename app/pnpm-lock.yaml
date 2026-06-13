@@ -6,16 +6,14 @@ settings:
 
 importers:
 
-  .: {}
-
-  app:
+  .:
     dependencies:
       '@shikijs/transformers':
         specifier: ^4.0.0
         version: 4.2.0
       '@takazudo/zdtp':
         specifier: 0.2.0-next.2
-        version: 0.2.0-next.2(preact@10.29.1)
+        version: 0.2.0-next.2(preact@10.29.2)
       '@takazudo/zfb':
         specifier: 0.1.0-next.43
         version: 0.1.0-next.43
@@ -27,7 +25,7 @@ importers:
         version: 0.1.0-next.43(@takazudo/zfb@0.1.0-next.43)
       '@takazudo/zudo-doc':
         specifier: ^0.2.4
-        version: 0.2.5(@takazudo/zdtp@0.2.0-next.2(preact@10.29.1))(@takazudo/zfb-runtime@0.1.0-next.43(@takazudo/zfb@0.1.0-next.43))(@takazudo/zfb@0.1.0-next.43)(preact@10.29.1)(shiki@4.2.0)
+        version: 0.2.5(@takazudo/zdtp@0.2.0-next.2(preact@10.29.2))(@takazudo/zfb-runtime@0.1.0-next.43(@takazudo/zfb@0.1.0-next.43))(@takazudo/zfb@0.1.0-next.43)(preact@10.29.2)(shiki@4.2.0)
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -42,10 +40,10 @@ importers:
         version: 11.15.0
       preact:
         specifier: ^10.29.1
-        version: 10.29.1
+        version: 10.29.2
       preact-render-to-string:
         specifier: ^6.6.6
-        version: 6.7.0(preact@10.29.1)
+        version: 6.7.0(preact@10.29.2)
       remark-cjk-friendly:
         specifier: ^2.0.1
         version: 2.0.1(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(unified@11.0.5)
@@ -1250,8 +1248,8 @@ packages:
     peerDependencies:
       preact: '>=10 || >= 11.0.0-0'
 
-  preact@10.29.1:
-    resolution: {integrity: sha512-gQCLc/vWroE8lIpleXtdJhTFDogTdZG9AjMUpVkDf2iTCNwYNWA+u16dL41TqUDJO4gm2IgrcMv3uTpjd4Pwmg==}
+  preact@10.29.2:
+    resolution: {integrity: sha512-7tNmwg/7mzzAoB/8kSg6Hl37JraAZw3Z3A0JSY7VXlZwo82Xn0G7wKbNNs2qoF4ZEEsQGTwDAroNdqKs1ofJxQ==}
 
   prompts@2.4.2:
     resolution: {integrity: sha512-NxNv/kLguCA7p3jE8oL2aEBsrJWgAakBpgmgK6lpPWV+WuOmY6r2/zbAVnP+T8bQlA0nzHXSJSJW0Hq7ylaD2Q==}
@@ -1690,10 +1688,10 @@ snapshots:
       tailwindcss: 4.3.1
       vite: 8.0.16(@types/node@22.19.21)(jiti@2.7.0)
 
-  '@takazudo/zdtp@0.2.0-next.2(preact@10.29.1)':
+  '@takazudo/zdtp@0.2.0-next.2(preact@10.29.2)':
     dependencies:
       culori: 4.0.2
-      preact: 10.29.1
+      preact: 10.29.2
 
   '@takazudo/zfb-adapter-cloudflare@0.1.0-next.43': {}
 
@@ -1725,14 +1723,14 @@ snapshots:
       '@takazudo/zfb-linux-x64-gnu': 0.1.0-next.43
       '@takazudo/zfb-win32-x64-msvc': 0.1.0-next.43
 
-  '@takazudo/zudo-doc@0.2.5(@takazudo/zdtp@0.2.0-next.2(preact@10.29.1))(@takazudo/zfb-runtime@0.1.0-next.43(@takazudo/zfb@0.1.0-next.43))(@takazudo/zfb@0.1.0-next.43)(preact@10.29.1)(shiki@4.2.0)':
+  '@takazudo/zudo-doc@0.2.5(@takazudo/zdtp@0.2.0-next.2(preact@10.29.2))(@takazudo/zfb-runtime@0.1.0-next.43(@takazudo/zfb@0.1.0-next.43))(@takazudo/zfb@0.1.0-next.43)(preact@10.29.2)(shiki@4.2.0)':
     dependencies:
       '@takazudo/zfb': 0.1.0-next.43
       '@takazudo/zfb-runtime': 0.1.0-next.43(@takazudo/zfb@0.1.0-next.43)
       gray-matter: 4.0.3
-      preact: 10.29.1
+      preact: 10.29.2
     optionalDependencies:
-      '@takazudo/zdtp': 0.2.0-next.2(preact@10.29.1)
+      '@takazudo/zdtp': 0.2.0-next.2(preact@10.29.2)
       shiki: 4.2.0
 
   '@tybys/wasm-util@0.10.2':
@@ -2649,11 +2647,11 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
-  preact-render-to-string@6.7.0(preact@10.29.1):
+  preact-render-to-string@6.7.0(preact@10.29.2):
     dependencies:
-      preact: 10.29.1
+      preact: 10.29.2
 
-  preact@10.29.1: {}
+  preact@10.29.2: {}
 
   prompts@2.4.2:
     dependencies:

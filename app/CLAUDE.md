@@ -20,6 +20,16 @@ pnpm install          # once — populates node_modules incl. native zfb binary
 pnpm exec zfb build   # node-free: invokes native binary directly
 ```
 
+**`app/` is a STANDALONE pnpm project with `node-linker=hoisted`** (see `app/.npmrc`),
+NOT a workspace member. This is required for the bundled `.app`: the Tauri host
+bundles `app/node_modules` and copies it (dereferencing symlinks) into a writable
+workspace at runtime. pnpm's default isolated `.pnpm` store does not survive that
+dereferencing copy — transitive deps like `hono` (via `@takazudo/zfb-runtime`)
+become unresolvable and the zfb renderer is disabled (every content page 404s). A
+flat hoisted `node_modules` copies cleanly. The platform binary packages
+(`@takazudo/zfb-<platform>`) are declared as `optionalDependencies` so the host can
+resolve `node_modules/@takazudo/zfb-<platform>/zfb` directly.
+
 ## Structure
 
 ```
