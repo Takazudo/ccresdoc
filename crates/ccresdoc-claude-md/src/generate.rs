@@ -12,7 +12,7 @@
 //! Everything else (escaping, skill sub-pages, frontmatter shape) is ported
 //! faithfully so output renders identically under zudo-doc.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::error::{GenerateError, Result};
@@ -63,7 +63,58 @@ fn clean_dir(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Remove any regular file directly inside `dir` whose file name is NOT in
+/// `keep`. Subdirectories are left alone (the category dirs are flat).
+///
+/// This replaces the old "wipe the whole dir then rewrite everything" cleanup:
+/// kept files are never touched here (their mtimes are preserved by the
+/// idempotent [`write_file`]), and only genuinely stale outputs are deleted.
+fn prune_stale(dir: &Path, keep: &HashSet<String>) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    let entries = std::fs::read_dir(dir).map_err(|e| GenerateError::Io {
+        path: dir.to_owned(),
+        source: e,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|e| GenerateError::Io {
+            path: dir.to_owned(),
+            source: e,
+        })?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_owned(),
+            None => continue,
+        };
+        if !keep.contains(&name) {
+            std::fs::remove_file(&path).map_err(|e| GenerateError::Io {
+                path: path.clone(),
+                source: e,
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Write `contents` to `path`, but skip the write if the file already holds
+/// byte-identical content.
+///
+/// This makes regeneration **idempotent at the filesystem layer**: a no-op
+/// regen (e.g. one triggered by unrelated `~/.claude` churn) leaves every
+/// unchanged MDX file's mtime untouched. That is load-bearing for the watch
+/// loop — `zfb dev`'s content-watch keys off mtimes, so an unconditional
+/// rewrite of all ~237 files would retrigger a full rebuild even when nothing
+/// changed. Read errors (e.g. file absent) fall through to a normal write.
 fn write_file(path: &Path, contents: &str) -> Result<()> {
+    if let Ok(existing) = std::fs::read(path) {
+        if existing == contents.as_bytes() {
+            return Ok(());
+        }
+    }
     std::fs::write(path, contents).map_err(|e| GenerateError::Io {
         path: path.to_owned(),
         source: e,
@@ -125,13 +176,16 @@ fn claude_md_output_name(slug: &str) -> String {
 
 fn generate_claudemd_docs(items: &[ClaudeMdItem], docs_dir: &Path) -> Result<usize> {
     let output_dir = docs_dir.join("claude-md");
-    clean_dir(&output_dir)?;
 
     if items.is_empty() {
+        clean_dir(&output_dir)?;
         return Ok(0);
     }
 
     ensure_dir(&output_dir)?;
+
+    let mut keep: HashSet<String> = HashSet::new();
+    keep.insert("index.mdx".to_owned());
 
     let mut emitted: HashMap<String, String> = HashMap::new();
     for (index, item) in items.iter().enumerate() {
@@ -166,7 +220,9 @@ fn generate_claudemd_docs(items: &[ClaudeMdItem], docs_dir: &Path) -> Result<usi
             item.rel_path,
             escape_for_mdx(item.raw_content.trim()),
         );
-        write_file(&output_dir.join(format!("{out_name}.mdx")), &mdx)?;
+        let file_name = format!("{out_name}.mdx");
+        write_file(&output_dir.join(&file_name), &mdx)?;
+        keep.insert(file_name);
     }
 
     write_category_index(
@@ -175,6 +231,7 @@ fn generate_claudemd_docs(items: &[ClaudeMdItem], docs_dir: &Path) -> Result<usi
         900,
         "Project-specific instructions",
     )?;
+    prune_stale(&output_dir, &keep)?;
     Ok(items.len())
 }
 
@@ -184,13 +241,16 @@ fn generate_claudemd_docs(items: &[ClaudeMdItem], docs_dir: &Path) -> Result<usi
 
 fn generate_commands_docs(items: &[CommandItem], docs_dir: &Path) -> Result<usize> {
     let output_dir = docs_dir.join("claude-commands");
-    clean_dir(&output_dir)?;
 
     if items.is_empty() {
+        clean_dir(&output_dir)?;
         return Ok(0);
     }
 
     ensure_dir(&output_dir)?;
+
+    let mut keep: HashSet<String> = HashSet::new();
+    keep.insert("index.mdx".to_owned());
 
     for item in items {
         assert_not_index_reserved(
@@ -204,10 +264,13 @@ fn generate_commands_docs(items: &[CommandItem], docs_dir: &Path) -> Result<usiz
             escape_title(&item.name),
             escape_for_mdx(item.raw_content.trim()),
         );
-        write_file(&output_dir.join(format!("{}.mdx", item.name)), &mdx)?;
+        let file_name = format!("{}.mdx", item.name);
+        write_file(&output_dir.join(&file_name), &mdx)?;
+        keep.insert(file_name);
     }
 
     write_category_index(&output_dir, "Commands", 901, "Custom slash commands")?;
+    prune_stale(&output_dir, &keep)?;
     Ok(items.len())
 }
 
@@ -249,13 +312,16 @@ fn render_skill_file_tree(skill_dir: &str, sub_dirs: &[(&str, Vec<String>)]) -> 
 
 fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
     let output_dir = docs_dir.join("claude-skills");
-    clean_dir(&output_dir)?;
 
     if items.is_empty() {
+        clean_dir(&output_dir)?;
         return Ok(0);
     }
 
     ensure_dir(&output_dir)?;
+
+    let mut keep: HashSet<String> = HashSet::new();
+    keep.insert("index.mdx".to_owned());
 
     for skill in items {
         assert_not_index_reserved(
@@ -358,44 +424,53 @@ fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
             escape_title(&skill.name),
             body,
         );
-        write_file(&output_dir.join(format!("{}.mdx", skill.dir)), &mdx)?;
+        let skill_file = format!("{}.mdx", skill.dir);
+        write_file(&output_dir.join(&skill_file), &mdx)?;
+        keep.insert(skill_file);
 
         // Unlisted sub-pages.
         let skill_slug_base = format!("claude-skills/{}", skill.dir);
 
         for r in &skill.references {
+            let file_name = format!("{}--ref-{}.mdx", skill.dir, r.name);
             write_unlisted_sub_page(
-                &output_dir.join(format!("{}--ref-{}.mdx", skill.dir, r.name)),
+                &output_dir.join(&file_name),
                 &r.title,
                 &format!("{skill_slug_base}/ref-{}", r.name),
                 &escape_for_mdx(r.raw_content.trim()),
             )?;
+            keep.insert(file_name);
         }
         for f in &script_md {
             let slug = f.filename.trim_end_matches(".md");
             let raw = f.raw_content.as_deref().unwrap_or("");
             let title = f.title.clone().unwrap_or_else(|| slug.to_owned());
+            let file_name = format!("{}--script-{}.mdx", skill.dir, slug);
             write_unlisted_sub_page(
-                &output_dir.join(format!("{}--script-{}.mdx", skill.dir, slug)),
+                &output_dir.join(&file_name),
                 &title,
                 &format!("{skill_slug_base}/script-{slug}"),
                 &escape_for_mdx(raw.trim()),
             )?;
+            keep.insert(file_name);
         }
         for f in &asset_md {
             let slug = f.filename.trim_end_matches(".md");
             let raw = f.raw_content.as_deref().unwrap_or("");
             let title = f.title.clone().unwrap_or_else(|| slug.to_owned());
+            let file_name = format!("{}--asset-{}.mdx", skill.dir, slug);
             write_unlisted_sub_page(
-                &output_dir.join(format!("{}--asset-{}.mdx", skill.dir, slug)),
+                &output_dir.join(&file_name),
                 &title,
                 &format!("{skill_slug_base}/asset-{slug}"),
                 &escape_for_mdx(raw.trim()),
             )?;
+            keep.insert(file_name);
         }
     }
 
     write_category_index(&output_dir, "Skills", 902, "Skill packages")?;
+    prune_stale(&output_dir, &keep)?;
     Ok(items.len())
 }
 
@@ -442,13 +517,16 @@ fn rewrite_link_kind(input: &str, dir: &str, prefix: &str) -> String {
 
 fn generate_agents_docs(items: &[AgentItem], docs_dir: &Path) -> Result<usize> {
     let output_dir = docs_dir.join("claude-agents");
-    clean_dir(&output_dir)?;
 
     if items.is_empty() {
+        clean_dir(&output_dir)?;
         return Ok(0);
     }
 
     ensure_dir(&output_dir)?;
+
+    let mut keep: HashSet<String> = HashSet::new();
+    keep.insert("index.mdx".to_owned());
 
     for agent in items {
         assert_not_index_reserved(
@@ -468,10 +546,13 @@ fn generate_agents_docs(items: &[AgentItem], docs_dir: &Path) -> Result<usize> {
             model_badge,
             escape_for_mdx(agent.raw_content.trim()),
         );
-        write_file(&output_dir.join(format!("{}.mdx", agent.file_slug)), &mdx)?;
+        let file_name = format!("{}.mdx", agent.file_slug);
+        write_file(&output_dir.join(&file_name), &mdx)?;
+        keep.insert(file_name);
     }
 
     write_category_index(&output_dir, "Agents", 903, "Custom subagents")?;
+    prune_stale(&output_dir, &keep)?;
     Ok(items.len())
 }
 
@@ -481,7 +562,6 @@ fn generate_agents_docs(items: &[AgentItem], docs_dir: &Path) -> Result<usize> {
 
 fn generate_overview_index(docs_dir: &Path, kinds: ResourceItemKinds) -> Result<()> {
     let output_dir = docs_dir.join("claude");
-    clean_dir(&output_dir)?;
     ensure_dir(&output_dir)?;
 
     // Build the category slug list in the contract's order: CLAUDE.md,

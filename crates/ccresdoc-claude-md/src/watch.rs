@@ -11,13 +11,13 @@
 //! does NOT re-run zfb's `preBuild`, which is exactly why generation lives here
 //! in Rust rather than in a zfb prebuild step.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use notify::{RecursiveMode, Watcher};
-use notify_debouncer_full::new_debouncer;
+use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 
 use crate::error::{GenerateError, Result};
 use crate::generate;
@@ -25,6 +25,72 @@ use crate::{Config, GenerateReport};
 
 /// Default debounce window for coalescing filesystem-event bursts.
 pub const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// Resource subdirectories of `claude_dir` whose contents feed the generated
+/// docs. A change anywhere under one of these is content-relevant.
+const RESOURCE_SUBDIRS: [&str; 3] = ["commands", "skills", "agents"];
+
+/// Is a changed path part of the generated docs' source content?
+///
+/// The watcher subscribes to `claude_dir` (`~/.claude`) **recursively**, but
+/// that directory also holds high-churn session state — `projects/`, `todos/`,
+/// `statsig/`, `shell-snapshots/`, `history*`, `logs/`, `ide/`, `.git/`,
+/// `.credentials*`, etc. — that changes whenever ANY Claude Code session runs
+/// and is NOT part of the docs. Regenerating on that churn keeps `zfb dev` in a
+/// perpetual rebuild loop, so we **allowlist** only the paths that actually
+/// drive generation:
+///
+/// - any `CLAUDE.md` file at any depth (the CLAUDE.md hierarchy), under either
+///   `claude_dir` or `project_root`;
+/// - anything under `<claude_dir>/commands/`, `<claude_dir>/skills/`, or
+///   `<claude_dir>/agents/`.
+///
+/// Everything else is ignored. Kept as a pure fn so it is unit-testable in
+/// isolation from the `notify` machinery.
+fn is_content_relevant(path: &Path, claude_dir: &Path, project_root: &Path) -> bool {
+    // CLAUDE.md hierarchy: match the filename at any depth, but only inside one
+    // of the watched roots (so an unrelated CLAUDE.md elsewhere can't qualify).
+    if path.file_name().is_some_and(|n| n == "CLAUDE.md")
+        && (path.starts_with(claude_dir) || path.starts_with(project_root))
+    {
+        return true;
+    }
+
+    // Resource families: anything under <claude_dir>/{commands,skills,agents}/.
+    RESOURCE_SUBDIRS
+        .iter()
+        .any(|sub| path.starts_with(claude_dir.join(sub)))
+}
+
+/// Normalize `path` so symlinked path prefixes don't defeat `starts_with`
+/// comparisons against canonicalized roots.
+///
+/// macOS `notify`/FSEvents delivers realpath-resolved paths (e.g.
+/// `/private/var/...`) while a configured root may still be the symlink form
+/// (`/var/...`). We canonicalize the path's deepest *existing* ancestor and
+/// re-attach the (possibly already-deleted) tail, so deletions — whose final
+/// component no longer exists — still normalize correctly.
+fn canonicalize_with_deleted_tail(path: &Path) -> PathBuf {
+    if let Ok(canon) = path.canonicalize() {
+        return canon;
+    }
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut cur = path;
+    while let Some(parent) = cur.parent() {
+        if let Some(name) = cur.file_name() {
+            tail.push(name.to_owned());
+        }
+        if let Ok(canon_parent) = parent.canonicalize() {
+            let mut out = canon_parent;
+            for seg in tail.iter().rev() {
+                out.push(seg);
+            }
+            return out;
+        }
+        cur = parent;
+    }
+    path.to_owned()
+}
 
 /// Outcome of a single watcher-triggered regeneration, passed to the
 /// `on_change` callback.
@@ -86,13 +152,39 @@ where
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
 
     // The debouncer forwards debounced batches; we collapse each batch into a
-    // single pulse on event_tx.
+    // single pulse on event_tx — but ONLY if the batch touched a content path.
+    // Canonicalize the roots once so they match the realpath-resolved paths
+    // that the backend reports (macOS reports `/private/var/...` for `/var/...`).
     let event_tx_for_debouncer = event_tx.clone();
-    let mut debouncer = new_debouncer(debounce, None, move |res| match res {
-        Ok(_events) => {
-            // Any batch of events => one regeneration pulse. Ignore send errors
-            // (worker gone => watch is shutting down).
-            let _ = event_tx_for_debouncer.send(());
+    let claude_dir = config
+        .claude_dir
+        .canonicalize()
+        .unwrap_or_else(|_| config.claude_dir.clone());
+    let project_root = config
+        .project_root
+        .canonicalize()
+        .unwrap_or_else(|_| config.project_root.clone());
+    let mut debouncer = new_debouncer(debounce, None, move |res: DebounceEventResult| match res {
+        Ok(events) => {
+            // Filter out pure session-state churn: only pulse if at least one
+            // changed path is part of the generated docs' source content.
+            // Ignore send errors (worker gone => watch is shutting down).
+            let relevant = events.iter().any(|event| {
+                event.paths.iter().any(|p| {
+                    // Try the raw path first (no syscall). Only the rare path
+                    // that fails this cheap check — but might still be relevant
+                    // behind a symlinked prefix — pays for canonicalization.
+                    is_content_relevant(p, &claude_dir, &project_root)
+                        || is_content_relevant(
+                            &canonicalize_with_deleted_tail(p),
+                            &claude_dir,
+                            &project_root,
+                        )
+                })
+            });
+            if relevant {
+                let _ = event_tx_for_debouncer.send(());
+            }
         }
         Err(errors) => {
             for e in errors {
@@ -153,4 +245,115 @@ where
         stop_tx: Some(stop_tx),
         join: Some(join),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{canonicalize_with_deleted_tail, is_content_relevant};
+    use std::path::Path;
+
+    #[test]
+    fn content_relevant_paths_trigger_regen() {
+        let claude = Path::new("/home/u/.claude");
+        let project = claude; // real-world case: project_root == claude_dir
+
+        let relevant = [
+            "/home/u/.claude/CLAUDE.md",
+            "/home/u/.claude/some/nested/CLAUDE.md",
+            "/home/u/.claude/commands/x.md",
+            "/home/u/.claude/skills/foo/SKILL.md",
+            "/home/u/.claude/skills/foo/references/ref-a.md",
+            "/home/u/.claude/agents/bar.md",
+        ];
+        for p in relevant {
+            assert!(
+                is_content_relevant(Path::new(p), claude, project),
+                "expected {p} to be content-relevant"
+            );
+        }
+    }
+
+    #[test]
+    fn session_state_churn_is_ignored() {
+        let claude = Path::new("/home/u/.claude");
+        let project = claude;
+
+        let irrelevant = [
+            "/home/u/.claude/projects/p.jsonl",
+            "/home/u/.claude/todos/t.json",
+            "/home/u/.claude/shell-snapshots/s.sh",
+            "/home/u/.claude/.git/HEAD",
+            "/home/u/.claude/statsig/x",
+            "/home/u/.claude/history.jsonl",
+            "/home/u/.claude/logs/today.log",
+            "/home/u/.claude/ide/lock",
+            "/home/u/.claude/.credentials.json",
+            // A CLAUDE.md OUTSIDE the watched roots must NOT qualify.
+            "/somewhere/else/CLAUDE.md",
+            // Subdir name that merely starts with an allowlisted prefix.
+            "/home/u/.claude/commands-archive/x.md",
+        ];
+        for p in irrelevant {
+            assert!(
+                !is_content_relevant(Path::new(p), claude, project),
+                "expected {p} to be ignored"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_md_under_distinct_project_root_is_relevant() {
+        // When project_root differs from claude_dir, a CLAUDE.md under either
+        // root counts; resource subdirs are keyed off claude_dir only.
+        let claude = Path::new("/home/u/.claude");
+        let project = Path::new("/home/u/proj");
+        assert!(is_content_relevant(
+            Path::new("/home/u/proj/sub/CLAUDE.md"),
+            claude,
+            project
+        ));
+        assert!(!is_content_relevant(
+            Path::new("/home/u/proj/commands/x.md"),
+            claude,
+            project
+        ));
+    }
+
+    // Directly exercise the macOS symlink-prefix normalizer (the actual fix
+    // behind the watcher integration test) so a regression in the
+    // tail-reattachment loop fails fast as a unit test, not a flaky timeout.
+
+    #[test]
+    fn canonicalize_resolves_existing_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let nested = tmp.path().join("commands");
+        std::fs::create_dir_all(&nested).unwrap();
+        let file = nested.join("x.md");
+        std::fs::write(&file, "body").unwrap();
+
+        // An existing path canonicalizes to its realpath, which must equal the
+        // realpath of the tempdir root joined with the same tail.
+        let got = canonicalize_with_deleted_tail(&file);
+        let want = tmp.path().canonicalize().unwrap().join("commands/x.md");
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn canonicalize_reattaches_deleted_tail() {
+        // The interesting case: the leaf no longer exists (a deletion event),
+        // so canonicalize() on the full path fails and we must canonicalize the
+        // deepest existing ancestor and re-attach the missing tail.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let existing_parent = tmp.path().join("commands");
+        std::fs::create_dir_all(&existing_parent).unwrap();
+        let deleted_leaf = existing_parent.join("gone.md");
+
+        let got = canonicalize_with_deleted_tail(&deleted_leaf);
+        let want = existing_parent.canonicalize().unwrap().join("gone.md");
+        assert_eq!(got, want);
+        // And the normalized result is recognized as content-relevant when the
+        // canonical tempdir root is used as claude_dir.
+        let claude = tmp.path().canonicalize().unwrap();
+        assert!(is_content_relevant(&got, &claude, &claude));
+    }
 }

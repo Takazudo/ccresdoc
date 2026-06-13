@@ -99,6 +99,59 @@ fn watcher_regenerates_on_add_edit_remove() {
 }
 
 #[test]
+fn watcher_ignores_irrelevant_session_churn() {
+    // Cause 1: session-state churn under ~/.claude (projects/, todos/, etc.)
+    // must NOT trigger a regeneration; a content path (skills/) must.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+
+    // Seed so the watched dir exists.
+    write(&claude, "CLAUDE.md", "root");
+
+    let (tx, rx) = mpsc::channel::<WatchEvent>();
+    let handle = watch(
+        config_for(&claude, &docs),
+        Duration::from_millis(120),
+        move |ev| {
+            let _ = tx.send(ev);
+        },
+    )
+    .expect("watch failed to start");
+
+    // Drain any startup pulse the backend may replay for the pre-watch seed
+    // (FSEvents can re-deliver recent changes when a watch attaches).
+    while rx.recv_timeout(Duration::from_millis(400)).is_ok() {}
+
+    // --- Irrelevant churn: must NOT regenerate. ---
+    write(&claude, "projects/p.json", "{}");
+    write(&claude, "todos/t.json", "[]");
+    write(&claude, "statsig/x", "noise");
+    // Generous window relative to the 120ms debounce; a spurious pulse would
+    // arrive well within it.
+    assert!(
+        rx.recv_timeout(Duration::from_millis(800)).is_err(),
+        "irrelevant ~/.claude churn must not trigger a regeneration"
+    );
+
+    // --- Relevant content change: MUST regenerate. ---
+    write(
+        &claude,
+        "skills/foo/SKILL.md",
+        "---\nname: Foo\ndescription: a skill\n---\nbody",
+    );
+    match rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(WatchEvent::Regenerated(report)) => {
+            assert_eq!(report.skills, 1, "the skill should have been generated");
+        }
+        Ok(WatchEvent::Error(e)) => panic!("regeneration error: {e}"),
+        Err(_) => panic!("a content change under skills/ should trigger a regeneration"),
+    }
+
+    handle.stop();
+}
+
+#[test]
 fn watcher_stops_cleanly_on_drop() {
     let tmp = tempfile::TempDir::new().unwrap();
     let claude = tmp.path().join("dot-claude");
