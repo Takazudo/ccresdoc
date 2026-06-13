@@ -1,8 +1,26 @@
 # CCResDoc
 
-A macOS documentation viewer for `$HOME/.claude/` — renders Markdown files, CLAUDE.md hierarchies, skills, and commands as a browsable local web app inside a native Tauri window.
+A macOS documentation viewer for `$HOME/.claude/` — renders CLAUDE.md hierarchies, skills, commands, and agent definitions as a browsable local web app inside a native Tauri window.
 
-The app bundles an embedded axum HTTP server that serves a zfb-built static shell and renders Markdown content dynamically. No Node.js or external dependencies are required to run the finished `.app`.
+The app is a thin Tauri host around a **node-free sidecar architecture**: at launch it spawns the native `zfb` binary (`zfb dev --port 4892`) and a Rust watcher that generates MDX from `~/.claude/`. No Node.js or external runtime dependencies are required once the `.app` is built.
+
+## Architecture
+
+```
+~/.claude/           ← source of truth (CLAUDE.md files, skills/, commands/, agents/)
+     │
+     ▼  Rust watcher (ccresdoc-claude-md crate, in-process)
+app/src/content/docs/claude*/   ← generated MDX (gitignored)
+     │
+     ▼  zfb dev (native binary, port 4892, node-free at runtime)
+WebView → http://localhost:4892/
+```
+
+Key facts:
+- **Node-free at runtime**: `zfb dev` with zero `.mjs` plugins spawns no Node host. The native `@takazudo/zfb-<platform>/zfb` binary is bundled in `node_modules` (populated at build/setup time via `pnpm install`, Node at setup only).
+- **Port 4892**: pinned in `app/zfb.config.ts` and `src-tauri/tauri.conf.json`.
+- **Writable workspace**: the bundled `app/` tree is copied to `<app_data_dir>/app-workspace/` on first launch, gated by a version token + a `.ccresdoc-workspace-ready` sentinel. The token is the host's compiled `CARGO_PKG_VERSION` (bumped per release → the copy refreshes on upgrade); an optional `version.txt` beside the bundled `app/` overrides it if present. Dev mode uses the repo `app/` directly.
+- **Rust generator** (`crates/ccresdoc-claude-md`): `generate()` + `watch()` walk `~/.claude/` and emit zudo-doc-compatible MDX. `zfb dev` content-watch HMRs the result.
 
 ## Prerequisites (development only)
 
@@ -10,52 +28,60 @@ End users need nothing beyond the `.app` bundle. To develop or build from source
 
 - **Rust** (stable) — `rustup install stable`
 - **Tauri CLI** — `cargo install tauri-cli` or `cargo binstall tauri-cli`
-- **zfb binary** — `cargo install --path $HOME/repos/myoss/zfb/crates/zfb`
-
-The zfb binary embeds esbuild + tailwindcss-v4 standalone binaries via `include_dir!` and extracts them at runtime, so ccresdoc's build invocations don't need any env-var prefixes. See `app/CLAUDE.md` for the full list of known zfb feature gaps.
+- **pnpm** — used once at build time to install `app/node_modules` (incl. native `zfb` binary)
 
 ## Develop
 
-```
+```bash
+cd app && pnpm install   # once — populates node_modules incl. native zfb binary
 cargo tauri dev
 ```
 
-`cargo tauri dev` starts the embedded server and opens the Tauri window pointing at `http://localhost:4892/`. Changes to `app/` require a manual rebuild to take effect in dev mode:
+`cargo tauri dev` resolves the native `zfb` binary from `app/node_modules`, runs the
+Rust generator + watcher in-process, spawns `zfb dev --port 4892`, and opens the Tauri
+window once `GET /` returns 200. Changes to `~/.claude/` are picked up live via HMR.
 
-```
-zfb build --cwd app
+To rebuild the frontend shell manually (e.g. after changing `app/pages/`):
+
+```bash
+cd app && pnpm exec zfb build
 ```
 
 (or just run `bash scripts/run-b4push.sh`.)
 
 ## Build the .app
 
-```
+```bash
 cargo tauri build
 ```
 
-This runs `zfb build` automatically (via `beforeBuildCommand` in `src-tauri/tauri.conf.json`), then compiles and bundles the Tauri app. The output is at `src-tauri/target/release/bundle/macos/CCResDoc.app`.
+`beforeBuildCommand` runs `cd app && pnpm install && pnpm exec zfb build` automatically
+(Tauri runs build hooks from the project root) — no global `zfb` on PATH required. Output: `src-tauri/target/release/bundle/macos/CCResDoc.app`.
+
+See `.claude/skills/ccresdoc-build/SKILL.md` for the full install workflow (clean → build → verify → kill → install → launch).
 
 ## Project structure
 
 ```
-crates/          Rust library crates (resources, renderer, server)
-src-tauri/       Tauri wrapper (main.rs, tauri.conf.json)
-app/             zfb frontend project (TypeScript/Preact static shell)
+crates/          Rust workspace crates
+  ccresdoc-claude-md/   ~/.claude→MDX generator + watcher (the live engine)
+src-tauri/       Tauri host (main.rs, tauri.conf.json, loading page)
+app/             zfb frontend project (zudo-doc consumer, port 4892)
 scripts/         run-b4push.sh, test-launch.sh
 .github/         GitHub Actions CI workflow
+.claude/skills/  ccresdoc-build skill (local build + install steps)
 ```
 
 See per-directory CLAUDE.md files for detailed architecture notes.
 
 ## CI
 
-GitHub Actions runs `cargo fmt --check`, `cargo clippy --workspace --all-targets`, and `cargo test --workspace` on every push and PR. The `zfb build` step is run locally (via `scripts/run-b4push.sh`) but deferred from CI — see `.github/workflows/ci.yml` for the rationale.
+GitHub Actions runs `cargo fmt --check`, `cargo clippy --workspace --exclude ccresdoc`, and `cargo test --workspace --exclude ccresdoc` on every push and PR targeting `main` or `base/ccresdoc-zudo-doc-rewrite`. The `ccresdoc` (src-tauri) crate is excluded because webkit2gtk is not available on ubuntu-latest. The `zfb build` step is run locally (via `scripts/run-b4push.sh`) but deferred from CI — see `.github/workflows/ci.yml` for the rationale.
 
 ## Before pushing
 
-```
+```bash
 bash scripts/run-b4push.sh
 ```
 
-Runs all four checks locally: cargo fmt, clippy, test, and the app build.
+Runs all checks locally: cargo fmt, clippy, test, plus `pnpm install` and `pnpm exec zfb build` in `app/`.

@@ -1,61 +1,64 @@
 # crates/ — CCResDoc Rust Workspace
 
-Three library crates that together implement the documentation server pipeline. All are members of the workspace defined in the root `Cargo.toml`.
+One library crate implements the node-free live-update engine. It is a member
+of the workspace defined in the root `Cargo.toml` (`members = ["crates/*", "src-tauri"]`).
 
 ## Workspace layout
 
 ```
 crates/
-  ccresdoc-resources/   Walker: discovers .claude/ → ResourceTree
-  ccresdoc-renderer/    Renderer: Markdown + syntax highlighting → HTML
-  ccresdoc-server/      Server: axum routes + shell template substitution
+  ccresdoc-claude-md/   Generator + watcher: ~/.claude/ → zudo-doc MDX
 ```
 
-`src-tauri/` is also a workspace member (the Tauri binary). It depends on `ccresdoc-server`.
+`src-tauri/` is also a workspace member (the Tauri binary). It depends on
+`ccresdoc-claude-md` for in-process generation + watching.
 
-## What each crate owns
+> History: Waves 1-2 replaced the old three-crate pipeline
+> (`ccresdoc-resources` walker, `ccresdoc-renderer`, `ccresdoc-server`) with the
+> zudo-doc-based architecture. The resources walker was reborn inside
+> `ccresdoc-claude-md`; the renderer and server were deleted (rendering is now
+> zudo-doc's job).
 
-### ccresdoc-resources
+## What the crate owns
 
-Walker for `$HOME/.claude/` that returns a structured `ResourceTree`.
+### ccresdoc-claude-md
 
-- Entry point: `walk_claude_dir(claude_dir, project_root)` — performs all I/O
-- Output: `ResourceTree` containing discovered commands, skills, agents, and CLAUDE.md files
-- All struct constructors are pure data holders with no I/O side-effects
-- Key types: `ResourceTree`, `ResourceItem`, `ResourceError`
+Walks `~/.claude/` and emits **zudo-doc-compatible MDX**, then watches for
+changes and regenerates. This is the live engine: the Rust watcher writes MDX →
+`zfb dev` content-watch → HMR. (`zfb`'s `extraWatchPaths` does NOT re-run
+`preBuild`, so generation + watch must live in Rust, not a zfb prebuild step.)
 
-### ccresdoc-renderer
+- **`generate(&Config) -> Result<GenerateReport>`** — one-shot generation (boot).
+- **`watch(Config, Duration, Fn(WatchEvent)+Send+'static) -> Result<WatchHandle>`**
+  — `notify`-based watcher, ~300ms debounced, serialized so two regenerations
+  never write the same MDX concurrently. Drop the handle (or `stop()`) to end it.
+- **`Config { claude_dir, project_root, docs_dir }`** — absolute paths resolved
+  and passed by the Tauri host (Wave 3).
+- **`GenerateReport { claude_md, commands, skills, agents }`** — emitted counts.
 
-Converts Markdown source to styled HTML. No I/O — purely a transformation library.
+Internal modules: `escape` (faithful port of zudo-doc's `escape-for-mdx.ts`),
+`walk` (the reborn `~/.claude` walker), `generate` (MDX emission per the Wave 1
+content contract in `app/CLAUDE.md`), `watch` (the debounced/serialized
+watcher), `error`.
 
-- Markdown parsing: `comrak` (CommonMark + extensions)
-- Syntax highlighting: `syntect` with default themes
-- HTML post-processing: `lol_html` for link rewriting, heading anchors, admonitions
-- Entry point: `render(markdown: &str) -> Result<String, RenderError>`
-- Sub-modules: `highlight`, `heading_links`, `admonitions`, `code_title`, `strip_md`
-
-### ccresdoc-server
-
-Axum HTTP server that serves the zfb static shell and renders Markdown dynamically.
-
-- Entry points: `serve(config)` (run forever) and `serve_with_shutdown(config, signal)` (Tauri use)
-- Configuration: `ServerConfig { port, claude_dir, project_root, dist_dir }`
-- Static files: served from `dist_dir` (the compiled `app/dist/` tree)
-- Dynamic routes: `/docs/*` — loads `_shell/index.html`, substitutes `☃CCRESDOC_TITLE_SLOT☃` and `☃CCRESDOC_CONTENT_SLOT☃` sentinels with rendered content
-- Manifest route: `/manifest.json` — returns the full resource tree as JSON
-- Readiness probe: `GET /___ready` returns 200 once the server is bound
+Key invariants:
+- The CLAUDE.md walk is **scoped to `~/.claude`**; `project_root = $HOME` is
+  rejected (`GenerateError::ProjectRootTooBroad`, zudolab/zudo-doc#2115).
+- `followSymlinks = false` (skills contain symlinks).
+- Files lacking frontmatter are skipped (matches the JS generator).
+- Output filenames/positions follow the Wave 1 contract: overview 899,
+  CLAUDE.md 900, commands 901, skills 902, agents 903; CLAUDE.md pages are
+  `global.mdx` / `project-<slug>.mdx`.
 
 ## Dependency graph
 
 ```
-ccresdoc-resources  (no internal deps)
-ccresdoc-renderer   (no internal deps)
-ccresdoc-server     → ccresdoc-resources, ccresdoc-renderer
-src-tauri           → ccresdoc-server
+ccresdoc-claude-md  (no internal deps; external: notify, walkdir, serde_yaml, ...)
+src-tauri           → ccresdoc-claude-md
 ```
 
 ## Adding a new crate
 
 1. `cargo new --lib crates/ccresdoc-<name>`
-2. Add it to workspace `members` in root `Cargo.toml` (already covered by `crates/*` glob)
-3. Add it as a path dependency in whichever crate needs it
+2. The workspace `members` glob (`crates/*`) picks it up automatically.
+3. Add it as a path dependency in whichever crate needs it.

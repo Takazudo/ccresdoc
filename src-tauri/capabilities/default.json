@@ -3,7 +3,7 @@
   "description": "Default capabilities for the main window",
   "windows": ["main"],
   "remote": {
-    "urls": ["http://localhost:4892/*"]
+    "urls": ["http://localhost:4892/*", "http://127.0.0.1:4892/*"]
   },
   "permissions": [
     "core:default"

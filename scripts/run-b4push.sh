@@ -4,7 +4,11 @@ set -euo pipefail
 # Before-push comprehensive check script for CCResDoc.
 # Runs: cargo fmt --check, cargo clippy, cargo test, zfb build (app/)
 # All steps run even if one fails; summary at end.
-# Invocation: bash scripts/run-b4push.sh  (no pnpm / Node required)
+# Invocation: bash scripts/run-b4push.sh
+#
+# Node is used only by pnpm install (Step 4a). The zfb build itself is
+# node-free: it invokes the native @takazudo/zfb-<platform>/zfb binary
+# via pnpm exec, not the .bin/zfb Node-shebang wrapper.
 
 START_TIME=$(date +%s)
 FAILURES=()
@@ -36,11 +40,11 @@ else
 fi
 
 # ── Step 2: cargo clippy ─────────────────────────
-step "Step 2/4: cargo clippy --workspace --all-targets"
-if (cd "$ROOT_DIR" && cargo clippy --workspace --all-targets); then
+step "Step 2/4: cargo clippy --workspace --all-targets -- -D warnings"
+if (cd "$ROOT_DIR" && cargo clippy --workspace --all-targets -- -D warnings); then
   pass "cargo clippy passed"
 else
-  fail "cargo clippy --workspace --all-targets"
+  fail "cargo clippy --workspace --all-targets -- -D warnings"
 fi
 
 # ── Step 3: cargo test ───────────────────────────
@@ -51,12 +55,31 @@ else
   fail "cargo test --workspace"
 fi
 
-# ── Step 4: zfb build (app/) ─────────────────────
-step "Step 4/4: zfb build (app/)"
-if (cd "$ROOT_DIR/app" && zfb build); then
-  pass "zfb build passed"
+# ── Step 4: pnpm install + zfb build (app/) ──────
+step "Step 4/4: pnpm install + zfb build (app/)"
+
+# 4a: ensure node_modules (including native zfb binary) are present.
+# Node is only needed here at setup time; zfb dev/build is node-free at runtime.
+INSTALL_OK=0
+if (cd "$ROOT_DIR/app" && pnpm install); then
+  pass "pnpm install (app/) passed"
+  INSTALL_OK=1
 else
-  fail "zfb build (app/)"
+  fail "pnpm install (app/)"
+fi
+
+# 4b: invoke zfb build via pnpm exec so the native @takazudo/zfb-<platform>/zfb
+# binary is used — no global zfb on PATH required.
+# Skip if pnpm install failed: node_modules may be incomplete, causing misleading errors.
+if [ "$INSTALL_OK" -eq 1 ]; then
+  if (cd "$ROOT_DIR/app" && pnpm exec zfb build); then
+    pass "zfb build (app/) passed"
+  else
+    fail "zfb build (app/)"
+  fi
+else
+  echo "⏭ skipping zfb build (pnpm install failed)"
+  FAILURES+=("zfb build (app/) — skipped: pnpm install failed")
 fi
 
 # ── Summary ─────────────────────────────────────

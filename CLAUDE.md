@@ -1,6 +1,18 @@
 # CCResDoc
 
-This repo is a restructure of the existing ccresdoc Tauri app (originally at $HOME/.claude/doc/) using zfb (Rust SSG orchestrator at $HOME/repos/myoss/zfb). The hybrid architecture is documented in the epic issue.
+macOS documentation viewer for `$HOME/.claude/`. Thin Tauri host around a **node-free sidecar** architecture: at launch the host runs the in-process Rust generator/watcher (`ccresdoc-claude-md`) and spawns the native `zfb` binary (`zfb dev --port 4892`); the WebView navigates to `http://localhost:4892/` once the site is ready.
+
+This repo uses zfb (Rust SSG orchestrator at `$HOME/repos/myoss/zfb`) for the frontend build. The hybrid architecture is documented in the epic issue (#41).
+
+## Key architecture facts (claim checklist)
+
+- `node_modules` is populated at **setup/build time only** via `pnpm install` (Node at setup only — NOT at runtime).
+- The host resolves the **native** zfb binary at `<workspace>/node_modules/@takazudo/zfb-<platform>/zfb` — NOT the `.bin/zfb` Node-shebang wrapper.
+- **Port 4892**: pinned in `app/zfb.config.ts` and `src-tauri/tauri.conf.json`.
+- **Node-free at runtime**: `zfb dev` with zero `.mjs` plugins spawns no Node host process.
+- **Writable workspace model**: bundled `.app` copies its `app/` tree to `<app_data_dir>/app-workspace/` on first launch, gated by a version token (the host's compiled `CARGO_PKG_VERSION`, with an optional `version.txt` override) + a `.ccresdoc-workspace-ready` sentinel.
+- **Rust `~/.claude`→MDX generator** (`crates/ccresdoc-claude-md`) is the live engine: `generate()` + `watch()` write MDX → `zfb dev` content-watch → HMR.
+- Readiness is polled on `GET /` (NOT `/___ready`).
 
 ## When working on this repo
 
@@ -12,6 +24,6 @@ This repo is a restructure of the existing ccresdoc Tauri app (originally at $HO
 
 Detailed architecture notes are in per-directory CLAUDE.md files — read these before touching a subdirectory:
 
-- `crates/CLAUDE.md` — Rust workspace layout; what each crate owns
-- `src-tauri/CLAUDE.md` — Tauri wrapper architecture (embedded axum server, window lifecycle)
-- `app/CLAUDE.md` — zfb frontend project; embedded package credits; known zfb workarounds
+- `crates/CLAUDE.md` — Rust workspace layout; the single `ccresdoc-claude-md` generator crate
+- `src-tauri/CLAUDE.md` — Tauri host architecture (sidecar spawn, workspace resolution, native zfb binary, readiness poll)
+- `app/CLAUDE.md` — zfb frontend project; MDX content contract; known zfb workarounds

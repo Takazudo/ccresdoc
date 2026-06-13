@@ -17,7 +17,7 @@ Run `pnpm b4push` from the project root. This executes `scripts/run-b4push.sh` w
 1. `cargo fmt --check` — Rust formatting check across all crates
 2. `cargo clippy --workspace --all-targets` — Rust lints across workspace
 3. `cargo test --workspace` — Rust unit and integration tests
-4. `pnpm --filter app build` — zfb frontend build (requires zfb binary in PATH + env vars)
+4. `cd app && pnpm install` then `pnpm exec zfb build` — node-free zfb frontend build via the bundled native binary (no global zfb / env vars needed). `app/` is a standalone pnpm project (hoisted node_modules).
 
 Takes ~2-4 minutes depending on whether cargo cache is warm. All steps must pass.
 

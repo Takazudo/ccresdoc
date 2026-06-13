@@ -3,8 +3,8 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "dev": "pnpm --filter app dev",
-    "build": "pnpm --filter app build",
+    "dev": "pnpm -C app run dev",
+    "build": "pnpm -C app run build",
     "app:dev": "cargo tauri dev",
     "app:build": "cargo tauri build",
     "b4push": "./scripts/run-b4push.sh"
