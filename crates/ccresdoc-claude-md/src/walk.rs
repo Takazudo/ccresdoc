@@ -1,133 +1,87 @@
-//! Walker for `$HOME/.claude/` that discovers Claude resources and returns a
-//! structured [`ResourceTree`].
+//! Filesystem walker for `~/.claude/` that discovers Claude resources.
 //!
-//! The only entry point that performs I/O is [`walk_claude_dir`].  All struct
-//! constructors are pure data holders with no I/O side-effects.
+//! Repurposed from the original `ccresdoc-resources` crate. The walker
+//! discovers the four resource families (CLAUDE.md hierarchy, commands,
+//! skills, agents) and returns a [`ResourceTree`] of pure data. All I/O is
+//! confined to [`walk_claude_dir`]; the MDX emission lives in `generate.rs`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use thiserror::Error;
+
+use crate::error::{GenerateError, Result};
 
 // ---------------------------------------------------------------------------
-// Error type
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Error)]
-pub enum ResourceError {
-    #[error("project_root is too broad: {0:?}. Pass a specific directory such as $HOME/.claude, not $HOME.")]
-    ProjectRootTooBroad(PathBuf),
-
-    #[error("I/O error reading {path:?}: {source}")]
-    Io {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-}
-
-pub type Result<T> = std::result::Result<T, ResourceError>;
-
-// ---------------------------------------------------------------------------
-// Public data types  (no I/O in constructors)
+// Public(crate) data types — no I/O in constructors
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClaudeMdItem {
+pub(crate) struct ClaudeMdItem {
     /// Absolute-rooted display path, e.g. "/CLAUDE.md" or "/some/dir/CLAUDE.md"
     pub display_path: String,
     /// "root" for the top-level file; otherwise dir path with "/" replaced by "--"
     pub slug: String,
     /// Relative path from project_root
     pub rel_path: String,
-    /// Full file contents
+    /// Full file contents (CLAUDE.md is embedded verbatim, frontmatter and all).
     pub raw_content: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandItem {
-    /// Filename without the `.md` extension
+pub(crate) struct CommandItem {
     pub name: String,
-    /// Value of the `description` frontmatter field (empty string if absent)
     pub description: String,
-    /// File body after frontmatter is stripped
     pub raw_content: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SkillReference {
-    /// Filename without `.md`
+pub(crate) struct SkillReference {
     pub name: String,
-    /// First H1 heading in the body; falls back to `name`
     pub title: String,
-    /// Full file contents (including frontmatter if any)
     pub raw_content: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SkillSubFile {
-    /// Bare filename (with extension)
+pub(crate) struct SkillSubFile {
     pub filename: String,
     pub is_markdown: bool,
-    /// Only set when `is_markdown` is true
     pub title: Option<String>,
-    /// Only set when `is_markdown` is true
     pub raw_content: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SkillItem {
-    /// `name` frontmatter field; falls back to the directory name
+pub(crate) struct SkillItem {
     pub name: String,
-    /// Directory name inside `<claude_dir>/skills/`
     pub dir: String,
-    /// `description` frontmatter field
     pub description: String,
-    /// File body of `SKILL.md` after frontmatter is stripped
     pub raw_content: String,
-    /// Files in `<skill>/references/*.md`, sorted by name
     pub references: Vec<SkillReference>,
-    /// Files in `<skill>/scripts/*`, sorted by filename
     pub script_files: Vec<SkillSubFile>,
-    /// Files in `<skill>/assets/*`, sorted by filename
     pub asset_files: Vec<SkillSubFile>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentItem {
-    /// `name` frontmatter field; falls back to filename without `.md`
+pub(crate) struct AgentItem {
     pub name: String,
-    /// Filename without `.md`
     pub file_slug: String,
-    /// `description` frontmatter field
     pub description: String,
-    /// `model` frontmatter field (empty string if absent)
     pub model: String,
-    /// File body after frontmatter is stripped
     pub raw_content: String,
 }
 
-/// Top-level result returned by [`walk_claude_dir`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ResourceTree {
-    /// CLAUDE.md files found under `project_root`.
-    /// Sorted: "root" first, then alphabetically by `display_path`.
+pub(crate) struct ResourceTree {
     pub claude_mds: Vec<ClaudeMdItem>,
-    /// `.md` files found under `<claude_dir>/commands/`, sorted by `name`.
     pub commands: Vec<CommandItem>,
-    /// Skill directories under `<claude_dir>/skills/` (each must contain `SKILL.md`),
-    /// sorted by `name`.
     pub skills: Vec<SkillItem>,
-    /// `.md` files under `<claude_dir>/agents/`, sorted by `name`.
     pub agents: Vec<AgentItem>,
 }
 
 // ---------------------------------------------------------------------------
-// Internal frontmatter helper
+// Frontmatter parsing (gray-matter equivalent)
 // ---------------------------------------------------------------------------
 
-/// Loose frontmatter parsed from YAML between `---` delimiters.
 #[derive(Debug, Deserialize, Default)]
 struct Frontmatter {
     #[serde(default)]
@@ -136,35 +90,32 @@ struct Frontmatter {
     name: String,
     #[serde(default)]
     model: String,
-    /// Catch-all for any extra fields we don't care about
     #[serde(flatten)]
     _extra: HashMap<String, serde_yaml::Value>,
 }
 
-/// Split `---\n<yaml>\n---\n<body>` into `(Frontmatter, body)`.
-/// If the file doesn't start with `---`, returns a default Frontmatter and
-/// the whole content as body.
-fn parse_frontmatter(content: &str) -> (Frontmatter, String) {
+/// Split `---\n<yaml>\n---\n<body>` into `(frontmatter, body, had_frontmatter)`.
+/// If the content does not begin with `---`, returns a default frontmatter, the
+/// whole content as body, and `had_frontmatter = false`.
+fn parse_frontmatter(content: &str) -> (Frontmatter, String, bool) {
     if !content.starts_with("---") {
-        return (Frontmatter::default(), content.to_owned());
+        return (Frontmatter::default(), content.to_owned(), false);
     }
-    // Find the closing `---`
     let after_open = &content[3..];
-    // Allow `---\n` or `---\r\n`
     let after_open = after_open.trim_start_matches(['\r', '\n']);
     if let Some(end) = after_open.find("\n---") {
         let yaml_str = &after_open[..end];
         let body_start = end + 4; // skip "\n---"
-                                  // skip optional trailing newline(s) after the closing `---`
         let body = after_open[body_start..].trim_start_matches(['\r', '\n']);
         let fm: Frontmatter = serde_yaml::from_str(yaml_str).unwrap_or_default();
-        (fm, body.to_owned())
+        (fm, body.to_owned(), true)
     } else {
-        (Frontmatter::default(), content.to_owned())
+        // Opened a frontmatter block but never closed it — treat as no
+        // frontmatter (matches gray-matter, which only parses a closed block).
+        (Frontmatter::default(), content.to_owned(), false)
     }
 }
 
-/// Extract the first `# Heading` in a markdown body.
 fn extract_h1(content: &str) -> Option<String> {
     for line in content.lines() {
         if let Some(rest) = line.strip_prefix("# ") {
@@ -178,18 +129,17 @@ fn extract_h1(content: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers for safe file reading
+// Safe file reading
 // ---------------------------------------------------------------------------
 
 fn read_file(path: &Path) -> Result<String> {
-    std::fs::read_to_string(path).map_err(|e| ResourceError::Io {
+    std::fs::read_to_string(path).map_err(|e| GenerateError::Io {
         path: path.to_owned(),
         source: e,
     })
 }
 
-/// Returns `true` if `path` is a real directory (resolving symlinks).
-/// Returns `false` for broken symlinks, files, or I/O errors (warn + continue).
+/// True if `path` resolves to a real directory (following symlinks).
 fn is_real_dir(path: &Path) -> bool {
     match std::fs::metadata(path) {
         Ok(m) => m.is_dir(),
@@ -204,58 +154,62 @@ fn is_real_dir(path: &Path) -> bool {
 // CLAUDE.md discovery
 // ---------------------------------------------------------------------------
 
-/// Directories to skip while walking for CLAUDE.md files.
-const EXCLUDE_DIR_NAMES: &[&str] = &[".git", "node_modules", "worktrees"];
+/// Directory names skipped while walking for CLAUDE.md files.
+/// Directory names skipped while walking for CLAUDE.md files. Mirrors upstream
+/// `generate.ts`'s `excludeDirs` (the name-based subset); the path-based
+/// `e2e/fixtures` and the live `docs_dir` are passed in as `exclude_paths`.
+const EXCLUDE_DIR_NAMES: &[&str] = &[
+    ".git",
+    "node_modules",
+    "worktrees",
+    "dist",
+    "out",
+    "public",
+    "__inbox",
+    "test-results",
+];
 
-/// Recursively collect all `CLAUDE.md` paths under `dir`, skipping the
-/// directories whose **full path** starts with any entry in `exclude_paths`,
-/// and also skipping dirs whose **name** is in `EXCLUDE_DIR_NAMES`.
 fn find_claude_md_files(dir: &Path, exclude_paths: &[PathBuf]) -> Vec<PathBuf> {
     use walkdir::WalkDir;
 
     let mut results = Vec::new();
-
-    // Canonicalize so path comparisons work on macOS (tempfile /var -> /private/var)
     let canon_dir = dir.canonicalize().unwrap_or_else(|_| dir.to_owned());
 
     let walker = WalkDir::new(&canon_dir)
+        // `followSymlinks = false` — skills contain symlinks; a symlinked dir
+        // can point back into the tree or out to a slow mount and turn the walk
+        // into a multi-minute hang.
         .follow_links(false)
         .into_iter()
         .filter_entry(|entry| {
             let path = entry.path();
-
-            // Always allow the root itself
             if path == canon_dir {
                 return true;
             }
-
-            // Skip if the path starts with any excluded absolute path
             for excl in exclude_paths {
                 if path.starts_with(excl) {
                     return false;
                 }
             }
-
-            // For directories, also skip by name
             if entry.file_type().is_dir() {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if EXCLUDE_DIR_NAMES.contains(&name) {
+                    // Skip excluded names AND any dotdir (matches upstream's
+                    // `item.startsWith(".")` guard) — keeps the walk out of
+                    // .git, .cache, .venv, etc.
+                    if EXCLUDE_DIR_NAMES.contains(&name) || name.starts_with('.') {
                         return false;
                     }
                 }
             }
-
             true
         });
 
     for entry in walker {
         match entry {
             Ok(e) => {
-                // Skip directories themselves; we only want files named CLAUDE.md
                 if e.file_type().is_dir() {
                     continue;
                 }
-                // Tolerate broken symlinks: if metadata fails, warn and continue
                 if e.path_is_symlink() && e.metadata().is_err() {
                     log::warn!("broken symlink, skipping: {}", e.path().display());
                     continue;
@@ -265,8 +219,7 @@ fn find_claude_md_files(dir: &Path, exclude_paths: &[PathBuf]) -> Vec<PathBuf> {
                 }
             }
             Err(e) => {
-                // walkdir returns an error for broken symlinks among other things
-                log::warn!("walk error (skipping): {}", e);
+                log::warn!("walk error (skipping): {e}");
             }
         }
     }
@@ -274,15 +227,8 @@ fn find_claude_md_files(dir: &Path, exclude_paths: &[PathBuf]) -> Vec<PathBuf> {
     results
 }
 
-// ---------------------------------------------------------------------------
-// Section walkers
-// ---------------------------------------------------------------------------
-
 fn collect_claude_mds(project_root: &Path, exclude_paths: &[PathBuf]) -> Result<Vec<ClaudeMdItem>> {
     let paths = find_claude_md_files(project_root, exclude_paths);
-
-    // Canonicalize so that strip_prefix works correctly on macOS where
-    // tempfile creates dirs under /var -> /private/var symlinks.
     let canon_root = project_root
         .canonicalize()
         .unwrap_or_else(|_| project_root.to_owned());
@@ -290,7 +236,6 @@ fn collect_claude_mds(project_root: &Path, exclude_paths: &[PathBuf]) -> Result<
     let mut items = Vec::new();
     for file_path in &paths {
         let raw_content = read_file(file_path)?;
-        // Try canonical path first, then fall back to the raw file_path
         let canon_file = file_path
             .canonicalize()
             .unwrap_or_else(|_| file_path.to_owned());
@@ -298,12 +243,10 @@ fn collect_claude_mds(project_root: &Path, exclude_paths: &[PathBuf]) -> Result<
             .strip_prefix(&canon_root)
             .unwrap_or(&canon_file)
             .to_string_lossy()
-            .replace('\\', "/"); // normalise Windows separators
-        let display_path = format!("/{}", rel);
+            .replace('\\', "/");
+        let display_path = format!("/{rel}");
         let dir_part = {
             let p = std::path::Path::new(&rel);
-            // Note: parent() of "CLAUDE.md" returns Some("") not None, so we
-            // must treat both "" and "." as the root case.
             match p.parent().and_then(|d| d.to_str()) {
                 None | Some("") | Some(".") => ".".to_owned(),
                 Some(d) => d.to_owned(),
@@ -315,6 +258,8 @@ fn collect_claude_mds(project_root: &Path, exclude_paths: &[PathBuf]) -> Result<
             dir_part.replace('/', "--")
         };
 
+        // The generator embeds the FULL trimmed file content (frontmatter and
+        // all), so we keep raw_content as the whole file — no frontmatter parse.
         items.push(ClaudeMdItem {
             display_path,
             slug,
@@ -323,7 +268,6 @@ fn collect_claude_mds(project_root: &Path, exclude_paths: &[PathBuf]) -> Result<
         });
     }
 
-    // Sort: "root" first, then alphabetically by display_path
     items.sort_by(|a, b| {
         if a.slug == "root" {
             return std::cmp::Ordering::Less;
@@ -343,7 +287,7 @@ fn collect_commands(commands_dir: &Path) -> Result<Vec<CommandItem>> {
     }
 
     let mut entries: Vec<_> = std::fs::read_dir(commands_dir)
-        .map_err(|e| ResourceError::Io {
+        .map_err(|e| GenerateError::Io {
             path: commands_dir.to_owned(),
             source: e,
         })?
@@ -363,7 +307,9 @@ fn collect_commands(commands_dir: &Path) -> Result<Vec<CommandItem>> {
     for entry in &entries {
         let path = entry.path();
         let raw = read_file(&path)?;
-        let (fm, body) = parse_frontmatter(&raw);
+        // Upstream keeps every command .md (gray-matter never throws; a missing
+        // block just yields empty `data`), so we do too — no frontmatter skip.
+        let (fm, body, _had_fm) = parse_frontmatter(&raw);
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -376,9 +322,7 @@ fn collect_commands(commands_dir: &Path) -> Result<Vec<CommandItem>> {
         });
     }
 
-    // Sort by name (locale-independent string sort, matching TS `localeCompare`)
     items.sort_by(|a, b| a.name.cmp(&b.name));
-
     Ok(items)
 }
 
@@ -388,7 +332,7 @@ fn collect_skill_references(refs_dir: &Path) -> Result<Vec<SkillReference>> {
     }
 
     let mut files: Vec<_> = std::fs::read_dir(refs_dir)
-        .map_err(|e| ResourceError::Io {
+        .map_err(|e| GenerateError::Io {
             path: refs_dir.to_owned(),
             source: e,
         })?
@@ -431,7 +375,7 @@ fn collect_sub_files(sub_dir: &Path) -> Result<Vec<SkillSubFile>> {
     }
 
     let mut files: Vec<_> = std::fs::read_dir(sub_dir)
-        .map_err(|e| ResourceError::Io {
+        .map_err(|e| GenerateError::Io {
             path: sub_dir.to_owned(),
             source: e,
         })?
@@ -479,13 +423,12 @@ fn collect_skills(skills_dir: &Path) -> Result<Vec<SkillItem>> {
     }
 
     let mut dirs: Vec<_> = std::fs::read_dir(skills_dir)
-        .map_err(|e| ResourceError::Io {
+        .map_err(|e| GenerateError::Io {
             path: skills_dir.to_owned(),
             source: e,
         })?
         .filter_map(|r| r.ok())
         .filter(|e| {
-            // Must be a real directory (tolerate broken symlinks)
             is_real_dir(&e.path()) && {
                 let skill_md = e.path().join("SKILL.md");
                 skill_md.is_file()
@@ -506,7 +449,18 @@ fn collect_skills(skills_dir: &Path) -> Result<Vec<SkillItem>> {
 
         let skill_md_path = skill_path.join("SKILL.md");
         let raw = read_file(&skill_md_path)?;
-        let (fm, body) = parse_frontmatter(&raw);
+        let (fm, body, has_frontmatter) = parse_frontmatter(&raw);
+        // Generator skips skills whose SKILL.md has no parseable frontmatter
+        // (`if (!parsed) continue;`). gray-matter only returns null on a YAML
+        // throw; an absent block yields `data = {}`. We approximate the
+        // generator's intent: a SKILL.md without a frontmatter block is skipped
+        // because skills are expected to carry name/description frontmatter.
+        if !has_frontmatter {
+            log::warn!(
+                "skipping skill {dir_name}: SKILL.md has no frontmatter block"
+            );
+            continue;
+        }
 
         let name = if fm.name.is_empty() {
             dir_name.clone()
@@ -529,9 +483,7 @@ fn collect_skills(skills_dir: &Path) -> Result<Vec<SkillItem>> {
         });
     }
 
-    // Sort alphabetically by name
     items.sort_by(|a, b| a.name.cmp(&b.name));
-
     Ok(items)
 }
 
@@ -541,7 +493,7 @@ fn collect_agents(agents_dir: &Path) -> Result<Vec<AgentItem>> {
     }
 
     let mut files: Vec<_> = std::fs::read_dir(agents_dir)
-        .map_err(|e| ResourceError::Io {
+        .map_err(|e| GenerateError::Io {
             path: agents_dir.to_owned(),
             source: e,
         })?
@@ -561,7 +513,7 @@ fn collect_agents(agents_dir: &Path) -> Result<Vec<AgentItem>> {
     for entry in &files {
         let path = entry.path();
         let raw = read_file(&path)?;
-        let (fm, body) = parse_frontmatter(&raw);
+        let (fm, body, _has_fm) = parse_frontmatter(&raw);
         let file_slug = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -582,45 +534,42 @@ fn collect_agents(agents_dir: &Path) -> Result<Vec<AgentItem>> {
         });
     }
 
-    // Sort alphabetically by name
     items.sort_by(|a, b| a.name.cmp(&b.name));
-
     Ok(items)
 }
 
 // ---------------------------------------------------------------------------
-// Public entry point
+// Walk entry point
 // ---------------------------------------------------------------------------
 
-/// Walk `claude_dir` and return the full [`ResourceTree`].
+/// Walk `claude_dir` / `project_root` and return the full [`ResourceTree`].
 ///
-/// Both `claude_dir` and `project_root` must point to `$HOME/.claude` (not
-/// `$HOME` or some other broad directory).  Passing `project_root = $HOME`
-/// will return an [`ResourceError::ProjectRootTooBroad`] error.
+/// `project_root` must NOT be the user's home directory itself — the CLAUDE.md
+/// walk is scoped to `~/.claude` (zudolab/zudo-doc#2115). That guard runs
+/// up-front in [`crate::Config::validate`]; this function trusts it.
 ///
-/// All I/O happens inside this function.  The returned struct and its nested
-/// types are pure data — their constructors perform no I/O.
-pub fn walk_claude_dir(claude_dir: &Path, project_root: &Path) -> Result<ResourceTree> {
-    // Guard: refuse project_root that is the user's home directory itself.
-    // Both paths are resolved so that trailing slashes / symlinks don't matter.
-    let home = dirs_home();
-    if let Some(ref home_path) = home {
-        let pr = project_root
-            .canonicalize()
-            .unwrap_or_else(|_| project_root.to_owned());
-        let home_canon = home_path
-            .canonicalize()
-            .unwrap_or_else(|_| home_path.to_owned());
-        if pr == home_canon {
-            return Err(ResourceError::ProjectRootTooBroad(project_root.to_owned()));
-        }
-    }
-
-    // Build the exclude list for CLAUDE.md discovery
-    let exclude_paths: Vec<PathBuf> = EXCLUDE_DIR_NAMES
+/// `docs_dir` is excluded from the CLAUDE.md walk so the generated `claude*/`
+/// tree is never re-walked if it ever lands under `project_root`.
+pub(crate) fn walk_claude_dir(
+    claude_dir: &Path,
+    project_root: &Path,
+    docs_dir: &Path,
+) -> Result<ResourceTree> {
+    // Name-based excludes anchored at project_root, plus the path-based
+    // `e2e/fixtures` and the live `docs_dir` (canonicalized so a symlinked
+    // path — e.g. macOS /var -> /private/var temp dirs — still matches the
+    // canonicalized walk entries).
+    let mut exclude_paths: Vec<PathBuf> = EXCLUDE_DIR_NAMES
         .iter()
         .map(|name| project_root.join(name))
         .collect();
+    exclude_paths.push(project_root.join("e2e").join("fixtures"));
+    exclude_paths.push(
+        docs_dir
+            .canonicalize()
+            .unwrap_or_else(|_| docs_dir.to_owned()),
+    );
+    exclude_paths.push(docs_dir.to_owned());
 
     let claude_mds = collect_claude_mds(project_root, &exclude_paths)?;
     let commands = collect_commands(&claude_dir.join("commands"))?;
@@ -634,12 +583,3 @@ pub fn walk_claude_dir(claude_dir: &Path, project_root: &Path) -> Result<Resourc
         agents,
     })
 }
-
-/// Best-effort home directory detection — delegates to `$HOME` env var.
-fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
-}
-
-// ---------------------------------------------------------------------------
-// Tests are in tests/walker.rs
-// ---------------------------------------------------------------------------
