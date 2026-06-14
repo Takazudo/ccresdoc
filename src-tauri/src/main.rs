@@ -860,13 +860,23 @@ fn retry_launch(app_handle: AppHandle) {
 
 // ── Navigation filter ─────────────────────────────
 
-/// Allow in-window navigation only for localhost (the doc site), tauri/asset
-/// protocol URLs, and about:blank; open external http(s) links in the OS
-/// browser instead of inside the WebView.
+/// Allow in-window navigation only for the pinned doc-site origin
+/// (`localhost:PORT` / `127.0.0.1:PORT`), tauri/asset protocol URLs, and
+/// about:blank. Any other http(s) URL is opened in the OS browser and rejected
+/// for in-window navigation.
 fn allow_navigation(url: &tauri::Url) -> bool {
     match url.scheme() {
         "tauri" | "asset" | "about" => true,
-        "http" | "https" => matches!(url.host_str(), Some("localhost") | Some("127.0.0.1")),
+        "http" | "https" => {
+            let is_local = matches!(url.host_str(), Some("localhost") | Some("127.0.0.1"))
+                && url.port() == Some(PORT);
+            if !is_local {
+                if let Err(e) = open::that(url.as_str()) {
+                    eprintln!("allow_navigation: failed to open {} in OS browser: {e}", url);
+                }
+            }
+            is_local
+        }
         _ => false,
     }
 }
