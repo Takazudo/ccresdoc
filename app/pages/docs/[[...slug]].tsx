@@ -46,10 +46,23 @@ interface DocPageProps {
 // ---------------------------------------------------------------------------
 
 function detectNavSection(slug: string): string | undefined {
-  // Look up which headerNav categoryMatch applies to this slug
+  // Match by first path segment: "claude-md/global" → first segment "claude-md"
+  // must equal or start-with-dash the categoryMatch (e.g. "claude" matches
+  // "claude", "claude/...", "claude-md/...", "claude-commands/..." etc.).
+  // Concretely: segment === match  (exact: "claude")
+  //          or segment.startsWith(match + "-")  (sibling: "claude-md", "claude-commands" …)
+  //          or segment.startsWith(match + "/")  (subdirectory handled by first-segment split)
+  // This lets a single categoryMatch: "claude" in headerNav cover all claude-* categories
+  // without requiring one entry per category.
+  const firstSegment = slug.split("/")[0];
   for (const item of settings.headerNav) {
     const match = (item as { categoryMatch?: string }).categoryMatch;
-    if (match && (slug === match || slug.startsWith(match + "/"))) {
+    if (
+      match &&
+      (firstSegment === match ||
+        firstSegment.startsWith(match + "-") ||
+        firstSegment.startsWith(match + "/"))
+    ) {
       return match;
     }
   }
