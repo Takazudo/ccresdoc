@@ -1019,7 +1019,10 @@ fn allow_navigation(url: &tauri::Url) -> bool {
                 && url.port() == Some(PORT);
             if !is_local {
                 if let Err(e) = open::that(url.as_str()) {
-                    eprintln!("allow_navigation: failed to open {} in OS browser: {e}", url);
+                    eprintln!(
+                        "allow_navigation: failed to open {} in OS browser: {e}",
+                        url
+                    );
                 }
             }
             is_local

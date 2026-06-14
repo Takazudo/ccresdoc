@@ -607,7 +607,11 @@ fn non_utf8_command_file_does_not_abort_run() {
     let docs = tmp.path().join("docs");
 
     // Write a valid command.
-    write(&claude, "commands/good.md", "---\ndescription: good\n---\nbody");
+    write(
+        &claude,
+        "commands/good.md",
+        "---\ndescription: good\n---\nbody",
+    );
 
     // Write a command file with invalid UTF-8 bytes (a lone 0xFF byte embedded
     // in otherwise-ASCII content).
@@ -622,7 +626,10 @@ fn non_utf8_command_file_does_not_abort_run() {
     // Must not return Err — one non-UTF-8 file should not abort the run.
     let report = generate(&config_for(&claude, &docs)).unwrap();
     // Both commands processed (the bad one with lossy decoding).
-    assert_eq!(report.commands, 2, "both commands (incl. bad UTF-8) should be generated");
+    assert_eq!(
+        report.commands, 2,
+        "both commands (incl. bad UTF-8) should be generated"
+    );
     // The good one is fine.
     assert!(docs.join("claude-commands/good.mdx").exists());
     // The bad one is also emitted (with replacement chars — not checked here,
@@ -651,19 +658,33 @@ fn exclude_dir_names_skipped_at_every_depth() {
     // Excluded dir names nested inside a real sub-directory — must be skipped
     // at any depth, not just when they are a direct child of project_root.
     write(&claude, "project/dist/CLAUDE.md", "excluded nested dist");
-    write(&claude, "project/worktrees/CLAUDE.md", "excluded nested worktrees");
+    write(
+        &claude,
+        "project/worktrees/CLAUDE.md",
+        "excluded nested worktrees",
+    );
     write(&claude, "project/out/CLAUDE.md", "excluded nested out");
-    write(&claude, "project/node_modules/CLAUDE.md", "excluded nested node_modules");
+    write(
+        &claude,
+        "project/node_modules/CLAUDE.md",
+        "excluded nested node_modules",
+    );
 
     let report = generate(&config_for(&claude, &docs)).unwrap();
-    assert_eq!(report.claude_md, 2, "root + project/CLAUDE.md; nested excludes must be skipped");
+    assert_eq!(
+        report.claude_md, 2,
+        "root + project/CLAUDE.md; nested excludes must be skipped"
+    );
 
     // Confirm no generated page contains the excluded content.
     let dir = fs::read_dir(docs.join("claude-md")).unwrap();
     for entry in dir {
         let p = entry.unwrap().path();
         let content = fs::read_to_string(&p).unwrap();
-        assert!(!content.contains("excluded nested"), "{p:?} leaked content from an excluded nested dir");
+        assert!(
+            !content.contains("excluded nested"),
+            "{p:?} leaked content from an excluded nested dir"
+        );
     }
 }
 

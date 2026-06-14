@@ -457,11 +457,7 @@ fn escape_open_tags(input: &str) -> String {
                 if i >= len {
                     break;
                 }
-                if bytes[i] == b'-'
-                    && i + 2 < len
-                    && bytes[i + 1] == b'-'
-                    && bytes[i + 2] == b'>'
-                {
+                if bytes[i] == b'-' && i + 2 < len && bytes[i + 1] == b'-' && bytes[i + 2] == b'>' {
                     out.push_str("--&gt;");
                     i += 3;
                     break;
@@ -760,10 +756,7 @@ mod tests {
             "JSX tag after comment should still be escaped"
         );
         // Raw HTML comment sequence must NOT appear in the output.
-        assert!(
-            !out.contains("<!--"),
-            "raw <!-- must not appear in output"
-        );
+        assert!(!out.contains("<!--"), "raw <!-- must not appear in output");
     }
 
     #[test]

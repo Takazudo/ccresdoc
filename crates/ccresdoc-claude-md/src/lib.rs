@@ -151,13 +151,9 @@ impl Config {
 
             // Check 3: pr is directly inside $HOME but is not named ".claude"
             // (e.g. pr == $HOME/repos — too broad; $HOME/.claude is fine).
-            let last_component = pr
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            let is_home_child_non_claude =
-                pr.parent().map(|p| p == home_canon).unwrap_or(false)
-                    && last_component != ".claude";
+            let last_component = pr.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let is_home_child_non_claude = pr.parent().map(|p| p == home_canon).unwrap_or(false)
+                && last_component != ".claude";
 
             if is_home || is_ancestor_of_home || is_home_child_non_claude {
                 return Err(GenerateError::ProjectRootTooBroad(

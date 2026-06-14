@@ -681,7 +681,10 @@ fn generate_agents_docs(items: &[AgentItem], docs_dir: &Path) -> Result<usize> {
                 agent.file_slug, prev, agent.file_slug
             )));
         }
-        emitted_slugs.insert(agent.file_slug.to_ascii_lowercase(), agent.file_slug.clone());
+        emitted_slugs.insert(
+            agent.file_slug.to_ascii_lowercase(),
+            agent.file_slug.clone(),
+        );
         let model_badge = if agent.model.is_empty() {
             String::new()
         } else {
