@@ -5,6 +5,13 @@ import { defaultLocale } from "@/config/i18n";
 
 const normalizedBase = settings.base.replace(/\/+$/, "");
 
+// Asset extensions that should NOT receive a trailing slash.
+// Restricted to a known allowlist so that dotted path segments like
+// "project-v1.2" or "claude.md" (as a segment label) are not mistaken
+// for files (fix #68).
+const ASSET_EXT_RE =
+  /\.(html|css|js|json|png|jpg|jpeg|svg|gif|webp|ico|txt|xml|map|woff2?)$/i;
+
 export function applyTrailingSlash(url: string): string {
   if (!settings.trailingSlash) return url;
   if (url.endsWith("/")) return url;
@@ -16,15 +23,19 @@ export function applyTrailingSlash(url: string): string {
   // URL has a query/hash suffix and the path part itself ends with "/".
   if (pathPart.endsWith("/")) return url;
   const lastSegment = pathPart.split("/").pop() ?? "";
-  if (/\.[a-zA-Z]\w*$/.test(lastSegment)) return url;
+  if (ASSET_EXT_RE.test(lastSegment)) return url;
   return pathPart + "/" + suffix;
 }
 
 export function withBase(path: string): string {
-  const raw =
-    normalizedBase === ""
-      ? path
-      : `${normalizedBase}${path.startsWith("/") ? path : `/${path}`}`;
+  let raw: string;
+  if (normalizedBase === "") {
+    // When base is "/" it normalizes to "". Ensure the result is always an
+    // absolute path so callers never get a bare relative string (fix #68).
+    raw = path.startsWith("/") ? path : `/${path}`;
+  } else {
+    raw = `${normalizedBase}${path.startsWith("/") ? path : `/${path}`}`;
+  }
   return applyTrailingSlash(raw);
 }
 
@@ -40,7 +51,10 @@ export function stripBase(path: string): string {
 // routes are not built. Parameter kept for API compatibility with
 // multi-locale consumers.
 export function docsUrl(slug: string, _lang: string = defaultLocale): string {
-  const path = `/docs/${slug}`;
+  // Trim leading slashes from slug to prevent double-slash paths like
+  // "/docs//x" when slug already starts with "/" (fix #68).
+  const trimmed = slug.replace(/^\/+/, "");
+  const path = trimmed === "" ? "/docs" : `/docs/${trimmed}`;
   return withBase(path);
 }
 

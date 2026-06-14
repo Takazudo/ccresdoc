@@ -39,19 +39,23 @@ export const colorSchemes: Record<string, ColorScheme> = {
     palette: [
       "#303030", "#dd3131", "#266538", "#a83838",
       "#3277c8", "#a35e0f", "#90a1b9", "#7a5218",
-      "#6b6b6b", "#e2ddda", "#ece9e9", "#303030",
+      "#6b6b6b", "#e2ddda", "#f7f4f2", "#303030",
       "#5b99dc", "#b89ee7", "#8590a0", "#654516",
     ],
     semantic: {
       surface: 10,
       muted: 8,
       accent: 5,
-      accentHover: 14,
+      // Darker variant of accent (slot 5 #a35e0f -> slot 7 #7a5218) so hover
+      // strengthens the link affordance rather than weakening it (the old
+      // slot 14 was a lighter, desaturated blue-grey that lowered contrast).
+      accentHover: 7,
       codeBg: 10,
       codeFg: 11,
       success: 2,
       danger: 1,
-      warning: 3,
+      // True amber, distinct from danger (#dd3131) and the slot-3 brown-red.
+      warning: "#c2810c",
       info: 4,
       imageOverlayBg: 11,
       imageOverlayFg: 10,
@@ -75,7 +79,9 @@ export const colorSchemes: Record<string, ColorScheme> = {
       surface: 0,
       muted: 8,
       accent: 12,
-      accentHover: 14,
+      // Brighter, more-saturated variant of accent (slot 12 #d69a66) so hover
+      // strengthens the link affordance on the dark background.
+      accentHover: "#e8a463",
       codeBg: 10,
       codeFg: 11,
       success: 2,

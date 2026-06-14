@@ -54,11 +54,17 @@ fn ensure_dir(dir: &Path) -> Result<()> {
 }
 
 fn clean_dir(dir: &Path) -> Result<()> {
-    if dir.exists() {
-        std::fs::remove_dir_all(dir).map_err(|e| GenerateError::Io {
-            path: dir.to_owned(),
-            source: e,
-        })?;
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Already gone — nothing to clean; not an error.
+        }
+        Err(e) => {
+            // Non-fatal: log but don't abort generate(). A transient read/remove
+            // error during cleanup (e.g. locked file on Windows) should not
+            // prevent the subsequent write phase from succeeding.
+            log::warn!("clean_dir: could not remove {}: {e}", dir.display());
+        }
     }
     Ok(())
 }
@@ -197,20 +203,24 @@ fn generate_claudemd_docs(items: &[ClaudeMdItem], docs_dir: &Path) -> Result<usi
                 item.rel_path
             ),
         )?;
-        if let Some(prev) = emitted.get(&out_name) {
+        // Key on the lowercased name: the macOS target filesystem is
+        // case-insensitive, so `Foo.mdx` and `foo.mdx` collide on disk.
+        let out_key = out_name.to_ascii_lowercase();
+        if let Some(prev) = emitted.get(&out_key) {
             return Err(GenerateError::SlugCollision(format!(
                 "\"{out_name}\" is produced by both \"{prev}\" and \"{}\". Rename one of the directories.",
                 item.rel_path
             )));
         }
-        emitted.insert(out_name.clone(), item.rel_path.clone());
+        emitted.insert(out_key, item.rel_path.clone());
 
-        // sidebar_position offsets from the category index (900). The first
-        // CLAUDE.md gets 901-equivalent ordering relative to category, but to
-        // match upstream's `index + 1` scheme while staying below the next
-        // category (901), the per-item positions are 1-based within the
-        // category; the category header itself carries 900.
-        let position = index + 1;
+        // sidebar_position is 1-based within the category. The category
+        // index itself carries 900; per-item positions start at 1. Cap at
+        // 899 so no item ever collides with the adjacent category header
+        // (the next category starts at 901 and the overview is 899). In
+        // practice ~/.claude rarely holds >100 CLAUDE.md files, so the cap
+        // is a safety net rather than an everyday limit.
+        let position = (index + 1).min(899);
         let mdx = format!(
             "---\ntitle: \"{}\"\ndescription: \"CLAUDE.md at {}\"\nsidebar_position: {}\nsidebar_label: \"{}\"\ngenerated: true\n---\n\n**Path:** `{}`\n\n{}\n",
             escape_title(&item.display_path),
@@ -252,11 +262,22 @@ fn generate_commands_docs(items: &[CommandItem], docs_dir: &Path) -> Result<usiz
     let mut keep: HashSet<String> = HashSet::new();
     keep.insert("index.mdx".to_owned());
 
+    // Per-category slug collision tracking: command files whose stems differ
+    // only by extension or case would produce the same output .mdx filename.
+    let mut emitted_slugs: HashMap<String, String> = HashMap::new();
+
     for item in items {
         assert_not_index_reserved(
             &item.name,
             "claude-resources: a command named \"index\" conflicts with the category metadata file. Rename the command file.",
         )?;
+        if let Some(prev) = emitted_slugs.get(&item.name.to_ascii_lowercase()) {
+            return Err(GenerateError::SlugCollision(format!(
+                "claude-commands: slug \"{}\" would be produced by both \"{}\" and \"{}\". Rename one of the command files.",
+                item.name, prev, item.name
+            )));
+        }
+        emitted_slugs.insert(item.name.to_ascii_lowercase(), item.name.clone());
         let mdx = format!(
             "---\ntitle: \"{}\"\ndescription: \"{}\"\nsidebar_label: \"{}\"\ngenerated: true\n---\n\n{}\n",
             escape_title(&item.name),
@@ -323,11 +344,22 @@ fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
     let mut keep: HashSet<String> = HashSet::new();
     keep.insert("index.mdx".to_owned());
 
+    // Per-category slug collision tracking: skill dirs whose names differ
+    // only by case would produce the same output .mdx filename.
+    let mut emitted_slugs: HashMap<String, String> = HashMap::new();
+
     for skill in items {
         assert_not_index_reserved(
             &skill.dir,
             "claude-resources: a skill directory named \"index\" conflicts with the category metadata file. Rename the skill directory.",
         )?;
+        if let Some(prev) = emitted_slugs.get(&skill.dir.to_ascii_lowercase()) {
+            return Err(GenerateError::SlugCollision(format!(
+                "claude-skills: slug \"{}\" would be produced by both \"{}\" and \"{}\". Rename one of the skill directories.",
+                skill.dir, prev, skill.dir
+            )));
+        }
+        emitted_slugs.insert(skill.dir.to_ascii_lowercase(), skill.dir.clone());
 
         let script_md: Vec<&_> = skill
             .script_files
@@ -476,12 +508,118 @@ fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
 
 /// Rewrite `](references/x.md)` → `](./ref-x)`, `scripts/` → `./script-`,
 /// `assets/` → `./asset-`, matching the JS regex replacements.
+///
+/// Rewrites are skipped inside fenced code blocks (``` ... ```) so that
+/// example code showing the original `](references/...)` syntax is preserved
+/// verbatim.
 fn rewrite_skill_links(body: &str) -> String {
-    let mut out = body.to_owned();
-    out = rewrite_link_kind(&out, "references/", "ref-");
-    out = rewrite_link_kind(&out, "scripts/", "script-");
-    out = rewrite_link_kind(&out, "assets/", "asset-");
+    // Split the body into fenced-code and prose segments, rewrite only prose.
+    let segments = split_code_and_prose(body);
+    let mut out = String::with_capacity(body.len());
+    for (is_code, segment) in segments {
+        if is_code {
+            out.push_str(segment);
+        } else {
+            let mut prose = segment.to_owned();
+            prose = rewrite_link_kind(&prose, "references/", "ref-");
+            prose = rewrite_link_kind(&prose, "scripts/", "script-");
+            prose = rewrite_link_kind(&prose, "assets/", "asset-");
+            out.push_str(&prose);
+        }
+    }
     out
+}
+
+/// Split `input` into alternating `(is_code, slice)` pairs. Fenced code
+/// blocks (3+ backtick fence lines) are returned with `is_code = true`;
+/// everything else with `is_code = false`.
+///
+/// This mirrors the fence-detection logic in `escape.rs` so link rewriting
+/// never touches the interior of a fenced code block.
+fn split_code_and_prose(input: &str) -> Vec<(bool, &str)> {
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    let mut segments: Vec<(bool, &str)> = Vec::new();
+    let mut prose_start = 0;
+    let mut i = 0;
+
+    while i < len {
+        // Fence may only open at the start of a line.
+        let prev = if i > 0 { bytes[i - 1] } else { b'\n' };
+        let at_line_start = prev == b'\n' || prev == b'\r';
+        if at_line_start && bytes[i] == b'`' {
+            let fence_start = i;
+            let mut fence_len = 0;
+            while i < len && bytes[i] == b'`' {
+                fence_len += 1;
+                i += 1;
+            }
+            if fence_len >= 3 {
+                // Consume the rest of the opening line.
+                while i < len && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                if i < len {
+                    i += 1; // include the newline
+                }
+                // Find the closing fence (>= fence_len backticks at line start).
+                let close_end = find_prose_closing_fence(bytes, i, fence_len);
+                let block_end = close_end.unwrap_or(len);
+                // Emit any prose accumulated before this fence.
+                if prose_start < fence_start {
+                    segments.push((false, &input[prose_start..fence_start]));
+                }
+                segments.push((true, &input[fence_start..block_end]));
+                prose_start = block_end;
+                i = block_end;
+                continue;
+            }
+            // Not a real fence (1-2 backticks) — fall through, let i advance.
+            // (i already moved past the backticks in the counting loop above)
+            continue;
+        }
+        i += 1;
+    }
+
+    // Remaining prose after the last fence (or the whole input if no fences).
+    if prose_start < len {
+        segments.push((false, &input[prose_start..]));
+    }
+    segments
+}
+
+/// Find the byte offset just past a closing fence of at least `fence_len`
+/// backticks, scanning from `from`. Returns `None` if no closing fence is
+/// found (unclosed fence — treat remainder as code).
+fn find_prose_closing_fence(bytes: &[u8], from: usize, fence_len: usize) -> Option<usize> {
+    let len = bytes.len();
+    let mut i = from;
+    while i < len {
+        // Must be at line start.
+        let prev = if i > 0 { bytes[i - 1] } else { b'\n' };
+        if (prev == b'\n' || prev == b'\r') && bytes[i] == b'`' {
+            let run_start = i;
+            let mut run = 0;
+            while i < len && bytes[i] == b'`' {
+                run += 1;
+                i += 1;
+            }
+            if run >= fence_len {
+                // Consume the rest of the closing fence line.
+                while i < len && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                if i < len {
+                    i += 1; // include the newline
+                }
+                let _ = run_start; // suppress unused warning
+                return Some(i);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
 }
 
 /// Replace `](<dir><name>.md)` with `](./<prefix><name>)`. `<name>` matches the
@@ -528,11 +666,25 @@ fn generate_agents_docs(items: &[AgentItem], docs_dir: &Path) -> Result<usize> {
     let mut keep: HashSet<String> = HashSet::new();
     keep.insert("index.mdx".to_owned());
 
+    // Per-category slug collision tracking: agent files whose stems differ
+    // only by extension or case would produce the same output .mdx filename.
+    let mut emitted_slugs: HashMap<String, String> = HashMap::new();
+
     for agent in items {
         assert_not_index_reserved(
             &agent.file_slug,
             "claude-resources: an agent named \"index\" conflicts with the category metadata file. Rename the agent file.",
         )?;
+        if let Some(prev) = emitted_slugs.get(&agent.file_slug.to_ascii_lowercase()) {
+            return Err(GenerateError::SlugCollision(format!(
+                "claude-agents: slug \"{}\" would be produced by both \"{}\" and \"{}\". Rename one of the agent files.",
+                agent.file_slug, prev, agent.file_slug
+            )));
+        }
+        emitted_slugs.insert(
+            agent.file_slug.to_ascii_lowercase(),
+            agent.file_slug.clone(),
+        );
         let model_badge = if agent.model.is_empty() {
             String::new()
         } else {

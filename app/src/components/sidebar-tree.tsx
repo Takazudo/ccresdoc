@@ -3,10 +3,15 @@
 // Use preact hook entrypoints directly — the "react" → "preact/compat" alias
 // lets us consume React-typed components in this Preact app (configured
 // project-wide).
-import { useState, useCallback, useEffect, useMemo, useRef } from "preact/hooks";
+import { useState, useCallback, useEffect, useMemo, useRef, useContext } from "preact/hooks";
+import { createContext } from "preact";
 import type { NavNode } from "@/utils/docs";
 import type { LocaleLink } from "@/types/locale";
+// Sidebar nav must react to the same client-router lifecycle event the mobile
+// toggle (sidebar-toggle.tsx) listens on, so soft swaps re-sync the active slug.
+import { AFTER_NAVIGATE_EVENT } from "@takazudo/zudo-doc/transitions";
 import { INDENT, BASE_PAD, connectorLeft, ConnectorLines, CategoryLinkIcon } from "./tree-nav-shared";
+import { stripBase } from "@/utils/base";
 // BARE ThemeToggle (#2012 E2) — this footer toggle renders inside the
 // SidebarToggle island, so it must NOT bring its own island wrapper.
 import { ThemeToggle } from "@takazudo/zudo-doc/theme-toggle";
@@ -46,6 +51,19 @@ function getOpenSet(): Set<string> {
   }
 }
 
+/**
+ * Whether a persisted open-set exists at all. Distinguishes "fresh session,
+ * no saved state" (keep server defaults) from "user has a saved set"
+ * (the set is the post-hydration source of truth for every category).
+ */
+function hasStoredOpenSet(): boolean {
+  try {
+    return sessionStorage.getItem(STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
 function saveOpenSet(set: Set<string>) {
   try {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify([...set]));
@@ -58,10 +76,191 @@ function normalizePath(p: string): string {
   return p.replace(/\/$/, "") || "/";
 }
 
+// --- Tree keyboard navigation (WAI-ARIA tree pattern) ---------------------
+//
+// Implements roving tabindex + arrow-key navigation across the visible
+// treeitems. Only one row is tabbable at a time (`tabindex=0`); the rest are
+// `tabindex=-1` and reached via Up/Down. Right/Left expand/collapse (or move
+// to parent/first child). Movement is computed by querying the live DOM for
+// `[role="treeitem"]` inside the tree root — collapsed children are not
+// rendered, so the query naturally yields exactly the visible rows in order.
+
+interface CategoryOpenControls {
+  setOpen: (v: boolean) => void;
+}
+
+interface TreeNavContextValue {
+  rootRef: { current: HTMLDivElement | null };
+  /** Update the roving-tabindex target (lives as state in SidebarTree). */
+  setFocusedId: (id: string) => void;
+  /** Toggle a category open/closed by slug (used by Right/Left/Space). */
+  setOpenBySlug: (slug: string, open: boolean) => void;
+  /** Registry of per-category open controls, keyed by slug (filled by CategoryNode). */
+  _setters: { current: Map<string, CategoryOpenControls> };
+}
+
+const TreeNavContext = createContext<TreeNavContextValue | null>(null);
+
+function visibleItems(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return [];
+  return Array.from(root.querySelectorAll<HTMLElement>('[role="treeitem"]'));
+}
+
+function focusItem(el: HTMLElement | undefined, setFocusedId: (id: string) => void) {
+  if (!el) return;
+  const id = el.getAttribute("data-tree-id");
+  if (id !== null) setFocusedId(id);
+  el.focus();
+}
+
+/**
+ * Keydown handler for a single treeitem row. `ctx` carries the shared tree
+ * state; `slug`, `isExpandable`, `expanded`, and `level` describe this row.
+ * Returns nothing — it mutates focus / open-state as a side effect.
+ */
+function handleTreeKeyDown(
+  e: KeyboardEvent,
+  ctx: TreeNavContextValue,
+  row: HTMLElement,
+  slug: string,
+  isExpandable: boolean,
+  expanded: boolean,
+  level: number,
+) {
+  const root = ctx.rootRef.current;
+  const items = visibleItems(root);
+  const idx = items.indexOf(row);
+  if (idx === -1) return;
+
+  switch (e.key) {
+    case "ArrowDown": {
+      e.preventDefault();
+      focusItem(items[idx + 1], ctx.setFocusedId);
+      break;
+    }
+    case "ArrowUp": {
+      e.preventDefault();
+      focusItem(items[idx - 1], ctx.setFocusedId);
+      break;
+    }
+    case "ArrowRight": {
+      e.preventDefault();
+      if (isExpandable && !expanded) {
+        ctx.setOpenBySlug(slug, true);
+      } else if (isExpandable && expanded) {
+        // Move to first child (next row, which will be one level deeper).
+        const next = items[idx + 1];
+        if (next && Number(next.getAttribute("aria-level")) > level) {
+          focusItem(next, ctx.setFocusedId);
+        }
+      }
+      break;
+    }
+    case "ArrowLeft": {
+      e.preventDefault();
+      if (isExpandable && expanded) {
+        ctx.setOpenBySlug(slug, false);
+      } else {
+        // Move focus to the parent row (nearest preceding shallower level).
+        for (let i = idx - 1; i >= 0; i--) {
+          if (Number(items[i].getAttribute("aria-level")) < level) {
+            focusItem(items[i], ctx.setFocusedId);
+            break;
+          }
+        }
+      }
+      break;
+    }
+    case "Home": {
+      e.preventDefault();
+      focusItem(items[0], ctx.setFocusedId);
+      break;
+    }
+    case "End": {
+      e.preventDefault();
+      focusItem(items[items.length - 1], ctx.setFocusedId);
+      break;
+    }
+    case " ": {
+      // Space toggles expansion on an expandable row (WAI-ARIA tree pattern);
+      // on a leaf it activates the link. The inner anchor/button are
+      // tabindex=-1, so forward the activation here.
+      e.preventDefault();
+      if (isExpandable) {
+        ctx.setOpenBySlug(slug, !expanded);
+      } else {
+        row.querySelector<HTMLElement>("a[href]")?.click();
+      }
+      break;
+    }
+    case "Enter": {
+      // Enter activates the row's link if it has one; otherwise (a no-href
+      // category) it toggles expansion.
+      e.preventDefault();
+      const link = row.querySelector<HTMLElement>("a[href]");
+      if (link) {
+        link.click();
+      } else if (isExpandable) {
+        ctx.setOpenBySlug(slug, !expanded);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+/**
+ * Single-sources the `role="treeitem"` row contract shared by CategoryNode
+ * and LeafNode: roving tabindex, aria-level/selected, the data-tree-id used by
+ * focus movement, and the keydown handler. `aria-expanded` is emitted only for
+ * expandable rows (leaves must not carry it). Returns the props to spread onto
+ * the row `<div>` plus the context (CategoryNode also needs it for the
+ * open-control registry).
+ *
+ * NOTE: `data-tree-id` / roving focus assume `slug` is unique across the WHOLE
+ * tree (not per-parent). buildNavTree guarantees this today; if that ever
+ * changes, focus movement would jump to the first slug-duplicate row.
+ */
+function useTreeItem(opts: {
+  slug: string;
+  level: number;
+  isActive: boolean;
+  isTabbable: boolean;
+  isExpandable: boolean;
+  expanded: boolean;
+}) {
+  const treeNav = useContext(TreeNavContext);
+  const rowRef = useRef<HTMLDivElement | null>(null);
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (!treeNav || !rowRef.current) return;
+    handleTreeKeyDown(e, treeNav, rowRef.current, opts.slug, opts.isExpandable, opts.expanded, opts.level);
+  };
+
+  const rowProps = {
+    ref: rowRef,
+    role: "treeitem" as const,
+    "aria-level": opts.level,
+    "aria-selected": opts.isActive,
+    ...(opts.isExpandable ? { "aria-expanded": opts.expanded } : {}),
+    "data-tree-id": opts.slug,
+    tabIndex: opts.isTabbable ? 0 : -1,
+    onKeyDown,
+    className: "relative outline-none focus-visible:ring-1 focus-visible:ring-accent",
+  };
+
+  return { treeNav, rowProps };
+}
+
 /** Find the slug of the node whose href matches the given pathname */
 function findActiveSlug(nodes: NavNode[], pathname: string): string | undefined {
+  // Strip the base prefix from pathname so that node.href values (which are
+  // stored without the base) compare correctly under a non-root deployment
+  // (fix: active highlight was broken when base !== "/").
+  const pathnameWithoutBase = normalizePath(stripBase(pathname));
   for (const node of nodes) {
-    if (node.href && normalizePath(node.href) === pathname) return node.slug;
+    if (node.href && normalizePath(node.href) === pathnameWithoutBase) return node.slug;
     const found = findActiveSlug(node.children, pathname);
     // "" is the canonical root-index slug (#1891) — a truthiness check
     // would discard a legitimate root match.
@@ -80,11 +279,13 @@ function useActiveSlug(nodes: NavNode[], initial?: string): string | undefined {
       const found = findActiveSlug(nodes, pathname);
       if (found !== undefined) setSlug(found);
     };
+    // Initial run on mount, then re-sync after every client-router soft swap.
+    // Using AFTER_NAVIGATE_EVENT (the same signal sidebar-toggle.tsx listens
+    // on) keeps the active slug correct across soft navigations, where
+    // `DOMContentLoaded` never fires again.
     update();
-    // zfb's `<ViewTransitions />` does a real page load on every
-    // navigation, so `DOMContentLoaded` is the post-navigate signal.
-    document.addEventListener("DOMContentLoaded", update);
-    return () => document.removeEventListener("DOMContentLoaded", update);
+    document.addEventListener(AFTER_NAVIGATE_EVENT, update);
+    return () => document.removeEventListener(AFTER_NAVIGATE_EVENT, update);
   }, [nodes]);
 
   return slug;
@@ -187,8 +388,36 @@ function SidebarFooter({ links, themeDefaultMode }: { links?: LocaleLink[]; them
   );
 }
 
+/**
+ * Builds a STABLE tree-navigation context value plus the roving-tabindex
+ * pointer. `focusedId` is deliberately NOT part of the context object — every
+ * arrow keystroke updates it, and folding it into the Provider value would
+ * re-render every consuming row on each keypress. Instead it stays as plain
+ * state here and feeds the `tabbableId` derivation; the context only carries
+ * stable refs/callbacks (the slug→setOpen registry that lets keyboard
+ * Right/Left/Space drive the same per-node open state the toggle button drives).
+ */
+function useTreeNav(): { ctx: TreeNavContextValue; focusedId: string | null } {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [focusedId, setFocusedIdState] = useState<string | null>(null);
+  const settersRef = useRef(new Map<string, CategoryOpenControls>());
+
+  const setFocusedId = useCallback((id: string) => setFocusedIdState(id), []);
+  const setOpenBySlug = useCallback((slug: string, open: boolean) => {
+    settersRef.current.get(slug)?.setOpen(open);
+  }, []);
+
+  const ctx = useMemo<TreeNavContextValue>(
+    () => ({ rootRef, setFocusedId, setOpenBySlug, _setters: settersRef }),
+    [setFocusedId, setOpenBySlug],
+  );
+
+  return { ctx, focusedId };
+}
+
 export default function SidebarTree({ nodes, currentSlug, rootMenuItems, backToMenuLabel, localeLinks, themeDefaultMode }: SidebarTreeProps) {
   const activeSlug = useActiveSlug(nodes, currentSlug);
+  const { ctx: treeNavCtx, focusedId } = useTreeNav();
   const [query, setQuery] = useState("");
   const [showingRootMenu, setShowingRootMenu] = useState(false);
   const filterRef = useRef<HTMLInputElement>(null);
@@ -221,6 +450,30 @@ export default function SidebarTree({ nodes, currentSlug, rootMenuItems, backToM
     () => (query ? filterTree(nodes, query) : nodes),
     [nodes, query],
   );
+
+  // Roving-tabindex target: exactly one treeitem is tabbable (`tabindex=0`).
+  // Until the user moves focus (focusedId === null) the active page's row is
+  // the entry point; failing that, the first top-level row. Once the user
+  // arrows around, focusedId pins the tabbable row.
+  const firstVisibleSlug = filteredNodes[0]?.slug;
+  const tabbableId = focusedId ?? activeSlug ?? firstVisibleSlug;
+
+  // Guard against zero tabbable rows: `tabbableId` is a slug, but a row only
+  // renders as a treeitem when its ancestors are expanded. If the active page
+  // (or a stored focusedId) sits inside a collapsed subtree, NO rendered row
+  // matches and Tab can't enter the tree. After each render, if nothing is
+  // tabbable, pin focus to the first actually-rendered treeitem.
+  useEffect(() => {
+    const root = treeNavCtx.rootRef.current;
+    if (!root) return;
+    const items = visibleItems(root);
+    if (items.length === 0) return;
+    const hasTabbable = items.some((el) => el.getAttribute("data-tree-id") === tabbableId);
+    if (!hasTabbable) {
+      const firstId = items[0].getAttribute("data-tree-id");
+      if (firstId !== null) treeNavCtx.setFocusedId(firstId);
+    }
+  });
 
   const footer = useMemo(
     () => (localeLinks || themeDefaultMode) ? <SidebarFooter links={localeLinks} themeDefaultMode={themeDefaultMode} /> : null,
@@ -286,6 +539,7 @@ export default function SidebarTree({ nodes, currentSlug, rootMenuItems, backToM
           <input
             ref={filterRef}
             type="text"
+            aria-label="Filter sidebar"
             placeholder={filterPlaceholder}
             value={query}
             // onInput (not onChange): under zfb's esbuild Preact the filter
@@ -299,12 +553,17 @@ export default function SidebarTree({ nodes, currentSlug, rootMenuItems, backToM
           />
         </div>
       </div>
-      <NodeList
-        nodes={filteredNodes}
-        currentSlug={activeSlug}
-        depth={0}
-        forceOpen={!!query}
-      />
+      <TreeNavContext.Provider value={treeNavCtx}>
+        <div ref={treeNavCtx.rootRef} role="tree" aria-label="Documentation navigation">
+          <NodeList
+            nodes={filteredNodes}
+            currentSlug={activeSlug}
+            depth={0}
+            forceOpen={!!query}
+            tabbableId={tabbableId}
+          />
+        </div>
+      </TreeNavContext.Provider>
       {footer}
     </nav>
   );
@@ -315,11 +574,14 @@ function NodeList({
   currentSlug,
   depth,
   forceOpen,
+  tabbableId,
 }: {
   nodes: NavNode[];
   currentSlug?: string;
   depth: number;
   forceOpen: boolean;
+  /** Slug of the single roving-tabindex target across the whole tree. */
+  tabbableId?: string;
 }) {
   return (
     <>
@@ -333,6 +595,7 @@ function NodeList({
             depth={depth}
             isLast={isLast}
             forceOpen={forceOpen}
+            tabbableId={tabbableId}
           />
         ) : (
           <LeafNode
@@ -341,6 +604,7 @@ function NodeList({
             currentSlug={currentSlug}
             depth={depth}
             isLast={isLast}
+            tabbableId={tabbableId}
           />
         );
       })}
@@ -361,12 +625,14 @@ function CategoryNode({
   depth,
   isLast,
   forceOpen,
+  tabbableId,
 }: {
   node: NavNode;
   currentSlug?: string;
   depth: number;
   isLast: boolean;
   forceOpen: boolean;
+  tabbableId?: string;
 }) {
   const containsCurrent = subtreeContainsSlug(node, currentSlug);
   const isActive = node.slug === currentSlug;
@@ -375,11 +641,52 @@ function CategoryNode({
   // to avoid hydration mismatch. Stored state is restored in useEffect below.
   const [open, setOpen] = useState(containsCurrent ? true : !node.collapsed);
 
-  // Restore open state from sessionStorage after hydration
-  useEffect(() => {
+  // --- Tree keyboard nav wiring -------------------------------------------
+  const isExpanded = forceOpen || open;
+  const level = depth + 1; // WAI-ARIA aria-level is 1-based
+  const { treeNav, rowProps } = useTreeItem({
+    slug: node.slug,
+    level,
+    isActive,
+    isTabbable: tabbableId === node.slug,
+    isExpandable: true,
+    expanded: isExpanded,
+  });
+
+  // Persist-aware open setter shared by the toggle button and keyboard
+  // Right/Left/Space, so every open/close path writes the sessionStorage set
+  // consistently (fix #4 made the stored set the source of truth).
+  const setOpenPersisted = useCallback((next: boolean) => {
+    setOpen(next);
     const stored = getOpenSet();
-    if (stored.has(node.slug) && !open) {
-      setOpen(true);
+    if (next) stored.add(node.slug);
+    else stored.delete(node.slug);
+    saveOpenSet(stored);
+  }, [node.slug]);
+
+  // Register this category's open control so keyboard Right/Left/Space (routed
+  // at the root by slug) drives the same per-node state the toggle button does.
+  useEffect(() => {
+    if (!treeNav) return;
+    const setters = treeNav._setters;
+    setters.current.set(node.slug, { setOpen: setOpenPersisted });
+    return () => {
+      setters.current.delete(node.slug);
+    };
+  }, [treeNav, node.slug, setOpenPersisted]);
+
+  // Restore open state from sessionStorage after hydration. The stored set is
+  // the post-hydration source of truth and reconciles BOTH directions: a slug
+  // absent from the set closes, a slug present opens. We only override the
+  // server default when a saved set actually exists (fresh sessions keep
+  // server defaults). The active subtree always stays open regardless, so a
+  // stale "closed" entry can't hide the current page.
+  useEffect(() => {
+    if (!hasStoredOpenSet()) return;
+    const stored = getOpenSet();
+    const next = containsCurrent || stored.has(node.slug);
+    if (next !== open) {
+      setOpen(next);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -405,20 +712,9 @@ function CategoryNode({
   }, [open, node.slug]);
 
   const toggle = useCallback(() => {
-    setOpen((prev) => {
-      const next = !prev;
-      const stored = getOpenSet();
-      if (next) {
-        stored.add(node.slug);
-      } else {
-        stored.delete(node.slug);
-      }
-      saveOpenSet(stored);
-      return next;
-    });
-  }, [node.slug]);
+    setOpenPersisted(!open);
+  }, [setOpenPersisted, open]);
 
-  const isExpanded = forceOpen || open;
   const paddingLeft = padLeft(depth, true);
 
   return (
@@ -433,7 +729,7 @@ function CategoryNode({
           }}
         />
       )}
-      <div className="relative">
+      <div {...rowProps}>
         <ConnectorLines depth={depth} isLast={isLast} topPad="calc(0.15rem + var(--spacing-vsp-xs))" />
         {node.href ? (
           <div
@@ -441,6 +737,7 @@ function CategoryNode({
           >
             <a
               href={node.href}
+              tabIndex={-1}
               aria-current={isActive ? "page" : undefined}
               className={`flex-1 flex items-start gap-hsp-xs py-vsp-xs hover:underline focus:underline break-words ${isActive ? "text-bg" : "text-fg"}`}
               style={{ paddingLeft }}
@@ -454,6 +751,7 @@ function CategoryNode({
             </a>
             <button
               type="button"
+              tabIndex={-1}
               onClick={toggle}
               className={`aspect-square flex items-center justify-center w-[1.5rem] border-y border-l hover:underline focus:underline ${isActive ? "border-bg/30" : "border-muted"}`}
               aria-expanded={isExpanded}
@@ -465,6 +763,7 @@ function CategoryNode({
         ) : (
           <button
             type="button"
+            tabIndex={-1}
             onClick={toggle}
             className={`flex w-full items-center gap-hsp-md text-left text-small font-semibold py-vsp-xs text-fg hover:underline focus:underline break-words`}
             style={{ paddingLeft }}
@@ -479,12 +778,13 @@ function CategoryNode({
         )}
       </div>
       {isExpanded && (
-        <div>
+        <div role="group">
           <NodeList
             nodes={node.children}
             currentSlug={currentSlug}
             depth={depth + 1}
             forceOpen={forceOpen}
+            tabbableId={tabbableId}
           />
         </div>
       )}
@@ -497,14 +797,29 @@ function LeafNode({
   currentSlug,
   depth,
   isLast,
+  tabbableId,
 }: {
   node: NavNode;
   currentSlug?: string;
   depth: number;
   isLast: boolean;
+  tabbableId?: string;
 }) {
-  if (!node.href) return null;
   const isActive = node.slug === currentSlug;
+  const level = depth + 1; // WAI-ARIA aria-level is 1-based
+  // Leaves are not expandable, so Right/Left only move focus.
+  const { rowProps } = useTreeItem({
+    slug: node.slug,
+    level,
+    isActive,
+    isTabbable: tabbableId === node.slug,
+    isExpandable: false,
+    expanded: false,
+  });
+
+  // Hook calls above must run before this early return so hook order stays
+  // stable across renders.
+  if (!node.href) return null;
   const isRoot = depth === 0;
   const paddingLeft = padLeft(depth, isRoot);
 
@@ -524,10 +839,11 @@ function LeafNode({
 
   return (
     <div className={outerClass}>
-      <div className="relative">
+      <div {...rowProps}>
         <ConnectorLines depth={depth} isLast={isLast} topPad={topPad} />
         <a
           href={node.href}
+          tabIndex={-1}
           aria-current={isActive ? "page" : undefined}
           className={isRoot
             ? `flex items-start gap-hsp-xs py-[calc(var(--spacing-vsp-xs)+0.15rem)] pr-[4px] text-small font-semibold break-words ${

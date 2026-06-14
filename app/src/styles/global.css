@@ -184,6 +184,15 @@
   --text-heading:    var(--text-scale-xl);   /* page headings */
   --text-display:    var(--text-scale-2xl);  /* hero text */
 
+  /* ========================================
+   * Transitions — the tight `@import "tailwindcss/utilities"` (no default
+   * @theme) drops Tailwind's default `--default-transition-duration`, so the
+   * `transition: ... var(--default-transition-duration)` rules below resolve to
+   * an undefined custom property and fall back to an instant (0s) transition.
+   * Re-declare Tailwind v4's default value so those transitions animate.
+   * ======================================== */
+  --default-transition-duration: 150ms;
+
   /* Font families */
   --font-sans: system-ui, sans-serif;
   --font-mono: ui-monospace, monospace;

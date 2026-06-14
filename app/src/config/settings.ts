@@ -48,7 +48,7 @@ export const settings = {
   // Simple footer (no link columns, just copyright)
   footer: {
     links: [] as Array<{ title: string; items: Array<{ label: string; href: string }> }>,
-    copyright: `Copyright &copy; ${new Date().getFullYear()} CCResDoc`,
+    copyright: `Copyright © ${new Date().getFullYear()} CCResDoc`,
   } as { links: Array<{ title: string; items: Array<{ label: string; href: string }> }>; copyright?: string } | false,
   // Header nav — link to the claude docs overview section
   headerNav: [

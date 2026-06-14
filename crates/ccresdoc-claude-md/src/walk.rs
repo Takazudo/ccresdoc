@@ -133,10 +133,28 @@ fn extract_h1(content: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 fn read_file(path: &Path) -> Result<String> {
-    std::fs::read_to_string(path).map_err(|e| GenerateError::Io {
+    let bytes = std::fs::read(path).map_err(|e| GenerateError::Io {
         path: path.to_owned(),
         source: e,
-    })
+    })?;
+    // Use lossy decoding: a non-UTF-8 file produces replacement characters
+    // (U+FFFD) rather than aborting the entire generate() run. One bad file
+    // should not block all others.
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Log a `read_dir` entry error and return `None` so callers can use
+/// `filter_map(log_entry_err)` instead of `filter_map(Result::ok)`.
+/// The original `filter_map(Result::ok)` silently discarded entries whose
+/// `DirEntry` or `file_type()` failed; logging ensures they surface as warnings.
+fn log_entry_err(res: std::io::Result<std::fs::DirEntry>) -> Option<std::fs::DirEntry> {
+    match res {
+        Ok(e) => Some(e),
+        Err(e) => {
+            log::warn!("read_dir entry error (skipping): {e}");
+            None
+        }
+    }
 }
 
 /// True if `path` resolves to a real directory (following symlinks).
@@ -210,9 +228,37 @@ fn find_claude_md_files(dir: &Path, exclude_paths: &[PathBuf]) -> Vec<PathBuf> {
                 if e.file_type().is_dir() {
                     continue;
                 }
-                if e.path_is_symlink() && e.metadata().is_err() {
-                    log::warn!("broken symlink, skipping: {}", e.path().display());
-                    continue;
+                if e.path_is_symlink() {
+                    match e.metadata() {
+                        Err(_) => {
+                            // Broken symlink — target doesn't exist.
+                            log::warn!("broken symlink, skipping: {}", e.path().display());
+                            continue;
+                        }
+                        Ok(_) => {
+                            // Symlink resolves — verify the real target stays
+                            // inside canon_root so we don't follow a link that
+                            // escapes ~/.claude into the broader filesystem.
+                            match e.path().canonicalize() {
+                                Ok(real) if !real.starts_with(&canon_dir) => {
+                                    log::warn!(
+                                        "symlink escapes root, skipping: {} -> {}",
+                                        e.path().display(),
+                                        real.display()
+                                    );
+                                    continue;
+                                }
+                                Err(err) => {
+                                    log::warn!(
+                                        "cannot canonicalize symlink target, skipping {}: {err}",
+                                        e.path().display()
+                                    );
+                                    continue;
+                                }
+                                Ok(_) => {} // stays inside — allow
+                            }
+                        }
+                    }
                 }
                 if e.file_name() == "CLAUDE.md" {
                     results.push(e.into_path());
@@ -239,9 +285,25 @@ fn collect_claude_mds(project_root: &Path, exclude_paths: &[PathBuf]) -> Result<
         let canon_file = file_path
             .canonicalize()
             .unwrap_or_else(|_| file_path.to_owned());
+        // Derive the relative path. Under a symlinked subdir, the walked
+        // `file_path` may not share a prefix with the canonicalized root, so
+        // `strip_prefix(canon_root)` can fail and return the full absolute
+        // path. Try in order:
+        //   1. canonical file vs canonical root (standard case)
+        //   2. walked (pre-canonical) path vs walked root (symlinked-subdir case)
+        // If both fail, fall back to the filename only — never leak an absolute path.
         let rel = canon_file
             .strip_prefix(&canon_root)
-            .unwrap_or(&canon_file)
+            .or_else(|_| file_path.strip_prefix(project_root))
+            .unwrap_or_else(|_| {
+                // Absolute-path escape guard: if neither prefix strips cleanly,
+                // use just the filename to avoid leaking an absolute path into
+                // display_path / slug.
+                file_path
+                    .file_name()
+                    .map(std::path::Path::new)
+                    .unwrap_or(file_path)
+            })
             .to_string_lossy()
             .replace('\\', "/");
         let display_path = format!("/{rel}");
@@ -291,7 +353,7 @@ fn collect_commands(commands_dir: &Path) -> Result<Vec<CommandItem>> {
             path: commands_dir.to_owned(),
             source: e,
         })?
-        .filter_map(|res| res.ok())
+        .filter_map(log_entry_err)
         .filter(|e| {
             e.file_name()
                 .to_str()
@@ -336,7 +398,7 @@ fn collect_skill_references(refs_dir: &Path) -> Result<Vec<SkillReference>> {
             path: refs_dir.to_owned(),
             source: e,
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_entry_err)
         .filter(|e| {
             e.file_name()
                 .to_str()
@@ -379,7 +441,7 @@ fn collect_sub_files(sub_dir: &Path) -> Result<Vec<SkillSubFile>> {
             path: sub_dir.to_owned(),
             source: e,
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_entry_err)
         .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
         .collect();
 
@@ -427,7 +489,7 @@ fn collect_skills(skills_dir: &Path) -> Result<Vec<SkillItem>> {
             path: skills_dir.to_owned(),
             source: e,
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_entry_err)
         .filter(|e| {
             is_real_dir(&e.path()) && {
                 let skill_md = e.path().join("SKILL.md");
@@ -495,7 +557,7 @@ fn collect_agents(agents_dir: &Path) -> Result<Vec<AgentItem>> {
             path: agents_dir.to_owned(),
             source: e,
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_entry_err)
         .filter(|e| {
             e.file_name()
                 .to_str()

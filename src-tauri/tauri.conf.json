@@ -11,7 +11,7 @@
     "windows": [],
     "withGlobalTauri": true,
     "security": {
-      "csp": null
+      "csp": "default-src 'self' http://localhost:4892; script-src 'self' 'unsafe-inline' http://localhost:4892; style-src 'self' 'unsafe-inline' http://localhost:4892; img-src 'self' data: http://localhost:4892; font-src 'self' data: http://localhost:4892; connect-src 'self' http://localhost:4892 ws://localhost:4892"
     }
   },
   "bundle": {

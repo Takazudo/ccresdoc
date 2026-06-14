@@ -38,9 +38,30 @@ pub enum GenerateError {
         source: std::io::Error,
     },
 
-    /// The file watcher backend failed to start or to deliver an event.
-    #[error("watch error: {0}")]
-    Watch(String),
+    /// The file watcher backend failed to start, dropped, or stopped delivering
+    /// events. Carries the underlying `notify` error (or a boxed source) so the
+    /// host can distinguish, e.g., an inotify-limit failure from a generic drop.
+    #[error("watch error: {context}")]
+    Watch {
+        /// Human-readable context for where the watcher failure happened.
+        context: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+}
+
+impl GenerateError {
+    /// Construct a [`GenerateError::Watch`] from a context string and a source
+    /// error (typically a `notify::Error`).
+    pub(crate) fn watch<E>(context: impl Into<String>, source: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        GenerateError::Watch {
+            context: context.into(),
+            source: Box::new(source),
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, GenerateError>;
