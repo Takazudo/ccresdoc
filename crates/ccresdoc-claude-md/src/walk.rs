@@ -210,9 +210,37 @@ fn find_claude_md_files(dir: &Path, exclude_paths: &[PathBuf]) -> Vec<PathBuf> {
                 if e.file_type().is_dir() {
                     continue;
                 }
-                if e.path_is_symlink() && e.metadata().is_err() {
-                    log::warn!("broken symlink, skipping: {}", e.path().display());
-                    continue;
+                if e.path_is_symlink() {
+                    match e.metadata() {
+                        Err(_) => {
+                            // Broken symlink — target doesn't exist.
+                            log::warn!("broken symlink, skipping: {}", e.path().display());
+                            continue;
+                        }
+                        Ok(_) => {
+                            // Symlink resolves — verify the real target stays
+                            // inside canon_root so we don't follow a link that
+                            // escapes ~/.claude into the broader filesystem.
+                            match e.path().canonicalize() {
+                                Ok(real) if !real.starts_with(&canon_dir) => {
+                                    log::warn!(
+                                        "symlink escapes root, skipping: {} -> {}",
+                                        e.path().display(),
+                                        real.display()
+                                    );
+                                    continue;
+                                }
+                                Err(err) => {
+                                    log::warn!(
+                                        "cannot canonicalize symlink target, skipping {}: {err}",
+                                        e.path().display()
+                                    );
+                                    continue;
+                                }
+                                Ok(_) => {} // stays inside — allow
+                            }
+                        }
+                    }
                 }
                 if e.file_name() == "CLAUDE.md" {
                     results.push(e.into_path());
@@ -239,9 +267,25 @@ fn collect_claude_mds(project_root: &Path, exclude_paths: &[PathBuf]) -> Result<
         let canon_file = file_path
             .canonicalize()
             .unwrap_or_else(|_| file_path.to_owned());
+        // Derive the relative path. Under a symlinked subdir, the walked
+        // `file_path` may not share a prefix with the canonicalized root, so
+        // `strip_prefix(canon_root)` can fail and return the full absolute
+        // path. Try in order:
+        //   1. canonical file vs canonical root (standard case)
+        //   2. walked (pre-canonical) path vs walked root (symlinked-subdir case)
+        // If both fail, fall back to the filename only — never leak an absolute path.
         let rel = canon_file
             .strip_prefix(&canon_root)
-            .unwrap_or(&canon_file)
+            .or_else(|_| file_path.strip_prefix(project_root))
+            .unwrap_or_else(|_| {
+                // Absolute-path escape guard: if neither prefix strips cleanly,
+                // use just the filename to avoid leaking an absolute path into
+                // display_path / slug.
+                file_path
+                    .file_name()
+                    .map(std::path::Path::new)
+                    .unwrap_or(file_path)
+            })
             .to_string_lossy()
             .replace('\\', "/");
         let display_path = format!("/{rel}");

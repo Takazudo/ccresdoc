@@ -125,15 +125,41 @@ impl Config {
             }
         }
 
-        // Refuse project_root == $HOME. Both sides are canonicalized so
-        // trailing slashes / symlinks don't matter.
+        // Refuse project_root that is $HOME, an ancestor of $HOME, or any
+        // other broad directory. Both sides are canonicalized so trailing
+        // slashes / symlinks don't matter.
+        //
+        // Allowed: the canonicalized root is strictly inside $HOME (i.e.
+        // $HOME is a prefix of root but root != $HOME), OR the root path ends
+        // in the component ".claude" (e.g. ~/.claude itself).
+        //
+        // Rejected: root == $HOME, root is an ancestor of $HOME (e.g. "/",
+        // "/Users"), or root is a broad non-.claude dir at the same level.
         if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
             let pr = self
                 .project_root
                 .canonicalize()
                 .unwrap_or_else(|_| self.project_root.clone());
             let home_canon = home.canonicalize().unwrap_or(home);
-            if pr == home_canon {
+
+            // Check 1: pr == $HOME exactly.
+            let is_home = pr == home_canon;
+
+            // Check 2: $HOME starts_with pr → pr is an ancestor of $HOME
+            // (e.g. pr == "/" or "/Users" or "/home").
+            let is_ancestor_of_home = home_canon.starts_with(&pr);
+
+            // Check 3: pr is directly inside $HOME but is not named ".claude"
+            // (e.g. pr == $HOME/repos — too broad; $HOME/.claude is fine).
+            let last_component = pr
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            let is_home_child_non_claude =
+                pr.parent().map(|p| p == home_canon).unwrap_or(false)
+                    && last_component != ".claude";
+
+            if is_home || is_ancestor_of_home || is_home_child_non_claude {
                 return Err(GenerateError::ProjectRootTooBroad(
                     self.project_root.clone(),
                 ));
