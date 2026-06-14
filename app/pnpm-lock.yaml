@@ -22,7 +22,7 @@ importers:
         version: 0.1.0-next.44(@takazudo/zfb@0.1.0-next.44)
       '@takazudo/zudo-doc':
         specifier: ^0.2.4
-        version: 0.2.6(@takazudo/zfb-runtime@0.1.0-next.44(@takazudo/zfb@0.1.0-next.44))(@takazudo/zfb@0.1.0-next.44)(preact@10.29.2)(shiki@4.2.0)
+        version: 0.2.5(@takazudo/zfb-runtime@0.1.0-next.44(@takazudo/zfb@0.1.0-next.44))(@takazudo/zfb@0.1.0-next.44)(preact@10.29.2)(shiki@4.2.0)
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -421,13 +421,13 @@ packages:
     engines: {node: '>=22.0.0', pnpm: '>=10.0.0'}
     hasBin: true
 
-  '@takazudo/zudo-doc@0.2.6':
-    resolution: {integrity: sha512-03iroS7aST+ZRFxw1Mv191njq9sQZH1qBCDG57IloCRbgltZiOROwYH7bkbR+wqoUUeQAc0/jaXe1+NB51fUTA==}
+  '@takazudo/zudo-doc@0.2.5':
+    resolution: {integrity: sha512-tzq7Fk+uNayZgTV6z7O65/TeVa+8eh3sMYtnaXdwjeJ2Z1jFF3ALC3xejTrTQD+YbcVyN12cP4uonOx38O7Ynw==}
     peerDependencies:
       '@takazudo/zdtp': ^0.2.0-next.2
-      '@takazudo/zfb': ^0.1.0-next.44
-      '@takazudo/zfb-runtime': ^0.1.0-next.44
-      '@takazudo/zudo-doc-history-server': ^0.2.6
+      '@takazudo/zfb': ^0.1.0-next.43
+      '@takazudo/zfb-runtime': ^0.1.0-next.43
+      '@takazudo/zudo-doc-history-server': ^0.2.5
       preact: ^10.29.1
       shiki: ^4.0.2
     peerDependenciesMeta:
@@ -1704,7 +1704,7 @@ snapshots:
       '@takazudo/zfb-linux-x64-gnu': 0.1.0-next.44
       '@takazudo/zfb-win32-x64-msvc': 0.1.0-next.44
 
-  '@takazudo/zudo-doc@0.2.6(@takazudo/zfb-runtime@0.1.0-next.44(@takazudo/zfb@0.1.0-next.44))(@takazudo/zfb@0.1.0-next.44)(preact@10.29.2)(shiki@4.2.0)':
+  '@takazudo/zudo-doc@0.2.5(@takazudo/zfb-runtime@0.1.0-next.44(@takazudo/zfb@0.1.0-next.44))(@takazudo/zfb@0.1.0-next.44)(preact@10.29.2)(shiki@4.2.0)':
     dependencies:
       '@takazudo/zfb': 0.1.0-next.44
       '@takazudo/zfb-runtime': 0.1.0-next.44(@takazudo/zfb@0.1.0-next.44)
