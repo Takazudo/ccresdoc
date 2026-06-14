@@ -54,7 +54,11 @@ function schemeToCssPairs(scheme: ColorScheme): string {
     `  --zd-mermaid-text: ${resolveColor(p, scheme.foreground)};`,
     `  --zd-mermaid-line: ${resolve(sem.muted, 8)};`,
     `  --zd-mermaid-label-bg: ${resolve(sem.surface, 10)};`,
-    `  --zd-mermaid-note-bg: ${resolveColor(p, 0)};`,
+    // Derive from surface (like label-bg) so the note panel tracks the active
+    // scheme. The old hardwired slot 0 rendered a dark box on the light bg;
+    // sourcing from surface fixes the light scheme (dark surface is already
+    // slot 0, so dark mode is unchanged).
+    `  --zd-mermaid-note-bg: ${resolve(sem.surface, 10)};`,
   );
 
   return lines.join("\n");
