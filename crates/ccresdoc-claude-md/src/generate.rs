@@ -54,11 +54,17 @@ fn ensure_dir(dir: &Path) -> Result<()> {
 }
 
 fn clean_dir(dir: &Path) -> Result<()> {
-    if dir.exists() {
-        std::fs::remove_dir_all(dir).map_err(|e| GenerateError::Io {
-            path: dir.to_owned(),
-            source: e,
-        })?;
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Already gone — nothing to clean; not an error.
+        }
+        Err(e) => {
+            // Non-fatal: log but don't abort generate(). A transient read/remove
+            // error during cleanup (e.g. locked file on Windows) should not
+            // prevent the subsequent write phase from succeeding.
+            log::warn!("clean_dir: could not remove {}: {e}", dir.display());
+        }
     }
     Ok(())
 }

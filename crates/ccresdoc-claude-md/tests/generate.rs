@@ -594,6 +594,80 @@ fn emitted_command_body_escapes_jsx_and_braces() {
 }
 
 // ---------------------------------------------------------------------------
+// Resilience: non-UTF-8 file doesn't abort the whole run (#61 fix 1)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn non_utf8_command_file_does_not_abort_run() {
+    // A command file containing non-UTF-8 bytes must not cause generate() to
+    // return an error. The bad file's content is emitted with U+FFFD replacement
+    // characters; the other files in the same run must be generated normally.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+
+    // Write a valid command.
+    write(&claude, "commands/good.md", "---\ndescription: good\n---\nbody");
+
+    // Write a command file with invalid UTF-8 bytes (a lone 0xFF byte embedded
+    // in otherwise-ASCII content).
+    let bad_path = claude.join("commands/bad.md");
+    fs::create_dir_all(bad_path.parent().unwrap()).unwrap();
+    // Build a byte slice: valid UTF-8 prefix + lone 0xFF (invalid) + suffix.
+    let mut bytes = b"---\ndescription: d\n---\nbody ".to_vec();
+    bytes.push(0xFF);
+    bytes.extend_from_slice(b" end");
+    fs::write(&bad_path, &bytes).unwrap();
+
+    // Must not return Err — one non-UTF-8 file should not abort the run.
+    let report = generate(&config_for(&claude, &docs)).unwrap();
+    // Both commands processed (the bad one with lossy decoding).
+    assert_eq!(report.commands, 2, "both commands (incl. bad UTF-8) should be generated");
+    // The good one is fine.
+    assert!(docs.join("claude-commands/good.mdx").exists());
+    // The bad one is also emitted (with replacement chars — not checked here,
+    // but crucially the file exists and no error was returned).
+    assert!(docs.join("claude-commands/bad.mdx").exists());
+}
+
+// ---------------------------------------------------------------------------
+// Resilience: exclude dir names are applied at every depth (#61 fix 2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn exclude_dir_names_skipped_at_every_depth() {
+    // `dist`, `worktrees`, etc. must be excluded wherever they appear in the
+    // tree, not only at the top level of project_root. The original path-based
+    // `exclude_paths` list was only `project_root/<name>`, so a `dist/` dir
+    // nested under a real sub-directory was walked. The fix applies
+    // EXCLUDE_DIR_NAMES name-check at every depth in `filter_entry`.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+
+    write(&claude, "CLAUDE.md", "root");
+    // A legitimate dir whose CLAUDE.md should be kept.
+    write(&claude, "project/CLAUDE.md", "kept");
+    // Excluded dir names nested inside a real sub-directory — must be skipped
+    // at any depth, not just when they are a direct child of project_root.
+    write(&claude, "project/dist/CLAUDE.md", "excluded nested dist");
+    write(&claude, "project/worktrees/CLAUDE.md", "excluded nested worktrees");
+    write(&claude, "project/out/CLAUDE.md", "excluded nested out");
+    write(&claude, "project/node_modules/CLAUDE.md", "excluded nested node_modules");
+
+    let report = generate(&config_for(&claude, &docs)).unwrap();
+    assert_eq!(report.claude_md, 2, "root + project/CLAUDE.md; nested excludes must be skipped");
+
+    // Confirm no generated page contains the excluded content.
+    let dir = fs::read_dir(docs.join("claude-md")).unwrap();
+    for entry in dir {
+        let p = entry.unwrap().path();
+        let content = fs::read_to_string(&p).unwrap();
+        assert!(!content.contains("excluded nested"), "{p:?} leaked content from an excluded nested dir");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Absolute-path validation
 // ---------------------------------------------------------------------------
 
