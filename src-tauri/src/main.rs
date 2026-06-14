@@ -89,15 +89,20 @@ struct AppState {
 
 // ── Helpers ───────────────────────────────────────
 
-fn home_dir() -> String {
-    env::var("HOME").expect("HOME not set")
+/// `$HOME`, or `None` if it is unset/empty. Returning `Option` instead of
+/// panicking lets the launch thread surface a dedicated error in the UI rather
+/// than aborting the process (a missing/empty `HOME` is a recoverable launch
+/// failure, not a crash).
+fn home_dir() -> Option<String> {
+    env::var("HOME").ok().filter(|h| !h.is_empty())
 }
 
 /// Absolute `~/.claude`. Passed to the Wave 2 generator as both `claude_dir`
 /// and `project_root` — NEVER `$HOME` (the walk must stay scoped to
-/// `~/.claude`; the generator rejects `project_root == $HOME`).
-fn claude_dir() -> PathBuf {
-    PathBuf::from(home_dir()).join(".claude")
+/// `~/.claude`; the generator rejects `project_root == $HOME`). `None` when
+/// `$HOME` is unavailable so callers can emit an error instead of panicking.
+fn claude_dir() -> Option<PathBuf> {
+    home_dir().map(|h| PathBuf::from(h).join(".claude"))
 }
 
 fn docs_url() -> String {
@@ -122,6 +127,21 @@ fn navigate_to_docs(app_handle: &AppHandle) {
         if let Ok(url) = docs_url().parse::<tauri::Url>() {
             let _ = w.navigate(url);
         }
+    }
+}
+
+/// Build a `Command` for an external tool, preferring the macOS absolute path
+/// but falling back to a bare name (resolved via `PATH`) when that absolute
+/// path does not exist. macOS ships these at fixed locations (`/usr/bin/lsof`,
+/// `/usr/bin/curl`, `/bin/cp`), so on macOS the absolute path is used as
+/// before; on other Unixes the layout differs (e.g. `/bin/lsof`,
+/// `/usr/local/bin/...`), so we let `PATH` resolve the bare name. This keeps
+/// current macOS behavior while making the host portable for local dev/CI.
+fn tool_command(abs_path: &str, bare_name: &str) -> Command {
+    if Path::new(abs_path).exists() {
+        Command::new(abs_path)
+    } else {
+        Command::new(bare_name)
     }
 }
 
@@ -151,11 +171,43 @@ fn bundled_version_token(resources_app_parent: &Path) -> String {
     let version_file = resources_app_parent.join("version.txt");
     if let Ok(v) = fs::read_to_string(&version_file) {
         let v = v.trim();
-        if !v.is_empty() {
+        if is_valid_version_token(v) {
             return v.to_string();
         }
     }
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// A `version.txt` override must look like a sane token before it is trusted to
+/// gate the workspace-refresh decision: a single non-empty line, bounded
+/// length, and limited to version-ish characters (alphanumerics plus
+/// `. _ - +`, the chars that show up in semver / build identifiers). Junk
+/// (multi-line, control chars, absurd length) is rejected so a corrupt file
+/// cannot wedge the refresh logic; the caller then falls back to the
+/// compiled-in `CARGO_PKG_VERSION`.
+fn is_valid_version_token(v: &str) -> bool {
+    !v.is_empty()
+        && v.len() <= 64
+        && !v.contains(['\n', '\r'])
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '+'))
+}
+
+/// Write the ready sentinel and fsync it (plus its parent dir) so the "ready"
+/// marker is durable only once the bytes it implies are also durable. We sync
+/// the file's own data, then fsync the containing directory so the new
+/// directory entry itself survives a crash. Dir fsync is best-effort (some
+/// platforms reject `O_RDONLY` dir sync); failing it does not fail the write.
+fn write_sentinel_durable(sentinel: &Path, dir: &Path, token: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = fs::File::create(sentinel)?;
+    f.write_all(token.as_bytes())?;
+    f.sync_all()?;
+    // Best-effort: persist the directory entry for the sentinel too.
+    if let Ok(d) = fs::File::open(dir) {
+        let _ = d.sync_all();
+    }
+    Ok(())
 }
 
 // ── Workspace resolution ──────────────────────────
@@ -263,7 +315,14 @@ fn resolve_workspace(app: &AppHandle, log_path: &str) -> Result<WorkspaceResolut
     // is detected as not-ready. The bundled app/ has no sentinel of its own, so
     // a fast `cp` cannot drag a stale "ready" marker into a partial dest; still,
     // writing it here unconditionally after success keeps the invariant.
-    fs::write(&ready_sentinel, &bundled_token).map_err(|e| format!("write ready sentinel: {e}"))?;
+    //
+    // fsync the sentinel (and its parent dir) before treating the workspace as
+    // ready: a crash between `write` and the OS flushing its page cache could
+    // otherwise leave a "ready" sentinel durably on disk over a workspace tree
+    // whose file contents had not yet been flushed — exactly the partial-but-
+    // marked-ready state the sentinel exists to prevent.
+    write_sentinel_durable(&ready_sentinel, &workspace, &bundled_token)
+        .map_err(|e| format!("write ready sentinel: {e}"))?;
 
     log_to(
         log_path,
@@ -346,7 +405,7 @@ fn run_cp(dst: &Path, args: &[&str], log_path: &str) -> bool {
     if fs::create_dir_all(dst).is_err() {
         return false;
     }
-    match Command::new("/bin/cp").args(args).output() {
+    match tool_command("/bin/cp", "cp").args(args).output() {
         Ok(out) if out.status.success() => true,
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -502,26 +561,89 @@ fn teardown(app_handle: &AppHandle, sidecar: &Arc<Mutex<Option<Sidecar>>>, log_p
             kill_sidecar(&mut s, log_path);
         }
     }
+    // Final sweep: `kill_sidecar` only signals the direct child's process
+    // group, so a grandchild that escaped that group (re-parented, or in a new
+    // group of its own) could still hold :PORT. Reuse the lsof-based
+    // terminate-then-kill sweep to catch any holder regardless of group
+    // lineage. Cheap no-op when nothing is on the port.
+    kill_port(log_path);
+}
+
+/// `libc::kill(target, sig)` with its return value checked and logged on
+/// failure (the bare call drops it, so a failed signal — e.g. `ESRCH` for a
+/// already-dead target, or `EPERM` — was previously invisible). Returns whether
+/// the signal was delivered. `target` is the raw argument (a negative value
+/// signals the process group); the caller is responsible for only passing a
+/// target it has confirmed is still live (so a recycled PID/PGID is not hit).
+#[cfg(unix)]
+fn signal_checked(target: i32, sig: i32, log_path: &str, what: &str) -> bool {
+    // SAFETY: `kill(2)` is a plain syscall with no memory contract; we only
+    // pass an integer pid/pgid and signal number.
+    let rc = unsafe { libc::kill(target, sig) };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error();
+        log_to(
+            log_path,
+            &format!("{what}: kill({target}, {sig}) failed: {err}"),
+        );
+        false
+    } else {
+        true
+    }
+}
+
+/// Poll `try_wait` up to `max` (in `step` increments), returning `true` as soon
+/// as the child is reaped. Unlike a fixed `sleep`, this returns immediately once
+/// the child exits — important on the main event loop (`ExitRequested`/`Exit`),
+/// where a blanket `sleep(500ms)` would stall the loop even when the child has
+/// already gone.
+fn wait_reaped(child: &mut Child, max: Duration, step: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => {}
+            // try_wait errored (e.g. already reaped elsewhere) — stop polling.
+            Err(_) => return true,
+        }
+        if start.elapsed() >= max {
+            return false;
+        }
+        thread::sleep(step);
+    }
 }
 
 fn kill_sidecar(sidecar: &mut Sidecar, log_path: &str) {
     let pid = sidecar.child.id();
     log_to(log_path, &format!("kill_sidecar: pid={pid}"));
+
+    // Only signal the process GROUP while the group leader (our direct child)
+    // is still alive: once it has exited, the PID/PGID can be recycled, and
+    // signalling `-pid` could then hit an unrelated group. If the child is
+    // already gone there is nothing to SIGTERM — fall through to reap it.
     #[cfg(unix)]
     {
-        if let Ok(pid) = i32::try_from(pid) {
-            // Negative PID → signal the whole process group.
-            unsafe { libc::kill(-pid, libc::SIGTERM) };
+        let already_exited = matches!(sidecar.child.try_wait(), Ok(Some(_)));
+        if !already_exited {
+            if let Ok(pid) = i32::try_from(pid) {
+                // Negative PID → signal the whole process group.
+                signal_checked(-pid, libc::SIGTERM, log_path, "kill_sidecar");
+            }
         }
     }
-    thread::sleep(Duration::from_millis(500));
-    match sidecar.child.try_wait() {
-        Ok(Some(_)) => log_to(log_path, "kill_sidecar: already exited"),
-        _ => {
-            log_to(log_path, "kill_sidecar: escalating to SIGKILL");
-            let _ = sidecar.child.kill();
-            let _ = sidecar.child.wait();
-        }
+
+    // Bounded poll instead of a flat 500ms sleep so we return as soon as the
+    // child is reaped (this can run on the main event loop during exit).
+    if wait_reaped(
+        &mut sidecar.child,
+        Duration::from_millis(1000),
+        Duration::from_millis(50),
+    ) {
+        log_to(log_path, "kill_sidecar: exited after SIGTERM");
+    } else {
+        log_to(log_path, "kill_sidecar: escalating to SIGKILL");
+        let _ = sidecar.child.kill();
+        let _ = sidecar.child.wait();
     }
 }
 
@@ -529,7 +651,7 @@ fn kill_sidecar(sidecar: &mut Sidecar, log_path: &str) {
 
 /// List PIDs currently holding :PORT (via `lsof -ti`).
 fn pids_on_port() -> Vec<i32> {
-    Command::new("/usr/bin/lsof")
+    tool_command("/usr/bin/lsof", "lsof")
         .args(["-ti", &format!(":{PORT}")])
         .output()
         .map(|o| {
@@ -556,12 +678,12 @@ fn kill_port(log_path: &str) {
             &format!("kill_port: SIGTERM stale pid {pid} on :{PORT}"),
         );
         #[cfg(unix)]
-        unsafe {
-            libc::kill(*pid, libc::SIGTERM);
-        }
+        signal_checked(*pid, libc::SIGTERM, log_path, "kill_port");
     }
     thread::sleep(Duration::from_millis(500));
 
+    // Re-list rather than reuse `pids`: a slow holder may have died, and a PID
+    // gone from the list must NOT be SIGKILL'd (it could have been recycled).
     let stragglers = pids_on_port();
     for pid in &stragglers {
         log_to(
@@ -569,9 +691,7 @@ fn kill_port(log_path: &str) {
             &format!("kill_port: SIGKILL straggler pid {pid} on :{PORT}"),
         );
         #[cfg(unix)]
-        unsafe {
-            libc::kill(*pid, libc::SIGKILL);
-        }
+        signal_checked(*pid, libc::SIGKILL, log_path, "kill_port");
     }
     if !stragglers.is_empty() {
         thread::sleep(Duration::from_millis(300));
@@ -591,7 +711,7 @@ enum ReadyResult {
 }
 
 fn curl_root() -> String {
-    Command::new("/usr/bin/curl")
+    tool_command("/usr/bin/curl", "curl")
         .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", &docs_url()])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -719,8 +839,15 @@ fn launch(app_handle: &AppHandle) {
         }
     };
 
-    // 3. Resolve absolute ~/.claude (missing → error UI).
-    let claude = claude_dir();
+    // 3. Resolve absolute ~/.claude (HOME unset or dir missing → error UI).
+    let claude = match claude_dir() {
+        Some(c) => c,
+        None => {
+            log_to(&log_path, "launch: $HOME unset — cannot resolve ~/.claude");
+            emit_launch_error_str(app_handle, "home_unavailable");
+            return;
+        }
+    };
     if !claude.exists() {
         log_to(
             &log_path,
@@ -837,11 +964,31 @@ fn launch(app_handle: &AppHandle) {
     }
 }
 
+/// The JS that applies a zoom level to the page body. Used both by `apply_zoom`
+/// (menu actions) and by the `on_page_load` handler that re-applies the stored
+/// zoom after every navigation — `document.body.style.zoom` is page-scoped, so
+/// a `navigate_to_docs` (Refresh, launch, retry) would otherwise reset it to 1.
+/// Guards on `document.body` existing so it is harmless if eval'd before the
+/// body is parsed.
+fn zoom_script(level: f64) -> String {
+    format!("if (document.body) {{ document.body.style.zoom = '{level}'; }}")
+}
+
 fn apply_zoom(app_handle: &AppHandle, level: f64) {
     let state = app_handle.state::<AppState>();
     *state.zoom.lock().unwrap() = level;
     if let Some(w) = app_handle.get_webview_window("main") {
-        let _ = w.eval(format!("document.body.style.zoom = '{level}'"));
+        let _ = w.eval(zoom_script(level));
+    }
+}
+
+/// Re-apply the stored zoom to the main window's current page. Called after a
+/// page finishes loading (via `on_page_load`) so a navigation does not lose the
+/// user's chosen zoom. No-op at the default 1.0 level.
+fn reapply_zoom(app_handle: &AppHandle) {
+    let level = *app_handle.state::<AppState>().zoom.lock().unwrap();
+    if let Some(w) = app_handle.get_webview_window("main") {
+        let _ = w.eval(zoom_script(level));
     }
 }
 
@@ -1001,6 +1148,14 @@ fn main() {
                 .title("CCResDoc")
                 .inner_size(1200.0, 800.0)
                 .on_navigation(allow_navigation)
+                // Re-apply the stored zoom once each page finishes loading:
+                // `document.body.style.zoom` is page-scoped, so navigating
+                // (Refresh / launch / retry) would otherwise reset it to 1.0.
+                .on_page_load(|window, payload| {
+                    if let tauri::webview::PageLoadEvent::Finished = payload.event() {
+                        reapply_zoom(window.app_handle());
+                    }
+                })
                 .build()?;
 
             let handle = app.handle().clone();
@@ -1068,7 +1223,7 @@ mod tests {
 
     #[test]
     fn claude_dir_is_absolute_and_not_home() {
-        let c = claude_dir();
+        let c = claude_dir().expect("claude_dir should resolve when HOME is set");
         assert!(c.is_absolute(), "claude_dir must be absolute");
         assert!(
             c.ends_with(".claude"),
