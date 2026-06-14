@@ -203,13 +203,16 @@ fn generate_claudemd_docs(items: &[ClaudeMdItem], docs_dir: &Path) -> Result<usi
                 item.rel_path
             ),
         )?;
-        if let Some(prev) = emitted.get(&out_name) {
+        // Key on the lowercased name: the macOS target filesystem is
+        // case-insensitive, so `Foo.mdx` and `foo.mdx` collide on disk.
+        let out_key = out_name.to_ascii_lowercase();
+        if let Some(prev) = emitted.get(&out_key) {
             return Err(GenerateError::SlugCollision(format!(
                 "\"{out_name}\" is produced by both \"{prev}\" and \"{}\". Rename one of the directories.",
                 item.rel_path
             )));
         }
-        emitted.insert(out_name.clone(), item.rel_path.clone());
+        emitted.insert(out_key, item.rel_path.clone());
 
         // sidebar_position is 1-based within the category. The category
         // index itself carries 900; per-item positions start at 1. Cap at
@@ -268,13 +271,13 @@ fn generate_commands_docs(items: &[CommandItem], docs_dir: &Path) -> Result<usiz
             &item.name,
             "claude-resources: a command named \"index\" conflicts with the category metadata file. Rename the command file.",
         )?;
-        if let Some(prev) = emitted_slugs.get(&item.name) {
+        if let Some(prev) = emitted_slugs.get(&item.name.to_ascii_lowercase()) {
             return Err(GenerateError::SlugCollision(format!(
                 "claude-commands: slug \"{}\" would be produced by both \"{}\" and \"{}\". Rename one of the command files.",
                 item.name, prev, item.name
             )));
         }
-        emitted_slugs.insert(item.name.clone(), item.name.clone());
+        emitted_slugs.insert(item.name.to_ascii_lowercase(), item.name.clone());
         let mdx = format!(
             "---\ntitle: \"{}\"\ndescription: \"{}\"\nsidebar_label: \"{}\"\ngenerated: true\n---\n\n{}\n",
             escape_title(&item.name),
@@ -350,13 +353,13 @@ fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
             &skill.dir,
             "claude-resources: a skill directory named \"index\" conflicts with the category metadata file. Rename the skill directory.",
         )?;
-        if let Some(prev) = emitted_slugs.get(&skill.dir) {
+        if let Some(prev) = emitted_slugs.get(&skill.dir.to_ascii_lowercase()) {
             return Err(GenerateError::SlugCollision(format!(
                 "claude-skills: slug \"{}\" would be produced by both \"{}\" and \"{}\". Rename one of the skill directories.",
                 skill.dir, prev, skill.dir
             )));
         }
-        emitted_slugs.insert(skill.dir.clone(), skill.dir.clone());
+        emitted_slugs.insert(skill.dir.to_ascii_lowercase(), skill.dir.clone());
 
         let script_md: Vec<&_> = skill
             .script_files
@@ -672,13 +675,13 @@ fn generate_agents_docs(items: &[AgentItem], docs_dir: &Path) -> Result<usize> {
             &agent.file_slug,
             "claude-resources: an agent named \"index\" conflicts with the category metadata file. Rename the agent file.",
         )?;
-        if let Some(prev) = emitted_slugs.get(&agent.file_slug) {
+        if let Some(prev) = emitted_slugs.get(&agent.file_slug.to_ascii_lowercase()) {
             return Err(GenerateError::SlugCollision(format!(
                 "claude-agents: slug \"{}\" would be produced by both \"{}\" and \"{}\". Rename one of the agent files.",
                 agent.file_slug, prev, agent.file_slug
             )));
         }
-        emitted_slugs.insert(agent.file_slug.clone(), agent.file_slug.clone());
+        emitted_slugs.insert(agent.file_slug.to_ascii_lowercase(), agent.file_slug.clone());
         let model_badge = if agent.model.is_empty() {
             String::new()
         } else {

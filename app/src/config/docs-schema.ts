@@ -16,13 +16,16 @@ export function buildDocsSchema() {
     unlisted: z.boolean().optional(),
     hide_sidebar: z.boolean().optional(),
     hide_toc: z.boolean().optional(),
-    // Slug must be lowercase alphanumeric segments separated by forward slashes.
-    // Wave 2 generator always produces slugs in this form.
+    // Slug is path-like: one or more segments separated by "/". Segments are
+    // derived from real filesystem names by the Wave 2 generator, so they may
+    // contain uppercase, digits, dots, underscores and hyphens (e.g.
+    // "claude-skills/<SkillDir>/ref-<Name>"). The pattern rejects spaces,
+    // leading/trailing/double slashes — not lowercase-only.
     slug: z
       .string()
       .regex(
-        /^[a-z0-9-]+(\/[a-z0-9-]+)*$/,
-        'slug must be lowercase alphanumeric/hyphen segments separated by "/"',
+        /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/,
+        'slug must be "/"-separated path segments (no spaces or empty segments)',
       )
       .optional(),
     // Marks an index.mdx as category metadata (no page built).
