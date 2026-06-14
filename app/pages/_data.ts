@@ -31,5 +31,10 @@ export function getDocs(collectionName: string): ZfbDocsEntry[] {
 }
 
 export function loadDocs(collectionName: string): DocsEntry[] {
+  // The cast is structurally safe: getDocs() returns ZfbDocsEntry[], which is
+  // CollectionEntry<ZfbDocsData> & { id, collection }. That shape is a strict
+  // superset of DocsEntry ({ id, slug, body?, collection, data }) — every field
+  // DocsEntry requires is present after the getDocs() map. Extra fields
+  // (module_specifier, Content) are ignored by callers that consume DocsEntry.
   return getDocs(collectionName) as DocsEntry[];
 }
