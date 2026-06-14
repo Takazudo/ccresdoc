@@ -6,6 +6,7 @@
 // - Admonition wrappers for :::note, :::tip, etc.
 // - Stub for Island (SSR pass-through)
 
+import { h } from "preact";
 import type { ComponentChildren } from "preact";
 import { htmlOverrides } from "@takazudo/zudo-doc/content";
 import { CategoryNav } from "@takazudo/zudo-doc/nav-indexing";
@@ -18,7 +19,13 @@ import { buildSidebarTree } from "@takazudo/zudo-doc/sidebar-tree";
 // Stubs
 // ---------------------------------------------------------------------------
 
-const MdxStub = (_props: unknown) => null;
+// Pass children through so MDX content inside stub tags is not silently dropped.
+// These components have no meaningful visual representation in CCResDoc's SSG
+// output, but discarding their children would erase prose/code nested inside
+// Details, CodeGroup, Tabs, etc.
+function MdxStub(props: { children?: ComponentChildren }) {
+  return h("div", { "data-mdx-stub": true }, props.children);
+}
 
 function IslandWrapper(props: {
   when?: "load" | "idle" | "visible" | "media";
@@ -85,7 +92,7 @@ function CategoryNavWrapper(props: { categories?: string[] }) {
     })
     .filter((n): n is NavNode => n !== null);
 
-  return CategoryNav({ children }) as unknown as ComponentChildren;
+  return h(CategoryNav, { children }) as unknown as ComponentChildren;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,21 +104,23 @@ function makeAdmonition(variant: string) {
     title?: string;
     children?: ComponentChildren;
   }) {
-    // Return raw vnode object — same pattern as template
-    return {
-      type: "div",
-      props: {
+    // role="note" surfaces the container as an advisory region to assistive tech.
+    // aria-label names the region with the variant so screen readers announce
+    // e.g. "note region" or "warning region" without requiring visible text.
+    const titleEl = props.title
+      ? h("p", { class: "admonition-title" }, props.title)
+      : null;
+    const bodyEl = h("div", { class: "admonition-body" }, props.children);
+    return h(
+      "div",
+      {
         "data-admonition": variant,
-        children: [
-          props.title
-            ? { type: "p", props: { class: "admonition-title", children: props.title }, key: null, constructor: undefined }
-            : null,
-          { type: "div", props: { class: "admonition-body", children: props.children }, key: null, constructor: undefined },
-        ].filter(Boolean),
+        role: "note",
+        "aria-label": variant,
       },
-      key: null,
-      constructor: undefined,
-    };
+      titleEl,
+      bodyEl,
+    );
   };
 }
 
