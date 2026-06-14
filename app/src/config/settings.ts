@@ -18,8 +18,8 @@ export interface ColorModeConfig {
 export const settings = {
   siteName: "CCResDoc",
   siteDescription: "Browse Claude Code resources from your local ~/.claude/",
-  base: "/" as string,
-  trailingSlash: true as boolean,
+  base: "/",
+  trailingSlash: true,
   docsDir: "src/content/docs",
   defaultLocale: "en" as const,
   // No i18n: empty locales object (no locale-aware routes)
@@ -27,11 +27,11 @@ export const settings = {
   // No versions
   versions: false as false,
   // No tags
-  docTags: false as boolean,
-  noindex: false as boolean,
+  docTags: false,
+  noindex: false,
   editUrl: false as string | false,
   githubUrl: false as string | false,
-  siteUrl: "" as string,
+  siteUrl: "",
   // Default dark, with light/dark toggle
   colorScheme: "Default Dark",
   colorMode: {
@@ -42,9 +42,9 @@ export const settings = {
   } as ColorModeConfig | false,
   // Sidebar resizer — drag the desktop sidebar's right edge to resize it
   // (width persisted in localStorage; client-side only, node-free).
-  sidebarResizer: true as boolean,
+  sidebarResizer: true,
   // Sidebar toggle for mobile
-  sidebarToggle: true as boolean,
+  sidebarToggle: true,
   // Simple footer (no link columns, just copyright)
   footer: {
     links: [] as Array<{ title: string; items: Array<{ label: string; href: string }> }>,
@@ -62,9 +62,9 @@ export const settings = {
   // Heading ID strategy: flat (simpler for auto-generated content)
   headingIdStrategy: "flat" as "flat" | "hierarchical",
   // No image enlarge
-  imageEnlarge: false as boolean,
+  imageEnlarge: false,
   // No HTML preview
-  htmlPreview: undefined as undefined,
+  htmlPreview: undefined,
   // No frontmatter preview
   frontmatterPreview: false as false,
 };
