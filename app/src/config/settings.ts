@@ -40,8 +40,9 @@ export const settings = {
     darkScheme: "Default Dark",
     respectPrefersColorScheme: true,
   } as ColorModeConfig | false,
-  // No sidebar resizer (can add later)
-  sidebarResizer: false as boolean,
+  // Sidebar resizer — drag the desktop sidebar's right edge to resize it
+  // (width persisted in localStorage; client-side only, node-free).
+  sidebarResizer: true as boolean,
   // Sidebar toggle for mobile
   sidebarToggle: true as boolean,
   // Simple footer (no link columns, just copyright)

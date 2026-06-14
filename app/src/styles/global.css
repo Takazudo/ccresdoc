@@ -17,8 +17,7 @@
  *
  * The package ships a build-generated safelist at `dist/safelist.css`
  * (zudolab/zudo-doc#1993). Importing it via the module resolver is
- * reliable across all consumer environments — same code path as the
- * existing `@import "@takazudo/zdtp/styles.css"` below.
+ * reliable across all consumer environments.
  *
  * Why not @source the package dist/ glob? The old approach
  * (`@source "../../node_modules/@takazudo/zudo-doc/dist/**"`) was
@@ -768,12 +767,13 @@ pre[class^="syntect-"].word-wrap code {
  * span. The inline hex is the desired token color — this rule must NOT
  * override it (so: NO !important on `color`).
  *
- * Runtime (design-token-tweak panel, when enabled): Shiki re-highlights on
- * demand and emits spans with inline style="--shiki-light:#X;--shiki-dark:#Y"
- * — CSS custom properties only, no `color` declaration — depending on this
- * rule to resolve light-dark(var(--shiki-light), var(--shiki-dark)) to the
- * active theme. Shiki spans have no inline `color`, so the rule applies
- * without needing !important. */
+ * The `.shiki` selectors are retained defensively: a client-side Shiki
+ * re-highlighter (none ships in CCResDoc today) would emit spans with inline
+ * style="--shiki-light:#X;--shiki-dark:#Y" — CSS custom properties only, no
+ * `color` declaration — relying on this rule to resolve
+ * light-dark(var(--shiki-light), var(--shiki-dark)) to the active theme. Such
+ * spans have no inline `color`, so the rule applies without needing
+ * !important. CCResDoc itself highlights via the Syntect build-time path. */
 [data-theme] .shiki,
 [data-theme] .shiki span,
 [data-theme] pre[class^="syntect-"],

@@ -11,9 +11,6 @@ importers:
       '@shikijs/transformers':
         specifier: ^4.0.0
         version: 4.2.0
-      '@takazudo/zdtp':
-        specifier: 0.2.0-next.2
-        version: 0.2.0-next.2(preact@10.29.2)
       '@takazudo/zfb':
         specifier: 0.1.0-next.44
         version: 0.1.0-next.44
@@ -25,7 +22,7 @@ importers:
         version: 0.1.0-next.44(@takazudo/zfb@0.1.0-next.44)
       '@takazudo/zudo-doc':
         specifier: ^0.2.4
-        version: 0.2.5(@takazudo/zdtp@0.2.0-next.2(preact@10.29.2))(@takazudo/zfb-runtime@0.1.0-next.44(@takazudo/zfb@0.1.0-next.44))(@takazudo/zfb@0.1.0-next.44)(preact@10.29.2)(shiki@4.2.0)
+        version: 0.2.6(@takazudo/zfb-runtime@0.1.0-next.44(@takazudo/zfb@0.1.0-next.44))(@takazudo/zfb@0.1.0-next.44)(preact@10.29.2)(shiki@4.2.0)
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -383,13 +380,6 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
 
-  '@takazudo/zdtp@0.2.0-next.2':
-    resolution: {integrity: sha512-NK37TXU+UvLG6SHKwSZOXj+2Nx9knrkVoZsaWL4tUsJMo9XbHVsh5qPVthbaO+M94aCeAD5mSNIhpM5pf2tniw==}
-    engines: {node: '>=22.0.0', pnpm: '>=10.0.0'}
-    hasBin: true
-    peerDependencies:
-      preact: ^10.29.1
-
   '@takazudo/zfb-adapter-cloudflare@0.1.0-next.44':
     resolution: {integrity: sha512-qH85aARkLElWD04aMKY0laEGii/h6n6zWfAwIAYvP6ZJzfp8OiY2J66FFXG2KelcVmem6RM0heNbTXsCEWPTQQ==}
     engines: {node: '>=22.0.0', pnpm: '>=10.0.0'}
@@ -431,13 +421,13 @@ packages:
     engines: {node: '>=22.0.0', pnpm: '>=10.0.0'}
     hasBin: true
 
-  '@takazudo/zudo-doc@0.2.5':
-    resolution: {integrity: sha512-tzq7Fk+uNayZgTV6z7O65/TeVa+8eh3sMYtnaXdwjeJ2Z1jFF3ALC3xejTrTQD+YbcVyN12cP4uonOx38O7Ynw==}
+  '@takazudo/zudo-doc@0.2.6':
+    resolution: {integrity: sha512-03iroS7aST+ZRFxw1Mv191njq9sQZH1qBCDG57IloCRbgltZiOROwYH7bkbR+wqoUUeQAc0/jaXe1+NB51fUTA==}
     peerDependencies:
       '@takazudo/zdtp': ^0.2.0-next.2
-      '@takazudo/zfb': ^0.1.0-next.43
-      '@takazudo/zfb-runtime': ^0.1.0-next.43
-      '@takazudo/zudo-doc-history-server': ^0.2.5
+      '@takazudo/zfb': ^0.1.0-next.44
+      '@takazudo/zfb-runtime': ^0.1.0-next.44
+      '@takazudo/zudo-doc-history-server': ^0.2.6
       preact: ^10.29.1
       shiki: ^4.0.2
     peerDependenciesMeta:
@@ -635,10 +625,6 @@ packages:
 
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
-
-  culori@4.0.2:
-    resolution: {integrity: sha512-1+BhOB8ahCn4O0cep0Sh2l9KCOfOdY+BXJnKMHFFzDEouSr/el18QwXEMRlOj9UY5nCeA8UN3a/82rUWRBeyBw==}
-    engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
   cytoscape-cose-bilkent@4.1.0:
     resolution: {integrity: sha512-wgQlVIUJF13Quxiv5e1gstZ08rnZj2XaLHGoFMYXz7SkNfCDOOteKBE6SYRfA9WxxI/iBc3ajfDoc6hb/MRAHQ==}
@@ -1688,11 +1674,6 @@ snapshots:
       tailwindcss: 4.3.1
       vite: 8.0.16(@types/node@22.19.21)(jiti@2.7.0)
 
-  '@takazudo/zdtp@0.2.0-next.2(preact@10.29.2)':
-    dependencies:
-      culori: 4.0.2
-      preact: 10.29.2
-
   '@takazudo/zfb-adapter-cloudflare@0.1.0-next.44': {}
 
   '@takazudo/zfb-darwin-arm64@0.1.0-next.44':
@@ -1723,14 +1704,13 @@ snapshots:
       '@takazudo/zfb-linux-x64-gnu': 0.1.0-next.44
       '@takazudo/zfb-win32-x64-msvc': 0.1.0-next.44
 
-  '@takazudo/zudo-doc@0.2.5(@takazudo/zdtp@0.2.0-next.2(preact@10.29.2))(@takazudo/zfb-runtime@0.1.0-next.44(@takazudo/zfb@0.1.0-next.44))(@takazudo/zfb@0.1.0-next.44)(preact@10.29.2)(shiki@4.2.0)':
+  '@takazudo/zudo-doc@0.2.6(@takazudo/zfb-runtime@0.1.0-next.44(@takazudo/zfb@0.1.0-next.44))(@takazudo/zfb@0.1.0-next.44)(preact@10.29.2)(shiki@4.2.0)':
     dependencies:
       '@takazudo/zfb': 0.1.0-next.44
       '@takazudo/zfb-runtime': 0.1.0-next.44(@takazudo/zfb@0.1.0-next.44)
       gray-matter: 4.0.3
       preact: 10.29.2
     optionalDependencies:
-      '@takazudo/zdtp': 0.2.0-next.2(preact@10.29.2)
       shiki: 4.2.0
 
   '@tybys/wasm-util@0.10.2':
@@ -1939,8 +1919,6 @@ snapshots:
       layout-base: 2.0.1
 
   csstype@3.2.3: {}
-
-  culori@4.0.2: {}
 
   cytoscape-cose-bilkent@4.1.0(cytoscape@3.34.0):
     dependencies:
