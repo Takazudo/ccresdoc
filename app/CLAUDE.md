@@ -30,6 +30,22 @@ flat hoisted `node_modules` copies cleanly. The platform binary packages
 (`@takazudo/zfb-<platform>`) are declared as `optionalDependencies` so the host can
 resolve `node_modules/@takazudo/zfb-<platform>/zfb` directly.
 
+## Dependency notes
+
+### zfb pin
+All `@takazudo/zfb*` packages in `package.json` (deps, optionalDeps) are pinned to
+the same version and must move in lockstep — they are released together. There is no
+single-source mechanism in JSON; `scripts/check-zfb-pin.sh` is the enforcement gate
+(run by `scripts/run-b4push.sh` step 1). When bumping the pin, update every
+`@takazudo/zfb*` entry simultaneously.
+
+### @takazudo/zfb-adapter-cloudflare
+This dep is a peer/runtime requirement imposed by zfb itself: zfb requires an adapter
+to be declared even for local dev/build targets. The Cloudflare adapter is the
+supported default for zudo-doc consumers. It does NOT mean the app is deployed to
+Cloudflare — at runtime the Tauri host uses `zfb dev` locally with no adapter code
+executed.
+
 ## Structure
 
 ```
@@ -74,7 +90,7 @@ app/
       client-router-bootstrap.tsx — SPA router activation island
     content/
       docs/               — MDX content root
-        welcome.mdx       — placeholder page (removed once Wave 2 runs)
+        welcome.mdx       — placeholder page (draft: true; excluded from build)
         claude*/          — Wave 2 generated (gitignored — see below)
     styles/
       global.css          — Tailwind CSS v4 + @theme tokens (from zudo-doc template)

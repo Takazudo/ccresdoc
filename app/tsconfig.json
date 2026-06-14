@@ -15,8 +15,6 @@
     "allowJs": true,
     "jsx": "preserve",
     "strict": true,
-    "noImplicitAny": true,
-    "strictNullChecks": true,
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]

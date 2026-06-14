@@ -1,3 +1,5 @@
+> **SUPERSEDED — point-in-time snapshot; does not reflect current architecture.**
+
 # Phase 1 Parity Report
 
 - Source SHA captured at: 2026-05-05

@@ -18,8 +18,10 @@ import { defineConfig } from "zfb/config";
 
 export default defineConfig({
   framework: "preact",
-  // Pinned port — do not change without updating src-tauri/CLAUDE.md (Wave 3)
+  // Pinned port — keep in sync with src-tauri/tauri.conf.json (devUrl) and settings.ts
   port: 4892,
+  // base defaults to "/" — matches settings.ts base: "/" (no sub-path deployment)
+  base: "/",
   tailwind: { enabled: true },
   collections: [
     { name: "docs", path: "src/content/docs" },
