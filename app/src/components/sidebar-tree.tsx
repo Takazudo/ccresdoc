@@ -288,7 +288,13 @@ export default function SidebarTree({ nodes, currentSlug, rootMenuItems, backToM
             type="text"
             placeholder={filterPlaceholder}
             value={query}
-            onChange={(e) => setQuery(e.currentTarget.value)}
+            // onInput (not onChange): under zfb's esbuild Preact the filter
+            // input must fire per-keystroke. Preact binds onChange to the native
+            // `change` event (fires on blur) — so onChange makes the filter
+            // blur-only. onInput fires on every keystroke for a live filter.
+            // (The zudo-doc scaffold uses onChange, which only works on its
+            // preact/compat build where onChange === onInput; see upstream report.)
+            onInput={(e) => setQuery(e.currentTarget.value)}
             className="bg-transparent text-small outline-none w-full text-fg placeholder:text-muted"
           />
         </div>
