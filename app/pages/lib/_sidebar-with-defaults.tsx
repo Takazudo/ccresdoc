@@ -16,7 +16,6 @@ import { buildNavTree } from "@/utils/docs";
 export interface SidebarWithDefaultsProps {
   currentSlug?: string;
   navSection?: string;
-  currentPath?: string;
 }
 
 export function SidebarWithDefaults({

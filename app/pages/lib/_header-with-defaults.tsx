@@ -98,7 +98,7 @@ export function HeaderWithDefaults({
       colorModeEnabled={Boolean(settings.colorMode)}
       hasLocales={false}
       hasVersions={false}
-      githubRepoUrl={null}
+      githubRepoUrl={settings.githubUrl || null}
       githubLabel={t("header.github")}
       urlHelpers={{ withBase, stripBase, navHref }}
       i18n={{ defaultLocale: "en", locales: ["en"] as readonly string[], t }}
