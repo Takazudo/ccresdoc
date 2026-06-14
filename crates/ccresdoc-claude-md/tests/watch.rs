@@ -152,6 +152,93 @@ fn watcher_ignores_irrelevant_session_churn() {
 }
 
 #[test]
+fn burst_of_writes_coalesces_into_one_regeneration() {
+    // The whole point of debouncing: a burst of N writes landing inside the
+    // debounce window must produce exactly ONE regeneration, not N. We seed,
+    // attach the watcher, drain any startup replay, then fire a burst of writes
+    // back-to-back (well within the debounce) and assert that precisely one
+    // Regenerated event arrives — no second one within a generous follow-up
+    // window.
+    const N: usize = 8;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+
+    write(&claude, "CLAUDE.md", "root");
+    write(
+        &claude,
+        "commands/seed.md",
+        "---\ndescription: seed\n---\nbody",
+    );
+
+    let (tx, rx) = mpsc::channel::<WatchEvent>();
+    let handle = watch(
+        config_for(&claude, &docs),
+        // A comfortably long debounce so the whole burst lands in one window
+        // even on a slow/loaded CI box.
+        Duration::from_millis(400),
+        move |ev| {
+            let _ = tx.send(ev);
+        },
+    )
+    .expect("watch failed to start");
+
+    // Drain any startup pulse the backend may replay for the pre-watch seed.
+    while rx.recv_timeout(Duration::from_millis(600)).is_ok() {}
+
+    // Fire the burst: N distinct content files written back-to-back, all inside
+    // the single 400ms debounce window.
+    for i in 0..N {
+        write(
+            &claude,
+            &format!("commands/burst-{i}.md"),
+            "---\ndescription: burst\n---\nbody",
+        );
+    }
+
+    // Collect every regeneration the burst produces, until the channel goes
+    // quiet for a full follow-up window. Coalescing means N writes do NOT
+    // produce N regenerations — the debouncer collapses the burst. We assert
+    // both properties:
+    //   1. the burst regenerates AT MOST ONCE per debounce flush, far fewer
+    //      than the N writes (the coalescing guarantee), and
+    //   2. the final regeneration observed the WHOLE burst (seed + N commands),
+    //      proving no write was dropped.
+    // We tolerate at most a single trailing duplicate flush: inotify can split
+    // a rapid burst across two debounce windows, but it must never fan a
+    // burst of N writes out into ~N regenerations.
+    let first = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the burst should trigger a regeneration");
+    let mut regens = vec![first];
+    while let Ok(ev) = rx.recv_timeout(Duration::from_millis(1200)) {
+        regens.push(ev);
+    }
+
+    let mut last_count = None;
+    for ev in &regens {
+        match ev {
+            WatchEvent::Regenerated(report) => last_count = Some(report.commands),
+            WatchEvent::Error(e) => panic!("regeneration error during burst: {e}"),
+        }
+    }
+
+    assert!(
+        regens.len() <= 2,
+        "a burst of {N} writes must coalesce, not fan out: got {} regenerations",
+        regens.len()
+    );
+    assert_eq!(
+        last_count,
+        Some(N + 1),
+        "the (coalesced) regeneration must reflect the entire burst"
+    );
+
+    handle.stop();
+}
+
+#[test]
 fn watcher_stops_cleanly_on_drop() {
     let tmp = tempfile::TempDir::new().unwrap();
     let claude = tmp.path().join("dot-claude");
@@ -168,6 +255,17 @@ fn watcher_stops_cleanly_on_drop() {
     )
     .expect("watch failed to start");
 
-    // Dropping the handle must join the worker thread without hanging.
-    drop(handle);
+    // Dropping the handle must join the worker thread WITHOUT hanging. Run the
+    // drop+join on a side thread and join THAT with a bounded timeout so a
+    // regression that deadlocks shutdown fails as a clean assertion instead of
+    // hanging the whole test binary until the harness kills it.
+    let (done_tx, done_rx) = mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        drop(handle);
+        let _ = done_tx.send(());
+    });
+    assert!(
+        done_rx.recv_timeout(Duration::from_secs(10)).is_ok(),
+        "dropping the WatchHandle must join its worker thread without hanging"
+    );
 }

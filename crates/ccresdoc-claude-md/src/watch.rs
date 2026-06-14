@@ -102,11 +102,24 @@ pub enum WatchEvent {
     Error(GenerateError),
 }
 
-/// A running watch session. Dropping the handle signals the worker thread to
-/// stop and joins it; the worker owns the `notify` debouncer, so joining it is
-/// what actually tears the watch down.
+/// A running watch session.
+///
+/// Shutdown ordering matters: the handle owns the `notify` debouncer and the
+/// only remaining event-channel sender, while the worker thread blocks on
+/// `event_rx.recv()`. Stopping drops the debouncer first (which drops the
+/// sender clone its closure holds), then drops our sender — at which point the
+/// channel is fully disconnected and the worker's `recv()` returns `Err`,
+/// breaking its loop. We then join. This replaces the old busy-wait poll: the
+/// worker no longer wakes 5x/sec, and stop is observed immediately rather than
+/// after a 200ms timeout tick.
 pub struct WatchHandle {
-    stop_tx: Option<mpsc::Sender<()>>,
+    /// The `notify` debouncer, type-erased to avoid naming its generics. Held
+    /// here (not in the worker) so we can drop it on stop and disconnect the
+    /// event channel. Dropping it also tears down the OS-level watch.
+    debouncer: Option<Box<dyn std::any::Any + Send>>,
+    /// The last live event-channel sender. Dropping it (after the debouncer's
+    /// clone is gone) disconnects `event_rx`, unblocking the worker's `recv()`.
+    event_tx: Option<mpsc::Sender<()>>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -118,9 +131,11 @@ impl WatchHandle {
     }
 
     fn stop_inner(&mut self) {
-        if let Some(tx) = self.stop_tx.take() {
-            let _ = tx.send(());
-        }
+        // Order is load-bearing: drop the debouncer (and the sender clone its
+        // closure owns) BEFORE our sender, so that dropping our sender leaves
+        // zero senders and `event_rx.recv()` returns Disconnected.
+        self.debouncer = None;
+        self.event_tx = None;
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
@@ -148,13 +163,27 @@ where
     config.validate()?;
 
     // Channel carrying debounced "something changed" pulses to the worker.
+    // Stop is signalled by dropping every sender (see `WatchHandle::stop_inner`)
+    // so the worker can block on a single `recv()` with no separate stop poll.
     let (event_tx, event_rx) = mpsc::channel::<()>();
-    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+
+    // The debouncer's error arm needs to surface backend failures (e.g. inotify
+    // limit, backend drop) to the host. It can't call the move-only `on_change`
+    // directly (the worker owns that), so it forwards errors on a side channel
+    // that the worker relays. The worker treats this channel like the event
+    // channel for shutdown: both share the same lifetime.
+    let (err_tx, err_rx) = mpsc::channel::<GenerateError>();
 
     // The debouncer forwards debounced batches; we collapse each batch into a
     // single pulse on event_tx — but ONLY if the batch touched a content path.
     // Canonicalize the roots once so they match the realpath-resolved paths
     // that the backend reports (macOS reports `/private/var/...` for `/var/...`).
+    //
+    // NOTE: roots are canonicalized once, here. A watched root that does not yet
+    // exist will fail to canonicalize and fall back to its non-realpath form, so
+    // later realpath-resolved events for it may not match. Callers must ensure
+    // every watched root exists before calling `watch()` (the Tauri host creates
+    // `~/.claude` and the docs dir at boot, so this holds in practice).
     let event_tx_for_debouncer = event_tx.clone();
     let claude_dir = config
         .claude_dir
@@ -187,12 +216,18 @@ where
             }
         }
         Err(errors) => {
+            // A backend failure (inotify limit hit, backend dropped) means the
+            // watch is no longer reliable. Log it AND forward it as a
+            // WatchEvent::Error so the host learns the watcher effectively died
+            // instead of silently going quiet. (Ignore send errors: the worker
+            // is gone => we're already shutting down.)
             for e in errors {
                 log::warn!("watch backend error: {e}");
+                let _ = err_tx.send(GenerateError::watch("watch backend error", e));
             }
         }
     })
-    .map_err(|e| GenerateError::Watch(e.to_string()))?;
+    .map_err(|e| GenerateError::watch("failed to start file watcher", e))?;
 
     // Watch claude_dir recursively; also watch project_root if it differs.
     let mut watched: Vec<PathBuf> = vec![config.claude_dir.clone()];
@@ -203,49 +238,87 @@ where
         debouncer
             .watcher()
             .watch(path, RecursiveMode::Recursive)
-            .map_err(|e| GenerateError::Watch(format!("failed to watch {path:?}: {e}")))?;
+            .map_err(|e| GenerateError::watch(format!("failed to watch {path:?}"), e))?;
     }
 
     let worker_config = config.clone();
-    // Move the debouncer into the worker thread so it lives exactly as long as
-    // the watch session and is dropped (stopping notify) when the thread ends.
+    // The worker blocks on the event channel; it no longer owns the debouncer.
+    // The debouncer lives in the WatchHandle so stop can drop it (and the sender
+    // clone its closure holds), disconnecting the channel to unblock recv().
     let join = std::thread::Builder::new()
         .name("ccresdoc-claude-md-watch".to_string())
         .spawn(move || {
-            // Keep the debouncer alive inside the worker.
-            let _debouncer = debouncer;
-            loop {
-                // Wait for either a change pulse or a stop signal.
-                // Poll both channels with a short timeout so stop is responsive.
-                if stop_rx.try_recv().is_ok() {
-                    break;
-                }
-                match event_rx.recv_timeout(Duration::from_millis(200)) {
-                    Ok(()) => {
-                        // Drain any additional queued pulses so a burst that
-                        // produced several debounced batches collapses into one
-                        // regeneration. The worker thread is the sole writer, so
-                        // regenerations are inherently serialized — no two ever
-                        // write the same MDX concurrently.
-                        while event_rx.try_recv().is_ok() {}
+            // Block until a change pulse arrives; the loop ends when every sender
+            // is dropped (stop) and `recv()` returns `Err(Disconnected)`. No
+            // timeout: stop is observed via disconnection, so the thread sleeps
+            // fully while idle instead of polling.
+            while event_rx.recv().is_ok() {
+                // Drain any additional queued pulses so a burst that produced
+                // several debounced batches collapses into one regeneration.
+                // The worker thread is the sole writer, so regenerations are
+                // inherently serialized — no two ever write the same MDX
+                // concurrently.
+                while event_rx.try_recv().is_ok() {}
 
-                        match generate::run(&worker_config) {
-                            Ok(report) => on_change(WatchEvent::Regenerated(report)),
-                            Err(e) => on_change(WatchEvent::Error(e)),
-                        }
+                // First, relay any backend errors the debouncer reported
+                // out-of-band so the host learns the watcher is degraded.
+                while let Ok(backend_err) = err_rx.try_recv() {
+                    on_change(WatchEvent::Error(backend_err));
+                }
+
+                // The generator runs arbitrary walk/IO code; a panic here must
+                // NOT kill the watch thread (which would silently end all future
+                // regenerations). Catch it, report it as a WatchEvent::Error, and
+                // keep looping.
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    generate::run(&worker_config)
+                }));
+                match result {
+                    Ok(Ok(report)) => on_change(WatchEvent::Regenerated(report)),
+                    Ok(Err(e)) => on_change(WatchEvent::Error(e)),
+                    Err(panic) => {
+                        let msg = panic_message(&panic);
+                        log::error!("regeneration panicked: {msg}");
+                        on_change(WatchEvent::Error(GenerateError::watch(
+                            "regeneration panicked",
+                            PanicError(msg),
+                        )));
                     }
-                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
             }
         })
-        .map_err(|e| GenerateError::Watch(format!("failed to spawn watch thread: {e}")))?;
+        .map_err(|e| GenerateError::watch("failed to spawn watch thread", e))?;
 
     Ok(WatchHandle {
-        stop_tx: Some(stop_tx),
+        debouncer: Some(Box::new(debouncer)),
+        event_tx: Some(event_tx),
         join: Some(join),
     })
 }
+
+/// Extract a human-readable message from a `catch_unwind` payload.
+fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = panic.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
+/// A simple `std::error::Error` carrying a captured panic message, so a panic in
+/// the regenerator can be surfaced through `GenerateError::Watch`'s `#[source]`.
+#[derive(Debug)]
+struct PanicError(String);
+
+impl std::fmt::Display for PanicError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for PanicError {}
 
 #[cfg(test)]
 mod tests {
