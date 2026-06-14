@@ -128,7 +128,7 @@ checks sidecar liveness each tick, so a crashed `zfb dev` surfaces an error in
 
 ### Cold first-launch cost breakdown (issue #48)
 
-Cold first launch against the full `~/.claude` (~132 skills, 235 pages) reaches a
+Cold first launch against the full `~/.claude` (~135 skills, 235 pages) reaches a
 rendered page in ~56s host-internal / ~70s user-perceived. The cost decomposes as:
 
 | Phase | Cost | Notes |

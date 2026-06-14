@@ -766,9 +766,11 @@ pre[class^="syntect-"].word-wrap code {
  * <pre class="syntect-..."> with inline style="color:#hex" on every token
  * span. The inline hex is the desired token color — this rule must NOT
  * override it (so: NO !important on `color`). CCResDoc highlights solely via
- * this Syntect build-time path; no client-side highlighter (e.g. Shiki) ships,
- * so there are no `.shiki` / `--shiki-*` spans to style. The light-dark(var())
- * fallbacks below resolve against the per-theme tokens emitted by Syntect. */
+ * this Syntect build-time path; no client-side highlighter (e.g. Shiki) ships.
+ * The `--shiki-*` custom properties referenced below are a legacy Shiki-naming
+ * fallback layer that nothing in CCResDoc defines, so those light-dark(var())
+ * lookups are inert and the inline Syntect hex governs. The names are kept
+ * as-is; a rename to `--syntect-*` is a separate follow-up. */
 [data-theme] pre[class^="syntect-"],
 [data-theme] pre[class^="syntect-"] span {
   color: light-dark(var(--shiki-light), var(--shiki-dark));
