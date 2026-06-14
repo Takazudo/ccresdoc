@@ -84,4 +84,4 @@ GitHub Actions runs `cargo fmt --check`, `cargo clippy --workspace --exclude ccr
 bash scripts/run-b4push.sh
 ```
 
-Runs all checks locally: cargo fmt, clippy, test, plus `pnpm install` and `pnpm exec zfb build` in `app/`.
+Runs all checks locally: cargo fmt, clippy (`--exclude ccresdoc`), test (`--exclude ccresdoc`), plus `pnpm install` and `pnpm exec zfb build` in `app/`. The `ccresdoc` (src-tauri) crate is excluded from clippy/test to match CI — it requires webkit2gtk/gtk3 which are not available on Linux CI runners.
