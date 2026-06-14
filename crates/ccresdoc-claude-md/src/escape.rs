@@ -141,7 +141,11 @@ fn extract_code_blocks(content: &str) -> (String, Vec<String>) {
         // means in practice fences are matched line-wise; we anchor to line
         // start to avoid matching backtick runs mid-prose, matching how
         // CommonMark and the upstream output behave for real content.
-        let at_line_start = i == 0 || bytes[i - 1] == b'\n';
+        // Treat \r\n line endings: a position preceded by \r is also a line
+        // start (the \r is the CR half of a CRLF pair). Without this, CRLF
+        // files leave \r before the backticks and the fence isn't recognised.
+        let prev = if i > 0 { bytes[i - 1] } else { b'\n' };
+        let at_line_start = prev == b'\n' || prev == b'\r';
         if at_line_start && bytes[i] == b'`' {
             // Count the run of backticks (fence length >= 3).
             let fence_start = i;
@@ -426,12 +430,48 @@ fn is_tag_name_char(c: u8) -> bool {
 
 /// `/<([A-Za-z][A-Za-z0-9_-]*)(\s[^>]*)?>/g` — opening tags (also matches the
 /// spaced self-closing form `<Foo />`).
+///
+/// Also escapes HTML comments (`<!-- ... -->`): MDX/acorn rejects raw HTML
+/// comments, so we escape the leading `<` to `&lt;` making the comment
+/// appear as literal text. The `-->` tail is also escaped for symmetry.
 fn escape_open_tags(input: &str) -> String {
     let bytes = input.as_bytes();
     let len = bytes.len();
     let mut out = String::with_capacity(len);
     let mut i = 0;
     while i < len {
+        // HTML comment: <!-- ... --> — escape both delimiters so MDX/acorn
+        // never sees a raw HTML comment (which it would reject).
+        if bytes[i] == b'<'
+            && i + 3 < len
+            && bytes[i + 1] == b'!'
+            && bytes[i + 2] == b'-'
+            && bytes[i + 3] == b'-'
+        {
+            // Emit the open delimiter with < escaped, then scan for --> or EOF.
+            out.push_str("&lt;!--");
+            i += 4;
+            // Find the closing --> and emit inner content verbatim, then escape
+            // the closing --> as well.
+            loop {
+                if i >= len {
+                    break;
+                }
+                if bytes[i] == b'-'
+                    && i + 2 < len
+                    && bytes[i + 1] == b'-'
+                    && bytes[i + 2] == b'>'
+                {
+                    out.push_str("--&gt;");
+                    i += 3;
+                    break;
+                }
+                let ch_start = i;
+                i += utf8_char_len(bytes[i]);
+                out.push_str(&input[ch_start..i]);
+            }
+            continue;
+        }
         if bytes[i] == b'<' && i + 1 < len && is_tag_name_start(bytes[i + 1]) {
             let mut j = i + 1;
             while j < len && is_tag_name_char(bytes[j]) {
@@ -702,5 +742,73 @@ mod tests {
     fn quadruple_backtick_run_alone_is_unchanged() {
         // A lone 4-backtick run with no valid close stays verbatim.
         assert_eq!(escape_for_mdx("````"), "````");
+    }
+
+    #[test]
+    fn html_comment_is_escaped() {
+        // MDX/acorn rejects raw HTML comments; <!-- and --> must be escaped.
+        let out = escape_for_mdx("before <!-- hello <World> --> after <Bar>");
+        // The comment delimiters must be escaped.
+        assert!(out.contains("&lt;!--"), "opening <!-- should be escaped");
+        assert!(out.contains("--&gt;"), "closing --> should be escaped");
+        // Content inside the comment should be passed through verbatim (not
+        // double-escaped — the inner <World> is not a JSX tag concern here).
+        assert!(out.contains("hello"), "comment body should be preserved");
+        // Text outside the comment is still processed normally.
+        assert!(
+            out.contains("&lt;Bar&gt;"),
+            "JSX tag after comment should still be escaped"
+        );
+        // Raw HTML comment sequence must NOT appear in the output.
+        assert!(
+            !out.contains("<!--"),
+            "raw <!-- must not appear in output"
+        );
+    }
+
+    #[test]
+    fn crlf_fenced_code_block_inner_not_escaped() {
+        // A fenced code block using CRLF line endings: the \r before the
+        // opening ``` must not block fence detection.  Inner < and { must be
+        // preserved verbatim, not escaped.
+        let input = "before\r\n```ts\r\nconst x = <Foo>;\r\nif (a) {b}\r\n```\r\nafter <Baz>";
+        let out = escape_for_mdx(input);
+        assert!(
+            out.contains("const x = <Foo>;"),
+            "inner < inside CRLF fence must NOT be escaped"
+        );
+        assert!(
+            out.contains("if (a) {b}"),
+            "inner {{ inside CRLF fence must NOT be escaped"
+        );
+        assert!(
+            out.contains("after &lt;Baz&gt;"),
+            "JSX tag after CRLF fence must be escaped"
+        );
+    }
+
+    #[test]
+    fn runaway_open_tag_pins_current_behavior() {
+        // A spaced JSX-like tag where the [^>]* scan crosses a newline to
+        // find the next '>'.  This is sharp-edge behaviour inherited from the
+        // JS [^>]* semantics; we pin it so regressions are visible.
+        // "foo <Bar " starts a spaced tag; the scan finds the '>' inside the
+        // second line, consuming the whole span as a single tag.
+        let input = "foo <Bar \nbaz> end";
+        let out = escape_for_mdx(input);
+        // The tag (<Bar \nbaz>) is not a known HTML tag so it gets escaped.
+        assert!(
+            out.contains("&lt;"),
+            "runaway tag opening < should be escaped: {out}"
+        );
+        assert!(
+            out.contains("&gt;"),
+            "runaway tag closing > should be escaped: {out}"
+        );
+        // The original < and > must not appear as raw characters.
+        assert!(
+            !out.contains("<Bar"),
+            "raw <Bar must not appear in output: {out}"
+        );
     }
 }
