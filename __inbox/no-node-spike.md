@@ -1,3 +1,5 @@
+> **SUPERSEDED — point-in-time snapshot; does not reflect current architecture.**
+
 # No-Node Spike: Minimal Changes for `cargo tauri build` Without Node.js
 
 **Sub-issue:** https://github.com/Takazudo/ccresdoc/issues/21
