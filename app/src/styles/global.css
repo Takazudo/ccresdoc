@@ -765,17 +765,12 @@ pre[class^="syntect-"].word-wrap code {
 /* Build-time: zfb's Rust pipeline runs SyntectPlugin and emits
  * <pre class="syntect-..."> with inline style="color:#hex" on every token
  * span. The inline hex is the desired token color — this rule must NOT
- * override it (so: NO !important on `color`).
- *
- * The `.shiki` selectors are retained defensively: a client-side Shiki
- * re-highlighter (none ships in CCResDoc today) would emit spans with inline
- * style="--shiki-light:#X;--shiki-dark:#Y" — CSS custom properties only, no
- * `color` declaration — relying on this rule to resolve
- * light-dark(var(--shiki-light), var(--shiki-dark)) to the active theme. Such
- * spans have no inline `color`, so the rule applies without needing
- * !important. CCResDoc itself highlights via the Syntect build-time path. */
-[data-theme] .shiki,
-[data-theme] .shiki span,
+ * override it (so: NO !important on `color`). CCResDoc highlights solely via
+ * this Syntect build-time path; no client-side highlighter (e.g. Shiki) ships.
+ * The `--shiki-*` custom properties referenced below are a legacy Shiki-naming
+ * fallback layer that nothing in CCResDoc defines, so those light-dark(var())
+ * lookups are inert and the inline Syntect hex governs. The names are kept
+ * as-is; a rename to `--syntect-*` is a separate follow-up. */
 [data-theme] pre[class^="syntect-"],
 [data-theme] pre[class^="syntect-"] span {
   color: light-dark(var(--shiki-light), var(--shiki-dark));
@@ -784,22 +779,6 @@ pre[class^="syntect-"].word-wrap code {
     var(--shiki-light-font-style, inherit),
     var(--shiki-dark-font-style, inherit)
   );
-}
-
-/* HtmlPreview component — Shiki code blocks
- * Token colors inherit from the global [data-theme] .shiki rule above.
- * These rules only adjust layout and background for the preview context. */
-.zd-html-preview-code pre.shiki {
-  margin: 0;
-  padding: 0.75rem;
-  font-size: 0.875rem;
-  line-height: 1.6;
-  overflow-x: auto;
-}
-
-.zd-html-preview-code pre.shiki code {
-  font-family: var(--font-mono);
-  white-space: pre;
 }
 
 /* ========================================

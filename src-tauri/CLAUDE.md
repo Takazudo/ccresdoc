@@ -126,6 +126,36 @@ and let `zfb dev` build the whole site once. The loading page stays informative
 checks sidecar liveness each tick, so a crashed `zfb dev` surfaces an error in
 ~1s rather than burning the full timeout.
 
+### Cold first-launch cost breakdown (issue #48)
+
+Cold first launch against the full `~/.claude` (~135 skills, 235 pages) reaches a
+rendered page in ~56s host-internal / ~70s user-perceived. The cost decomposes as:
+
+| Phase | Cost | Notes |
+| --- | --- | --- |
+| Workspace copy | ~12s | APFS clonefile (`cp -Rc`); remaining cost is per-file COW over ~10k `node_modules` files. |
+| MDX generate (Rust) | ~1s | `ccresdoc_claude_md::generate()`. |
+| **`zfb dev` cold build** | **~43s** | **dominant.** `zfb dev` does a synchronous eager render of all 235 routes through the embedded V8 host **before** the server accepts requests (dev.rs step "3b. Eager initial render"). This is the inherent boot cost of `zfb dev`'s "every route on disk before ready" guarantee. |
+| First-run Gatekeeper | ~14s | macOS scanning the **unsigned** 410MB dev `.app`. A signed + notarized release would not pay this each launch — NOT representative of a shipped app. |
+
+Per-lever decision (none auto-fixable here; the items below need a human/release call):
+
+- **~43s `zfb dev` cold build** — the biggest lever. zfb's already-shipped Lazy Dev
+  Render (zfb#1017) serves stale + lazy-renders on request for *edit* ticks but
+  deliberately keeps the **boot** render eager. Its request-time render-on-request
+  seam + the existing `read_from_dist` prebuilt-`dist/` fallback are exactly what an
+  opt-in **boot-lazy** mode would reuse to serve a prebuilt `dist/` immediately and
+  defer per-route render. This fits zfb's minimal design as an internal `zfb dev`
+  optimization (no new engine primitive), so it was raised upstream as a feature
+  request: **Takazudo/zudo-front-builder#1057**. Until/unless that lands, the ~43s is
+  an accepted inherent cost of `zfb dev` for a 235-page cold boot.
+- **~14s Gatekeeper** — removed by **sign + notarize the release** `.app`. Out of
+  scope for an autonomous code change; this is a release-process decision. The ~14s
+  is unsigned-dev-build overhead, not a property of a shipped signed app.
+- **node_modules size (clonefile + bundle)** — trimming build-only deps shrinks both
+  the ~12s copy and the bundle. The shiki removal (issue #52) is the primary lever and
+  is owned by that topic; do not duplicate it here.
+
 ## Error UI (first-run failures)
 
 All failure paths emit the `launch-error` event (reason + log path) so the

@@ -70,7 +70,6 @@ app/
     components/
       sidebar-tree.tsx    — SidebarTree island (filter + tree nav)
       sidebar-toggle.tsx  — mobile hamburger + slide-in aside
-      desktop-sidebar-toggle.tsx — no-op stub (feature not enabled)
       tree-nav-shared.tsx — connector lines, icons shared by sidebar components
       client-router-bootstrap.tsx — SPA router activation island
     content/
