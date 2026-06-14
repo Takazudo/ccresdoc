@@ -40,19 +40,21 @@ else
 fi
 
 # ── Step 2: cargo clippy ─────────────────────────
-step "Step 2/4: cargo clippy --workspace --all-targets -- -D warnings"
-if (cd "$ROOT_DIR" && cargo clippy --workspace --all-targets -- -D warnings); then
+# --exclude ccresdoc mirrors CI: tauri crate needs webkit2gtk/gtk3, unavailable on Linux CI runners
+step "Step 2/4: cargo clippy --workspace --exclude ccresdoc --all-targets -- -D warnings"
+if (cd "$ROOT_DIR" && cargo clippy --workspace --exclude ccresdoc --all-targets -- -D warnings); then
   pass "cargo clippy passed"
 else
-  fail "cargo clippy --workspace --all-targets -- -D warnings"
+  fail "cargo clippy --workspace --exclude ccresdoc --all-targets -- -D warnings"
 fi
 
 # ── Step 3: cargo test ───────────────────────────
-step "Step 3/4: cargo test --workspace"
-if (cd "$ROOT_DIR" && cargo test --workspace); then
+# --exclude ccresdoc mirrors CI: tauri crate needs webkit2gtk/gtk3, unavailable on Linux CI runners
+step "Step 3/4: cargo test --workspace --exclude ccresdoc"
+if (cd "$ROOT_DIR" && cargo test --workspace --exclude ccresdoc); then
   pass "cargo test passed"
 else
-  fail "cargo test --workspace"
+  fail "cargo test --workspace --exclude ccresdoc"
 fi
 
 # ── Step 4: pnpm install + zfb build (app/) ──────
