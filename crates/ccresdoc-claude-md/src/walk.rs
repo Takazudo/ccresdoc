@@ -133,10 +133,28 @@ fn extract_h1(content: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 fn read_file(path: &Path) -> Result<String> {
-    std::fs::read_to_string(path).map_err(|e| GenerateError::Io {
+    let bytes = std::fs::read(path).map_err(|e| GenerateError::Io {
         path: path.to_owned(),
         source: e,
-    })
+    })?;
+    // Use lossy decoding: a non-UTF-8 file produces replacement characters
+    // (U+FFFD) rather than aborting the entire generate() run. One bad file
+    // should not block all others.
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Log a `read_dir` entry error and return `None` so callers can use
+/// `filter_map(log_entry_err)` instead of `filter_map(Result::ok)`.
+/// The original `filter_map(Result::ok)` silently discarded entries whose
+/// `DirEntry` or `file_type()` failed; logging ensures they surface as warnings.
+fn log_entry_err(res: std::io::Result<std::fs::DirEntry>) -> Option<std::fs::DirEntry> {
+    match res {
+        Ok(e) => Some(e),
+        Err(e) => {
+            log::warn!("read_dir entry error (skipping): {e}");
+            None
+        }
+    }
 }
 
 /// True if `path` resolves to a real directory (following symlinks).
@@ -335,7 +353,7 @@ fn collect_commands(commands_dir: &Path) -> Result<Vec<CommandItem>> {
             path: commands_dir.to_owned(),
             source: e,
         })?
-        .filter_map(|res| res.ok())
+        .filter_map(log_entry_err)
         .filter(|e| {
             e.file_name()
                 .to_str()
@@ -380,7 +398,7 @@ fn collect_skill_references(refs_dir: &Path) -> Result<Vec<SkillReference>> {
             path: refs_dir.to_owned(),
             source: e,
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_entry_err)
         .filter(|e| {
             e.file_name()
                 .to_str()
@@ -423,7 +441,7 @@ fn collect_sub_files(sub_dir: &Path) -> Result<Vec<SkillSubFile>> {
             path: sub_dir.to_owned(),
             source: e,
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_entry_err)
         .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
         .collect();
 
@@ -471,7 +489,7 @@ fn collect_skills(skills_dir: &Path) -> Result<Vec<SkillItem>> {
             path: skills_dir.to_owned(),
             source: e,
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_entry_err)
         .filter(|e| {
             is_real_dir(&e.path()) && {
                 let skill_md = e.path().join("SKILL.md");
@@ -539,7 +557,7 @@ fn collect_agents(agents_dir: &Path) -> Result<Vec<AgentItem>> {
             path: agents_dir.to_owned(),
             source: e,
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_entry_err)
         .filter(|e| {
             e.file_name()
                 .to_str()
