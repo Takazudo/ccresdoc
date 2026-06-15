@@ -13,8 +13,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PKG="$ROOT_DIR/app/package.json"
 
-# Extract all @takazudo/zfb* version strings (exact pins, not ranges)
-versions=$(python3 - <<'PY'
+# Extract all @takazudo/zfb* version strings (exact pins, not ranges).
+# Pass "$PKG" on the heredoc-operator line so it becomes sys.argv[1]; placing it
+# after the closing 'PY' would make the shell try to execute package.json instead.
+versions=$(python3 - "$PKG" <<'PY'
 import json, sys
 with open(sys.argv[1]) as f:
     pkg = json.load(f)
@@ -27,7 +29,7 @@ zfb_vers = sorted(set(
 ))
 print("\n".join(zfb_vers))
 PY
-"$PKG")
+)
 
 count=$(echo "$versions" | grep -c .)
 
