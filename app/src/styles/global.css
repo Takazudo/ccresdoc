@@ -209,6 +209,12 @@
   --leading-normal: 1.5;
   --leading-relaxed: 1.625;
 
+  /* Letter-spacing scale (4 steps) — referenced as fallbacks by upstream content CSS */
+  --tracking-tight: -0.025em;
+  --tracking-normal: normal;
+  --tracking-wide: 0.05em;
+  --tracking-wider: 0.1em;
+
   /* ========================================
    * Border radius (3 steps)
    * ======================================== */
@@ -263,6 +269,10 @@ body {
   }
   button {
     cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
   }
 }
 
