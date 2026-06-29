@@ -22,6 +22,8 @@ import { BodyEndIslands } from "../lib/_body-end-islands";
 import { composeMetaTitle } from "../lib/_compose-meta-title";
 import { toSlugParams } from "@/utils/slug";
 import { settings } from "@/config/settings";
+import { extractHeadings } from "@takazudo/zudo-doc/extract-headings";
+import type { HeadingItem } from "@takazudo/zudo-doc/extract-headings";
 
 // ---------------------------------------------------------------------------
 // Props contract
@@ -34,6 +36,10 @@ interface DocPageProps {
   navSection?: string;
   hideSidebar?: boolean;
   hideToc?: boolean;
+  /** TOC headings extracted from the entry body. Passed to DocLayoutWithDefaults so
+   *  its built-in Toc/MobileToc render the item list. Pages with hide_toc: true
+   *  still carry headings — the layout suppresses them via hideToc. */
+  headings: readonly HeadingItem[];
   // MDX render function for this entry. zfb does NOT auto-inject `Content` for a
   // programmatic catch-all route (only for MDX-backed page modules), so paths()
   // wires it explicitly from the collection entry — mirrors zudo-doc's scaffold
@@ -92,6 +98,11 @@ export function paths(): Array<{
       const slug = entry.id;
       const slugParams = toSlugParams(slug);
       const navSection = detectNavSection(slug);
+      // Extract TOC headings from the raw body using the project's heading-ID
+      // strategy ("flat") so anchor hrefs in the TOC match rendered heading ids.
+      const headings = extractHeadings(entry.body ?? "", {
+        strategy: settings.headingIdStrategy,
+      });
       const props: DocPageProps & { params: { slug: string[] } } = {
         slug,
         title: entry.data.title,
@@ -99,6 +110,7 @@ export function paths(): Array<{
         navSection,
         hideSidebar: entry.data.hide_sidebar ?? false,
         hideToc: entry.data.hide_toc ?? false,
+        headings,
         Content: entry.Content as DocPageProps["Content"],
         params: { slug: slugParams },
       };
@@ -121,6 +133,7 @@ export default function DocsPage({
   navSection,
   hideSidebar,
   hideToc,
+  headings,
   Content,
 }: PageProps): JSX.Element {
   const metaTitle = composeMetaTitle(title);
@@ -152,6 +165,7 @@ export default function DocsPage({
       }
       hideSidebar={hideSidebar}
       hideToc={hideToc}
+      headings={headings}
       footerOverride={<FooterWithDefaults />}
       bodyEndComponents={<BodyEndIslands />}
     >
