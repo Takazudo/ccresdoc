@@ -1,0 +1,1 @@
+Placeholder so the Tauri bundle.resources glob (../app/dist/**/*) matches before a real zfb build populates this dir. Real dist output is gitignored; this file is the gitignore exception (!app/dist/placeholder.txt).
