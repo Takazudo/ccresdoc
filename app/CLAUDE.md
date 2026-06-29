@@ -20,7 +20,9 @@ pnpm install          # once — populates node_modules incl. native zfb binary
 pnpm exec zfb build   # node-free: invokes native binary directly
 ```
 
-**`app/` is a STANDALONE pnpm project with `node-linker=hoisted`** (see `app/.npmrc`),
+**`app/` is a STANDALONE pnpm project with a hoisted node-linker** — set as
+`nodeLinker: hoisted` in `app/pnpm-workspace.yaml` (pnpm 10+/11 no longer reads
+`node-linker` from `app/.npmrc`, which is kept only as a legacy/back-compat marker),
 NOT a workspace member. This is required for the bundled `.app`: the Tauri host
 bundles `app/node_modules` and copies it (dereferencing symlinks) into a writable
 workspace at runtime. pnpm's default isolated `.pnpm` store does not survive that

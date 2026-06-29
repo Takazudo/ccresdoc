@@ -1,3 +1,17 @@
+# pnpm 10+/11 moved several settings out of .npmrc into this file.
+#
+# nodeLinker: hoisted — REQUIRED for the bundled CcResDoc.app (same reason as the
+# legacy app/.npmrc `node-linker=hoisted`, which pnpm 11 no longer reads). The Tauri
+# host bundles app/node_modules and copies it dereferencing symlinks; pnpm's default
+# isolated `.pnpm` store does not survive that copy — transitive deps like `hono`
+# (via @takazudo/zfb-runtime) become unresolvable and every content page 404s. A flat
+# hoisted node_modules copies cleanly. Keep this in lockstep with app/.npmrc.
+nodeLinker: hoisted
+
+# minimumReleaseAgeExclude — pnpm's supply-chain minimum-release-age gate blocks
+# freshly-published versions; the @takazudo/zfb* prereleases are published and adopted
+# immediately, so they must be excluded from the age check. Bump these together with
+# the zfb pin in package.json.
 minimumReleaseAgeExclude:
   - '@takazudo/zfb-adapter-cloudflare@0.1.0-next.71'
   - '@takazudo/zfb-darwin-arm64@0.1.0-next.71'
