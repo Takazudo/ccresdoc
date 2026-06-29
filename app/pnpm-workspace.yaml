@@ -1,0 +1,9 @@
+minimumReleaseAgeExclude:
+  - '@takazudo/zfb-adapter-cloudflare@0.1.0-next.71'
+  - '@takazudo/zfb-darwin-arm64@0.1.0-next.71'
+  - '@takazudo/zfb-darwin-x64@0.1.0-next.71'
+  - '@takazudo/zfb-linux-arm64-gnu@0.1.0-next.71'
+  - '@takazudo/zfb-linux-x64-gnu@0.1.0-next.71'
+  - '@takazudo/zfb-runtime@0.1.0-next.71'
+  - '@takazudo/zfb-win32-x64-msvc@0.1.0-next.71'
+  - '@takazudo/zfb@0.1.0-next.71'

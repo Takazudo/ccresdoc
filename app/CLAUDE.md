@@ -5,7 +5,7 @@ zudo-doc consumer project built by zfb. Output in `dist/` is served by `zfb dev`
 ## Architecture
 
 - **Framework**: Preact + zfb SSG
-- **Package**: `@takazudo/zfb@0.1.0-next.53` (binary) + `@takazudo/zudo-doc@^0.2.4` (components)
+- **Package**: `@takazudo/zfb@0.1.0-next.71` (binary) + `@takazudo/zudo-doc@^0.2.4` (components)
 - **Port**: 4892 (pinned in `zfb.config.ts`)
 - **Node-free mode**: Zero `.mjs` plugins → no `plugin-host.mjs` spawned
 - **Collections**: single `"docs"` collection at `src/content/docs/`
