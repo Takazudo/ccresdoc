@@ -48,6 +48,7 @@ declare module "zfb/config" {
   }
 
   export interface ZfbConfig {
+    presets?: Partial<ZfbConfig>[];
     outDir?: string;
     publicDir?: string;
     host?: string;
