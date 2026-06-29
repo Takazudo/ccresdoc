@@ -18,8 +18,8 @@ importers:
         specifier: 0.1.0-next.71
         version: 0.1.0-next.71(@takazudo/zfb@0.1.0-next.71)
       '@takazudo/zudo-doc':
-        specifier: ^0.2.4
-        version: 0.2.5(@takazudo/zfb-runtime@0.1.0-next.71(@takazudo/zfb@0.1.0-next.71))(@takazudo/zfb@0.1.0-next.71)(preact@10.29.2)(shiki@4.2.0)
+        specifier: ^2.1.1
+        version: 2.1.1(@takazudo/zfb-runtime@0.1.0-next.71(@takazudo/zfb@0.1.0-next.71))(@takazudo/zfb@0.1.0-next.71)(katex@0.16.47)(preact@10.29.2)(shiki@4.2.0)(zod@3.25.76)
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -420,19 +420,27 @@ packages:
       react:
         optional: true
 
-  '@takazudo/zudo-doc@0.2.5':
-    resolution: {integrity: sha512-tzq7Fk+uNayZgTV6z7O65/TeVa+8eh3sMYtnaXdwjeJ2Z1jFF3ALC3xejTrTQD+YbcVyN12cP4uonOx38O7Ynw==}
+  '@takazudo/zudo-doc@2.1.1':
+    resolution: {integrity: sha512-/Kbr/ZLwuqBhsuoTb/iqtBDKgRzZ1kDTGJAsSttpw/FDKBi6H03b9x1vf0U7nhIwzkuszOX2ceXBYm72KIjdEw==}
+    hasBin: true
     peerDependencies:
-      '@takazudo/zdtp': ^0.2.0-next.2
-      '@takazudo/zfb': ^0.1.0-next.43
-      '@takazudo/zfb-runtime': ^0.1.0-next.43
-      '@takazudo/zudo-doc-history-server': ^0.2.5
+      '@takazudo/zdtp': ^0.4.1
+      '@takazudo/zfb': ^0.1.0-next.71
+      '@takazudo/zfb-runtime': ^0.1.0-next.71
+      '@takazudo/zudo-doc-history-server': ^2.1.0
+      diff: ^8.0.0
+      katex: ^0.16.0
       preact: ^10.29.1
       shiki: ^4.0.2
+      zod: ^4.3.6
     peerDependenciesMeta:
       '@takazudo/zdtp':
         optional: true
       '@takazudo/zudo-doc-history-server':
+        optional: true
+      diff:
+        optional: true
+      katex:
         optional: true
       shiki:
         optional: true
@@ -847,6 +855,10 @@ packages:
       picomatch:
         optional: true
 
+  fs-extra@11.3.5:
+    resolution: {integrity: sha512-eKpRKAovdpZtR1WopLHxlBWvAgPny3c4gX1G5Jhwmmw4XJj0ifSD5qB5TOo8hmA0wlRKDAOAhEE1yVPgs6Fgcg==}
+    engines: {node: '>=14.14'}
+
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
@@ -949,6 +961,9 @@ packages:
 
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
+
+  jsonfile@6.2.1:
+    resolution: {integrity: sha512-zwOTdL3rFQ/lRdBnntKVOX6k5cKJwEc1HdilT71BWEu7J41gXIB2MRp+vxduPSwZJPWBxEzv4yH1wYLJGUHX4Q==}
 
   katex@0.16.47:
     resolution: {integrity: sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==}
@@ -1376,6 +1391,10 @@ packages:
   unist-util-visit@5.1.0:
     resolution: {integrity: sha512-m+vIdyeCOpdr/QeQCu2EzxX/ohgS8KbnPDgFni4dQsfSCtpz8UqDyY5GjRru8PDKuYn7Fq19j1CQ+nJSsGKOzg==}
 
+  universalify@2.0.1:
+    resolution: {integrity: sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==}
+    engines: {node: '>= 10.0.0'}
+
   uuid@14.0.0:
     resolution: {integrity: sha512-Qo+uWgilfSmAhXCMav1uYFynlQO7fMFiMVZsQqZRMIXp0O7rR7qjkj+cPvBHLgBqi960QCoo/PH2/6ZtVqKvrg==}
     hasBin: true
@@ -1706,13 +1725,18 @@ snapshots:
       '@takazudo/zfb-linux-x64-gnu': 0.1.0-next.71
       '@takazudo/zfb-win32-x64-msvc': 0.1.0-next.71
 
-  '@takazudo/zudo-doc@0.2.5(@takazudo/zfb-runtime@0.1.0-next.71(@takazudo/zfb@0.1.0-next.71))(@takazudo/zfb@0.1.0-next.71)(preact@10.29.2)(shiki@4.2.0)':
+  '@takazudo/zudo-doc@2.1.1(@takazudo/zfb-runtime@0.1.0-next.71(@takazudo/zfb@0.1.0-next.71))(@takazudo/zfb@0.1.0-next.71)(katex@0.16.47)(preact@10.29.2)(shiki@4.2.0)(zod@3.25.76)':
     dependencies:
       '@takazudo/zfb': 0.1.0-next.71
       '@takazudo/zfb-runtime': 0.1.0-next.71(@takazudo/zfb@0.1.0-next.71)
+      fs-extra: 11.3.5
       gray-matter: 4.0.3
+      minimist: 1.2.8
+      picocolors: 1.1.1
       preact: 10.29.2
+      zod: 3.25.76
     optionalDependencies:
+      katex: 0.16.47
       shiki: 4.2.0
 
   '@tybys/wasm-util@0.10.2':
@@ -2158,6 +2182,12 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.4
 
+  fs-extra@11.3.5:
+    dependencies:
+      graceful-fs: 4.2.11
+      jsonfile: 6.2.1
+      universalify: 2.0.1
+
   fsevents@2.3.3:
     optional: true
 
@@ -2249,6 +2279,12 @@ snapshots:
       esprima: 4.0.1
 
   json-schema-traverse@1.0.0: {}
+
+  jsonfile@6.2.1:
+    dependencies:
+      universalify: 2.0.1
+    optionalDependencies:
+      graceful-fs: 4.2.11
 
   katex@0.16.47:
     dependencies:
@@ -2813,6 +2849,8 @@ snapshots:
       '@types/unist': 3.0.3
       unist-util-is: 6.0.1
       unist-util-visit-parents: 6.0.2
+
+  universalify@2.0.1: {}
 
   uuid@14.0.0: {}
 
