@@ -1,3 +1,5 @@
+/** @jsxRuntime automatic */
+/** @jsxImportSource preact */
 "use client";
 
 // Use preact hook entrypoints directly — the "react" → "preact/compat" alias

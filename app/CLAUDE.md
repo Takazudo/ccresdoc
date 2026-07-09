@@ -5,19 +5,19 @@ zudo-doc consumer project built by zfb. Output in `dist/` is served by `zfb dev`
 ## Architecture
 
 - **Framework**: Preact + zfb SSG
-- **Package**: `@takazudo/zfb@0.1.0-next.71` (binary) + `@takazudo/zudo-doc@^2.1.1` (components)
+- **Package**: `@takazudo/zfb@0.1.0-next.78` (binary) + `@takazudo/zudo-doc@^3.2.0` (components)
 - **Port**: 4892 (pinned in `zfb.config.ts`)
 - **Node-free mode**: Zero `.mjs` plugins → no `plugin-host.mjs` spawned
 - **Collections**: single `"docs"` collection at `src/content/docs/`
 
 ## Build
 
-`node_modules` must be populated at setup time via `pnpm install` (Node at setup only — not at runtime). The native `@takazudo/zfb-<platform>/zfb` binary is then invoked via `pnpm exec zfb` — do NOT use `node_modules/.bin/zfb`, which is a Node-shebang wrapper that requires Node at runtime.
+`node_modules` must be populated at setup time via `pnpm install` (Node at setup only — not at runtime). Build/dev checks may use `pnpm exec zfb`, whose package wrapper spawns the native `@takazudo/zfb-<platform>/zfb` binary. The Tauri runtime must resolve that native binary directly — do NOT use `node_modules/.bin/zfb`, which is a Node-shebang wrapper that requires Node at runtime.
 
 ```sh
 cd app
 pnpm install          # once — populates node_modules incl. native zfb binary
-pnpm exec zfb build   # node-free: invokes native binary directly
+pnpm exec zfb build   # setup/build check: wrapper spawns native binary
 ```
 
 **`app/` is a STANDALONE pnpm project with a hoisted node-linker** — set as

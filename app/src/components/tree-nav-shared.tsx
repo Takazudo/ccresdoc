@@ -1,3 +1,5 @@
+/** @jsxRuntime automatic */
+/** @jsxImportSource preact */
 // Shared constants and primitives for sidebar-tree and site-tree-nav
 
 // Indentation — fluid clamp values

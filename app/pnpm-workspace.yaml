@@ -13,12 +13,12 @@ nodeLinker: hoisted
 # immediately, so they must be excluded from the age check. Bump these together with
 # the zfb pin in package.json.
 minimumReleaseAgeExclude:
-  - '@takazudo/zfb-adapter-cloudflare@0.1.0-next.71'
-  - '@takazudo/zfb-darwin-arm64@0.1.0-next.71'
-  - '@takazudo/zfb-darwin-x64@0.1.0-next.71'
-  - '@takazudo/zfb-linux-arm64-gnu@0.1.0-next.71'
-  - '@takazudo/zfb-linux-x64-gnu@0.1.0-next.71'
-  - '@takazudo/zfb-runtime@0.1.0-next.71'
-  - '@takazudo/zfb-win32-x64-msvc@0.1.0-next.71'
-  - '@takazudo/zfb@0.1.0-next.71'
-  - '@takazudo/zudo-doc@2.1.1'
+  - '@takazudo/zfb-adapter-cloudflare@0.1.0-next.78'
+  - '@takazudo/zfb-darwin-arm64@0.1.0-next.78'
+  - '@takazudo/zfb-darwin-x64@0.1.0-next.78'
+  - '@takazudo/zfb-linux-arm64-gnu@0.1.0-next.78'
+  - '@takazudo/zfb-linux-x64-gnu@0.1.0-next.78'
+  - '@takazudo/zfb-runtime@0.1.0-next.78'
+  - '@takazudo/zfb-win32-x64-msvc@0.1.0-next.78'
+  - '@takazudo/zfb@0.1.0-next.78'
+  - '@takazudo/zudo-doc@3.2.0'
