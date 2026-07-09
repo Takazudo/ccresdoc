@@ -1,3 +1,5 @@
+/** @jsxRuntime automatic */
+/** @jsxImportSource preact */
 "use client";
 
 // Use preact hook entrypoints directly — the "react" → "preact/compat" alias
@@ -5,6 +7,7 @@
 // project-wide).
 import { useState, useCallback, useEffect, useMemo, useRef, useContext } from "preact/hooks";
 import { createContext } from "preact";
+import type { JSX } from "preact";
 import type { NavNode } from "@/utils/docs";
 import type { LocaleLink } from "@/types/locale";
 // Sidebar nav must react to the same client-router lifecycle event the mobile
@@ -118,8 +121,10 @@ function focusItem(el: HTMLElement | undefined, setFocusedId: (id: string) => vo
  * state; `slug`, `isExpandable`, `expanded`, and `level` describe this row.
  * Returns nothing — it mutates focus / open-state as a side effect.
  */
+type TreeKeyEvent = Pick<KeyboardEvent, "key" | "preventDefault">;
+
 function handleTreeKeyDown(
-  e: KeyboardEvent,
+  e: TreeKeyEvent,
   ctx: TreeNavContextValue,
   row: HTMLElement,
   slug: string,
@@ -233,7 +238,7 @@ function useTreeItem(opts: {
   const treeNav = useContext(TreeNavContext);
   const rowRef = useRef<HTMLDivElement | null>(null);
 
-  const onKeyDown = (e: KeyboardEvent) => {
+  const onKeyDown = (e: JSX.TargetedKeyboardEvent<HTMLDivElement>) => {
     if (!treeNav || !rowRef.current) return;
     handleTreeKeyDown(e, treeNav, rowRef.current, opts.slug, opts.isExpandable, opts.expanded, opts.level);
   };

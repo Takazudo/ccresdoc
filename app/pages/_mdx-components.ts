@@ -78,19 +78,18 @@ function CategoryNavWrapper(props: { categories?: string[] }) {
   });
 
   const nodeMap = flattenTree(tree);
-  const children: NavNode[] = (props.categories ?? [])
-    .map((slug) => {
-      const node = nodeMap.get(slug);
-      if (!node) return null;
-      return {
+  const children = (props.categories ?? []).reduce<NavNode[]>((acc, slug) => {
+    const node = nodeMap.get(slug);
+    if (!node) return acc;
+    acc.push({
         label: node.label,
         description: node.description,
         href: node.href,
         hasPage: node.hasPage,
         children: sidebarNodesToNavNodes(node.children),
-      } satisfies NavNode;
-    })
-    .filter((n): n is NavNode => n !== null);
+    });
+    return acc;
+  }, []);
 
   return h(CategoryNav, { children }) as unknown as ComponentChildren;
 }

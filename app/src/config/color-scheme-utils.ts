@@ -24,6 +24,8 @@ function schemeToCssPairs(scheme: ColorScheme): string {
     `  --zd-bg: ${resolveColor(p, scheme.background)};`,
     `  --zd-fg: ${resolveColor(p, scheme.foreground)};`,
     `  --zd-cursor: ${resolveColor(p, scheme.cursor)};`,
+    `  --zd-selection-bg: ${resolveColor(p, scheme.selectionBg)};`,
+    `  --zd-selection-fg: ${resolveColor(p, scheme.selectionFg)};`,
     `  --zd-sel-bg: ${resolveColor(p, scheme.selectionBg)};`,
     `  --zd-sel-fg: ${resolveColor(p, scheme.selectionFg)};`,
   ];
