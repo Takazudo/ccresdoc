@@ -19,7 +19,7 @@ WebView → http://localhost:4892/
 Key facts:
 - **Node-free at runtime**: `zfb dev` with zero `.mjs` plugins spawns no Node host. The native `@takazudo/zfb-<platform>/zfb` binary is bundled in `node_modules` (populated at build/setup time via `pnpm install --frozen-lockfile`, Node at setup only).
 - **Port 4892**: pinned in `app/zfb.config.ts` and `src-tauri/tauri.conf.json`.
-- **Writable workspace**: the bundled `app/` tree is copied to `<app_data_dir>/app-workspace/` on first launch, gated by a version token + a `.ccresdoc-workspace-ready` sentinel. The token is the host's compiled `CARGO_PKG_VERSION` (bumped per release → the copy refreshes on upgrade); an optional `version.txt` beside the bundled `app/` overrides it if present. Dev mode uses the repo `app/` directly.
+- **Writable workspace**: a pruned, lockfile-faithful runtime tree is copied to `<app_data_dir>/app-workspace/` on first launch, gated by a generated lockfile/config token + a `.ccresdoc-workspace-ready` sentinel. Dev mode uses the repo `app/` directly.
 - **Rust generator** (`crates/ccresdoc-claude-md`): `generate()` + `watch()` walk `~/.claude/` and emit zudo-doc-compatible MDX. `zfb dev` content-watch HMRs the result.
 
 ## Prerequisites (development only)
@@ -56,8 +56,13 @@ cd app && pnpm exec zfb build
 cargo tauri build
 ```
 
-`beforeBuildCommand` runs `cd app && pnpm install --frozen-lockfile && pnpm exec zfb build` automatically
-(Tauri runs build hooks from the project root) — no global `zfb` on PATH required. Output: `src-tauri/target/release/bundle/macos/CCResDoc.app`.
+`beforeBuildCommand` performs a frozen install/build and stages only the
+lockfile-reachable runtime workspace automatically. The `.app` does not bundle
+frontend test/build tooling, non-host zfb binaries, or disabled Node-plugin
+dependencies. Validate it with `pnpm run probe:runtime-package`; on macOS arm64,
+run `scripts/test-macos-package.sh` for the packaged counterpart. Tauri runs
+build hooks from the project root, and no global `zfb` on PATH is required.
+Output: `src-tauri/target/release/bundle/macos/CCResDoc.app`.
 
 See `.claude/skills/ccresdoc-build/SKILL.md` for the full install workflow (clean → build → verify → kill → install → launch).
 
