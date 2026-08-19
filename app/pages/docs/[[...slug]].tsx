@@ -98,11 +98,9 @@ export function paths(): Array<{
       const slug = entry.id;
       const slugParams = toSlugParams(slug);
       const navSection = detectNavSection(slug);
-      // Extract TOC headings from the raw body using the project's heading-ID
-      // strategy ("flat") so anchor hrefs in the TOC match rendered heading ids.
-      const headings = extractHeadings(entry.body ?? "", {
-        strategy: settings.headingIdStrategy,
-      });
+      // Current zudo-doc heading IDs are always hierarchical, matching the
+      // Markdown pipeline and rendered anchors.
+      const headings = extractHeadings(entry.body ?? "");
       const props: DocPageProps & { params: { slug: string[] } } = {
         slug,
         title: entry.data.title,

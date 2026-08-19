@@ -57,10 +57,9 @@ owns content generation.
 
 ```
 app/
-  zfb.config.ts           — zfb config (port 4892, node-free)
+  zfb.config.ts           — zudoDoc config with a final plugins: [] override
   package.json            — deps: @takazudo/zudo-doc + zfb devDep
-  tsconfig.json           — paths: @/* → src/*
-  zfb-shim.d.ts           — type shims for zfb/config, zfb/content
+  tsconfig.json           — extends zudo-doc's Preact base; paths: @/* → src/*
   pages/
     index.tsx             — home page
     404.tsx               — 404 page
@@ -77,11 +76,8 @@ app/
       _compose-meta-title.ts      — "<page> | CCResDoc" title helper
   src/
     config/
-      settings.ts         — site settings (siteName, colorMode, headerNav, etc.)
-      i18n.ts             — single-locale "en" helpers
-      docs-schema.ts      — Zod schema for docs frontmatter
-      color-schemes.ts    — light/dark color scheme definitions
-      color-scheme-utils.ts — builds ColorSchemeProvider cssText
+      settings.ts         — temporary host-route adapter (removed by issue #96)
+      i18n.ts             — temporary single-locale adapter over package data
     types/
       docs-entry.ts       — DocsEntry interface
       locale.ts           — LocaleLink (single-locale stub)
@@ -100,7 +96,7 @@ app/
         welcome.mdx       — placeholder page (draft: true; excluded from build)
         claude*/          — Wave 2 generated (gitignored — see below)
     styles/
-      global.css          — Tailwind CSS v4 + @theme tokens (from zudo-doc template)
+      global.css          — package CSS imports + CCResDoc accessibility overrides
 ```
 
 ## MDX Content Contract (Wave 2)

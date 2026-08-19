@@ -1,4 +1,4 @@
-import type { DocsData } from "@/config/docs-schema";
+import type { DocsData } from "@takazudo/zudo-doc/docs-schema";
 
 export interface DocsEntry {
   id: string;

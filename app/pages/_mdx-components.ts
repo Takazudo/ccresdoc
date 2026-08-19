@@ -1,14 +1,14 @@
 // MDX component map for CCResDoc doc pages.
 //
 // Maps MDX tag names to Preact components. Includes:
-// - htmlOverrides from @takazudo/zudo-doc/content (heading anchors, styled elements)
+// - defaultComponents from @takazudo/zudo-doc/content (heading anchors, styled elements)
 // - CategoryNav for the claude/index.mdx overview page (Wave 2 generated)
 // - Admonition wrappers for :::note, :::tip, etc.
 // - Stub for Island (SSR pass-through)
 
 import { h } from "preact";
 import type { ComponentChildren } from "preact";
-import { htmlOverrides } from "@takazudo/zudo-doc/content";
+import { defaultComponents } from "@takazudo/zudo-doc/content";
 import { CategoryNav } from "@takazudo/zudo-doc/nav-indexing";
 import type { NavNode } from "@takazudo/zudo-doc/nav-indexing";
 import { withBase } from "@/utils/base";
@@ -128,7 +128,7 @@ function makeAdmonition(variant: string) {
 // ---------------------------------------------------------------------------
 
 export const mdxComponents = {
-  ...htmlOverrides,
+  ...defaultComponents,
   // CategoryNav — used in Wave 2's generated claude/index.mdx
   CategoryNav: CategoryNavWrapper,
   // Admonitions (:::note, :::tip, etc.)

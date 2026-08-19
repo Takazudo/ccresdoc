@@ -13,7 +13,13 @@ import { DocHead } from "@takazudo/zudo-doc/head";
 import ColorSchemeProvider from "@takazudo/zudo-doc/theme/color-scheme-provider";
 import { SIDEBAR_RESIZER_RESTORE_SCRIPT } from "@takazudo/zudo-doc/sidebar-resizer";
 import { settings } from "@/config/settings";
-import { colorSchemeCssText } from "@/config/color-scheme-utils";
+import { generateLightDarkCssProperties } from "@takazudo/zudo-doc/color-scheme-utils";
+import { defaultColorSchemes } from "@takazudo/zudo-doc/color-schemes-defaults";
+
+const colorSchemeCssText = generateLightDarkCssProperties(
+  defaultColorSchemes["Default Light"]!,
+  defaultColorSchemes["Default Dark"]!,
+);
 
 interface HeadWithDefaultsProps {
   title: string;
