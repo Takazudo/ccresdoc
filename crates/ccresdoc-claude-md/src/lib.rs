@@ -19,8 +19,8 @@
 //!   claude-commands/index.mdx   category header (901)
 //!   claude-commands/<name>.mdx  one file per command
 //!   claude-skills/index.mdx     category header (902)
-//!   claude-skills/<dir>.mdx     one file per skill
-//!   claude-skills/<dir>--{ref,script,asset}-<name>.mdx  unlisted skill sub-pages
+//!   claude-skills/<dir>/index.mdx  one page per skill
+//!   claude-skills/<dir>/{ref,script,asset}-<name>.mdx  unlisted skill sub-pages
 //!   claude-agents/index.mdx     category header (903)
 //!   claude-agents/<name>.mdx    one file per agent
 //! ```

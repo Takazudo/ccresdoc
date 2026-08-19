@@ -49,6 +49,10 @@ Key invariants:
 - Output filenames/positions follow the Wave 1 contract: overview 899,
   CLAUDE.md 900, commands 901, skills 902, agents 903; CLAUDE.md pages are
   `global.mdx` / `project-<slug>.mdx`.
+- Skill pages use zudo-doc's hierarchical resource layout:
+  `claude-skills/<dir>/index.mdx` with unlisted reference/script/asset pages as
+  siblings. This keeps relative Markdown links aligned with zfb's route-aware
+  link resolver without explicit `slug` overrides.
 
 ## Dependency graph
 
