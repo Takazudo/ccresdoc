@@ -9,7 +9,8 @@ set -uo pipefail
 # .app's runtime path. The host spawns the native zfb binary from the bundled
 # node_modules/@takazudo/zfb-<platform>/zfb directly — no Node required.
 #
-# Readiness is polled on GET / (the zfb dev root), NOT /___ready.
+# Readiness is polled on GET /docs/ and requires generated navigation, NOT
+# merely a generic 200 and NOT /___ready.
 # The /___ready endpoint no longer exists in the sidecar architecture.
 
 COUNT="${1:-3}"
@@ -37,14 +38,14 @@ for RUN in $(seq 1 "$COUNT"); do
   APP_PATH="${APP_OVERRIDE:-/Applications/CCResDoc.app}"
   open "$APP_PATH"
 
-  # Wait up to 300s for zfb dev to serve the root page.
+  # Wait up to 300s for zfb dev to serve the generated docs shell.
   # Cold first-run can take ~135s (walking + rendering ~135 skills + site build).
-  # Poll GET / — a 200 means zfb dev is up and the site is built.
+  # A stale staged shell can return 200, so require the generator-owned marker.
   OK=0
   for i in $(seq 1 100); do
     sleep 3
-    HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:4892/ 2>/dev/null)
-    if [ "$HTTP" = "200" ]; then
+    HTTP=$(curl -s -o /tmp/ccresdoc-launch-docs.html -w "%{http_code}" http://localhost:4892/docs/ 2>/dev/null)
+    if [ "$HTTP" = "200" ] && grep -Fq "Claude Resources" /tmp/ccresdoc-launch-docs.html; then
       echo "  Run $RUN: PASS (ready at $((i*3))s)"
       OK=1
       PASS=$((PASS + 1))
@@ -61,6 +62,7 @@ done
 # Cleanup
 pkill -f "CCResDoc" || true
 lsof -ti :4892 | xargs kill 2>/dev/null || true
+rm -f /tmp/ccresdoc-launch-docs.html
 
 echo ""
 echo "=== Results: $PASS/$COUNT passed, $FAIL failed ==="

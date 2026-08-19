@@ -12,6 +12,9 @@ PROBE_HOME="$PROBE_DIR/home"
 SENTINEL_DIR="$PROBE_DIR/bin"
 SENTINEL_LOG="$PROBE_DIR/node-invocations.log"
 PROCESS_LOG="$PROBE_DIR/process-samples.log"
+FIXTURE_LABEL="Package Readiness Probe $(basename "$PROBE_DIR")"
+FIXTURE_BODY="Generated package route $(basename "$PROBE_DIR")"
+FIXTURE_ROUTE="http://127.0.0.1:4892/docs/claude-skills/package-readiness-probe/"
 APP_PID=""
 
 cleanup() {
@@ -23,8 +26,14 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$PROBE_HOME/.claude/skills/package-probe" "$SENTINEL_DIR"
-printf '%s\n' '# Package probe' > "$PROBE_HOME/.claude/skills/package-probe/SKILL.md"
+mkdir -p "$PROBE_HOME/.claude/skills/package-readiness-probe" "$SENTINEL_DIR"
+printf '%s\n' \
+  '---' \
+  "name: \"$FIXTURE_LABEL\"" \
+  'description: Proves packaged semantic readiness uses generated content.' \
+  '---' \
+  '' \
+  "$FIXTURE_BODY" > "$PROBE_HOME/.claude/skills/package-readiness-probe/SKILL.md"
 : > "$SENTINEL_LOG"
 cat > "$SENTINEL_DIR/node" <<EOF
 #!/bin/sh
@@ -62,14 +71,19 @@ for RUN in 1 2; do
       echo "plugin host observed during packaged launch" >&2
       exit 1
     fi
-    if [[ "$(curl -s -o "$PROBE_DIR/root.html" -w '%{http_code}' http://127.0.0.1:4892/ || true)" = "200" ]]; then
-      READY=1
-      break
+    if [[ "$(curl -s -o "$PROBE_DIR/docs.html" -w '%{http_code}' http://127.0.0.1:4892/docs/ || true)" = "200" ]] \
+      && grep -Fq "Claude Resources" "$PROBE_DIR/docs.html" \
+      && grep -Fq "$FIXTURE_LABEL" "$PROBE_DIR/docs.html" \
+      && [[ "$(curl -s -o "$PROBE_DIR/fixture.html" -w '%{http_code}' "$FIXTURE_ROUTE" || true)" = "200" ]] \
+      && grep -Fq "$FIXTURE_LABEL" "$PROBE_DIR/fixture.html" \
+      && grep -Fq "$FIXTURE_BODY" "$PROBE_DIR/fixture.html"; then
+        READY=1
+        break
     fi
     sleep 1
   done
   test "$READY" = "1"
-  grep -q "CCResDoc" "$PROBE_DIR/root.html"
+  grep -Fq "CCResDoc" "$PROBE_DIR/docs.html"
   test ! -s "$SENTINEL_LOG"
 
   osascript -e 'tell application id "com.takazudo.ccresdoc" to quit' || kill -TERM "$APP_PID"
