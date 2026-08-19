@@ -48,9 +48,8 @@ const WORKSPACE_READY_FILE: &str = ".ccresdoc-workspace-ready";
 /// Mirrors `@takazudo/zfb/bin/zfb.mjs` exactly (biome's pattern). The native
 /// binary lives at `<pkgDir>/zfb` (`zfb.exe` on Windows) — NEVER the
 /// `node_modules/.bin/zfb` Node-shebang wrapper, which would require Node.
-fn zfb_platform_package() -> Option<&'static str> {
-    // Tauri ships macOS arm64/x64 here; the full map matches the npm wrapper.
-    match (env::consts::OS, env::consts::ARCH) {
+fn zfb_platform_package_for(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
         ("macos", "aarch64") => Some("@takazudo/zfb-darwin-arm64"),
         ("macos", "x86_64") => Some("@takazudo/zfb-darwin-x64"),
         ("linux", "aarch64") => Some("@takazudo/zfb-linux-arm64-gnu"),
@@ -58,6 +57,10 @@ fn zfb_platform_package() -> Option<&'static str> {
         ("windows", "x86_64") => Some("@takazudo/zfb-win32-x64-msvc"),
         _ => None,
     }
+}
+
+fn zfb_platform_package() -> Option<&'static str> {
+    zfb_platform_package_for(env::consts::OS, env::consts::ARCH)
 }
 
 fn zfb_binary_name() -> &'static str {
@@ -232,13 +235,12 @@ impl WorkspaceResolution {
     }
 }
 
-/// Resolve the bundled (read-only) `app/` directory inside `.app` Resources.
-///
-/// Tauri bundles `../app/**` (a `..` traversal relative to `src-tauri/`) under
-/// `Contents/Resources/_up_/app/`. We return the `_up_` parent so callers can
-/// also read the sibling `version.txt`.
+/// Resolve the bundled (read-only) staged runtime workspace inside `.app`
+/// Resources. The build hook creates this deliberately pruned tree; bundling
+/// the repository `app/` directly would ship TypeScript/Vitest and every
+/// optional platform binary.
 fn bundled_resources_app_parent(app: &AppHandle) -> tauri::Result<PathBuf> {
-    Ok(app.path().resource_dir()?.join("_up_"))
+    Ok(app.path().resource_dir()?.join("runtime-workspace"))
 }
 
 /// Resolve a **writable** app-project root.
@@ -333,10 +335,11 @@ fn resolve_workspace(app: &AppHandle, log_path: &str) -> Result<WorkspaceResolut
 
 /// Copy the bundled `src` tree into `dst`, preserving permissions and symlinks.
 ///
-/// The workspace is large (~636MB; ~413MB is `node_modules` of many small
-/// files). A byte-for-byte [`copy_dir_recursive`] of it measured ~41s on cold
-/// first launch, which alone blows the 60s acceptance budget. So on macOS we
-/// prefer **APFS clonefile** (copy-on-write — near-instant, no data is moved):
+/// The workspace contains a large native binary plus many package files. A
+/// byte-for-byte [`copy_dir_recursive`] of the former unpruned tree measured
+/// ~41s on cold first launch, which alone blows the 60s acceptance budget. So
+/// on macOS we prefer **APFS clonefile** (copy-on-write — near-instant, no data
+/// is moved):
 ///
 ///   1. `cp -Rc src/. dst` — `-c` uses `clonefile(2)`, `-R` recurses,
 ///      symlinks are copied as symlinks and permissions preserved (matching
@@ -497,6 +500,23 @@ fn resolve_zfb_binary(workspace: &Path) -> Result<PathBuf, String> {
             "native zfb binary missing at {} — node_modules not installed or platform package absent",
             bin.display()
         ));
+    }
+    if !bin.is_file() {
+        return Err(format!("native zfb path is not a file: {}", bin.display()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&bin)
+            .map_err(|e| format!("inspect native zfb binary {}: {e}", bin.display()))?
+            .permissions()
+            .mode();
+        if mode & 0o111 == 0 {
+            return Err(format!(
+                "native zfb binary is not executable: {}",
+                bin.display()
+            ));
+        }
     }
     Ok(bin)
 }
@@ -1019,10 +1039,7 @@ fn allow_navigation(url: &tauri::Url) -> bool {
                 && url.port() == Some(PORT);
             if !is_local {
                 if let Err(e) = open::that(url.as_str()) {
-                    eprintln!(
-                        "allow_navigation: failed to open {} in OS browser: {e}",
-                        url
-                    );
+                    eprintln!("allow_navigation: failed to open {url} in OS browser: {e}");
                 }
             }
             is_local
@@ -1248,6 +1265,31 @@ mod tests {
     }
 
     #[test]
+    fn zfb_platform_package_preserves_the_five_published_targets() {
+        assert_eq!(
+            zfb_platform_package_for("macos", "aarch64"),
+            Some("@takazudo/zfb-darwin-arm64")
+        );
+        assert_eq!(
+            zfb_platform_package_for("macos", "x86_64"),
+            Some("@takazudo/zfb-darwin-x64")
+        );
+        assert_eq!(
+            zfb_platform_package_for("linux", "aarch64"),
+            Some("@takazudo/zfb-linux-arm64-gnu")
+        );
+        assert_eq!(
+            zfb_platform_package_for("linux", "x86_64"),
+            Some("@takazudo/zfb-linux-x64-gnu")
+        );
+        assert_eq!(
+            zfb_platform_package_for("windows", "x86_64"),
+            Some("@takazudo/zfb-win32-x64-msvc")
+        );
+        assert_eq!(zfb_platform_package_for("windows", "aarch64"), None);
+    }
+
+    #[test]
     fn zfb_binary_name_is_not_the_node_wrapper() {
         // Must be the bare platform binary, never `.bin/zfb` (Node shebang).
         let name = zfb_binary_name();
@@ -1261,6 +1303,30 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         let res = resolve_zfb_binary(&tmp);
         assert!(res.is_err(), "missing node_modules should error");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_zfb_binary_rejects_a_non_executable_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp =
+            std::env::temp_dir().join(format!("ccresdoc-test-nonexec-zfb-{}", std::process::id()));
+        let binary = tmp
+            .join("node_modules")
+            .join(zfb_platform_package().unwrap())
+            .join(zfb_binary_name());
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        std::fs::write(&binary, b"not executable").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let error = resolve_zfb_binary(&tmp).expect_err("non-executable binary must fail");
+        assert!(
+            error.contains("not executable"),
+            "unexpected error: {error}"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -1320,21 +1386,25 @@ mod tests {
     }
 
     #[test]
-    fn tauri_conf_bundles_app_project_not_dist_only() {
-        // The writable workspace copy needs the whole app/ (incl. node_modules),
-        // so resources must bundle ../app/** — not just ../app/dist/**.
+    fn tauri_conf_bundles_only_the_staged_runtime_workspace() {
         let conf = read_tauri_conf();
         let resources = conf["bundle"]["resources"].clone();
-        let bundles_app = match &resources {
-            serde_json::Value::String(s) => s.contains("app/"),
-            serde_json::Value::Array(arr) => arr
-                .iter()
-                .any(|v| v.as_str().map(|s| s.contains("app/")).unwrap_or(false)),
+        let bundles_runtime = match &resources {
+            serde_json::Value::String(s) => s.contains("runtime-workspace/"),
+            serde_json::Value::Array(arr) => arr.iter().any(|v| {
+                v.as_str()
+                    .map(|s| s.contains("runtime-workspace/"))
+                    .unwrap_or(false)
+            }),
             _ => false,
         };
         assert!(
-            bundles_app,
-            "bundle.resources should include ../app/**, got: {resources}"
+            bundles_runtime,
+            "bundle.resources should include runtime-workspace/**, got: {resources}"
+        );
+        assert!(
+            !resources.to_string().contains("../app"),
+            "bundle.resources must not ship the unpruned app tree: {resources}"
         );
     }
 

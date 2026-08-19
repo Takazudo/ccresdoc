@@ -53,6 +53,9 @@ jobs:
       - name: Native zfb build
         run: pnpm --dir app exec zfb build
 
+      - name: Pruned runtime workspace lifecycle
+        run: pnpm run probe:runtime-package
+
   checks:
     name: Rust checks
     runs-on: ubuntu-latest
