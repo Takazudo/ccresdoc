@@ -18,6 +18,9 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const stagedRoot = join(repoRoot, "src-tauri", "runtime-workspace");
 const manifest = JSON.parse(readFileSync(join(stagedRoot, "runtime-manifest.json"), "utf8"));
+const sourceThemeCatalog = JSON.parse(
+  readFileSync(join(repoRoot, "app", "public", "theme-packs", "index.json"), "utf8"),
+);
 const probeRoot = mkdtempSync(join(tmpdir(), "ccresdoc-tauri-runtime-"));
 const workspace = join(probeRoot, "app-workspace");
 const sentinelDir = join(probeRoot, "sentinel-bin");
@@ -25,6 +28,7 @@ const sentinelLog = join(probeRoot, "node-invocations.log");
 const processSamples = [];
 let processSampleFailure;
 const port = 4892;
+const fontUrlPattern = /url\(\s*(["']?)([^"')]+)\1\s*\)/g;
 
 cpSync(join(stagedRoot, "app"), workspace, { recursive: true, dereference: true });
 mkdirSync(sentinelDir);
@@ -61,6 +65,47 @@ async function fetchUntil(path, marker, attempts = 240) {
     await delay(250);
   }
   throw new Error(`timed out waiting for ${path} to contain ${JSON.stringify(marker)}`);
+}
+
+async function fetchOk(path) {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`);
+  const body = await response.text();
+  assert.equal(response.ok, true, `${path} returned HTTP ${response.status}`);
+  return body;
+}
+
+async function assertThemeAssetParity() {
+  // The staged manifest and served index must describe the same current
+  // catalog. Do not use a pack count here: adding/removing a published pack
+  // must exercise this probe without a test edit.
+  assert.equal(manifest.themeAssets.packs, sourceThemeCatalog.packs.length);
+  assert.deepEqual(JSON.parse(await fetchOk("/theme-packs/index.json")), sourceThemeCatalog);
+  let servedFiles = 1; // index.json
+
+  for (const pack of sourceThemeCatalog.packs) {
+    if (pack.slug === "default") continue;
+    const css = await fetchOk(`/theme-packs/${pack.slug}/pack.css?v=${encodeURIComponent(pack.version)}`);
+    servedFiles += 1;
+    const referencedFonts = new Set();
+    for (const match of css.matchAll(fontUrlPattern)) {
+      const url = match[2].trim();
+      if (url.startsWith("data:") || url.startsWith("#")) continue;
+      assert.match(url, /^\.\/fonts\/[A-Za-z0-9._-]+$/, `${pack.slug} has an unsafe font URL`);
+      referencedFonts.add(url.slice(2));
+    }
+    for (const font of referencedFonts) {
+      await fetchOk(`/theme-packs/${pack.slug}/${font}`);
+      servedFiles += 1;
+    }
+    // Every generated font-bearing pack must expose the families its catalog
+    // metadata promises. The CSS check catches a stale index/CSS pair even if
+    // all the files happen to be present.
+    for (const family of pack.fonts.loaded) {
+      const escaped = family.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      assert.match(css, new RegExp(`font-family:\\s*["']${escaped}["']`));
+    }
+  }
+  assert.equal(manifest.themeAssets.files, servedFiles, "served theme asset count must match the staged manifest");
 }
 
 async function stop(child) {
@@ -111,13 +156,35 @@ async function runOnce({ hmr }) {
     }
   }, 100);
   try {
-    const home = await fetchUntil("/", "CCResDoc");
+    const home = await fetchUntil("/", "Claude Code Resources");
     assert.match(home, /data-zfb-island=/, "representative SSR page must include hydrated islands");
+    assert.doesNotMatch(home, /data-home-page|>Claude<\/a/, "the root alias must not render marketing or Claude nav chrome");
+    assert.match(home, /<a[^>]*(?:href=(?:\/docs\/|\"\/docs\/\")[^>]*data-header-logo|data-header-logo(?:=true|=\"true\")[^>]*href=(?:\/docs\/|\"\/docs\/\"))/, "root alias must link its logo to /docs/");
     const assets = home.match(/\/assets\/[A-Za-z0-9._-]+/g) ?? [];
     assert.ok(assets.length > 0, "representative SSR route must reference packaged assets");
 
     const docs = await fetchUntil("/docs/", "Claude Code Resources");
+    for (const [signal, pattern] of [
+      ["Claude Code Resources", /Claude Code Resources/],
+      ["data-header-logo", /data-header-logo/],
+      ["data-theme-pack", /data-theme-pack/],
+      ["ThemePackSwitcher", /data-zfb-island(?:=ThemePackSwitcher|=\"ThemePackSwitcher\")/],
+    ]) {
+      assert.match(home, pattern, `root and /docs/ must share ${signal}`);
+      assert.match(docs, pattern, `root and /docs/ must share ${signal}`);
+    }
     assert.match(docs, /data-zfb-island=/, "docs route must preserve hydration markers");
+    assert.match(docs, /Choose a resource category below\./, "first accepted docs response must contain the populated landing content");
+    assert.match(docs, /<a[^>]*(?:href=(?:\/docs\/|\"\/docs\/\")[^>]*data-header-logo|data-header-logo(?:=true|=\"true\")[^>]*href=(?:\/docs\/|\"\/docs\/\"))/, "docs logo must link to /docs/");
+    assert.match(docs, /data-header-nav(?:=true|=\"true\")/, "docs shell must expose its header nav seam");
+    assert.doesNotMatch(docs, /<[^>]*data-nav-item(?:=|\s|>)[^>]*>|>Claude<\/a/, "header nav must be empty and must not contain Claude");
+    const headerNav = docs.match(/<nav[^>]*data-header-nav[^>]*>([\s\S]*?)<\/nav>/);
+    assert.ok(headerNav, "docs shell must include a header nav element");
+    assert.doesNotMatch(headerNav[1], /<a\b|<li\b/, "header nav must not contain links or list items");
+    assert.match(docs, /data-theme-pack(?:=default|=\"default\")/, "docs shell must bootstrap the default theme pack");
+    assert.match(docs, /data-zfb-island(?:=ThemePackSwitcher|=\"ThemePackSwitcher\")/, "docs shell must hydrate the theme-pack switcher");
+    assert.match(docs, /data-zd-theme-pack-loading|zudo-doc-theme-pack/, "docs shell must include no-flash theme bootstrap");
+    await assertThemeAssetParity();
     const missing = await fetch(`http://127.0.0.1:${port}/definitely-missing/`);
     assert.equal(missing.status, 404, "missing routes must return the host-owned 404 response");
     await missing.text();
