@@ -6,7 +6,7 @@ This repo uses zfb (Rust SSG orchestrator at `$HOME/repos/myoss/zfb`) for the fr
 
 ## Key architecture facts (claim checklist)
 
-- `node_modules` is populated at **setup/build time only** via `pnpm install` (Node at setup only — NOT at runtime).
+- `node_modules` is populated at **setup/build time only** via `pnpm install --frozen-lockfile` (Node at setup only — NOT at runtime).
 - The host resolves the **native** zfb binary at `<workspace>/node_modules/@takazudo/zfb-<platform>/zfb` — NOT the `.bin/zfb` Node-shebang wrapper.
 - **Port 4892**: pinned in `app/zfb.config.ts` and `src-tauri/tauri.conf.json`.
 - **Node-free at runtime**: `zfb dev` with zero `.mjs` plugins spawns no Node host process.

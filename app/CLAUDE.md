@@ -5,18 +5,22 @@ zudo-doc consumer project built by zfb. Output in `dist/` is served by `zfb dev`
 ## Architecture
 
 - **Framework**: Preact + zfb SSG
-- **Package**: `@takazudo/zfb@0.1.0-next.78` (binary) + `@takazudo/zudo-doc@^3.2.0` (components)
+- **Package**: `@takazudo/zfb@2.7.1` (binary) + `@takazudo/zudo-doc@5.6.0` (components)
 - **Port**: 4892 (pinned in `zfb.config.ts`)
 - **Node-free mode**: Zero `.mjs` plugins → no `plugin-host.mjs` spawned
 - **Collections**: single `"docs"` collection at `src/content/docs/`
 
 ## Build
 
-`node_modules` must be populated at setup time via `pnpm install` (Node at setup only — not at runtime). Build/dev checks may use `pnpm exec zfb`, whose package wrapper spawns the native `@takazudo/zfb-<platform>/zfb` binary. The Tauri runtime must resolve that native binary directly — do NOT use `node_modules/.bin/zfb`, which is a Node-shebang wrapper that requires Node at runtime.
+`node_modules` must be populated at setup time via `pnpm install --frozen-lockfile` (Node at setup only — not at runtime). Build/dev checks may use `pnpm exec zfb`, whose package wrapper spawns the native `@takazudo/zfb-<platform>/zfb` binary. The Tauri runtime must resolve that native binary directly — do NOT use `node_modules/.bin/zfb`, which is a Node-shebang wrapper that requires Node at runtime.
 
 ```sh
 cd app
-pnpm install          # once — populates node_modules incl. native zfb binary
+pnpm install --frozen-lockfile  # once — populates node_modules incl. native zfb binary
+pnpm run validate:dependencies  # manifest/lock/installed-tree contract
+pnpm run typecheck
+pnpm run check:zfb
+pnpm run test:run
 pnpm exec zfb build   # setup/build check: wrapper spawns native binary
 ```
 
@@ -41,62 +45,46 @@ single-source mechanism in JSON; `scripts/check-zfb-pin.sh` is the enforcement g
 (run by `scripts/run-b4push.sh` step 1). When bumping the pin, update every
 `@takazudo/zfb*` entry simultaneously.
 
-### @takazudo/zfb-adapter-cloudflare
-This dep is a peer/runtime requirement imposed by zfb itself: zfb requires an adapter
-to be declared even for local dev/build targets. The Cloudflare adapter is the
-supported default for zudo-doc consumers. It does NOT mean the app is deployed to
-Cloudflare — at runtime the Tauri host uses `zfb dev` locally with no adapter code
-executed.
+### Published toolchain contract
+The first-party zfb packages and all five native platform packages are pinned to
+`2.7.1`; zudo-doc is pinned to `5.6.0`. Reachable runtime peers are pinned to
+`preact@10.29.1`, `preact-render-to-string@6.6.7`, `zod@4.3.6`, and `katex@0.16.22`.
+The Cloudflare adapter and legacy local Markdown mirrors are intentionally absent:
+zudo-doc supplies the selected Markdown pipeline while CCResDoc's Rust generator
+owns content generation.
 
 ## Structure
 
 ```
 app/
-  zfb.config.ts           — zfb config (port 4892, node-free)
+  zfb.config.ts           — zudoDoc config with a final plugins: [] override
   package.json            — deps: @takazudo/zudo-doc + zfb devDep
-  tsconfig.json           — paths: @/* → src/*
-  zfb-shim.d.ts           — type shims for zfb/config, zfb/content
+  tsconfig.json           — extends zudo-doc's Preact base; paths: @/* → src/*
   pages/
     index.tsx             — home page
     404.tsx               — 404 page
-    _data.ts              — zfb collection → DocsEntry bridge
-    _mdx-components.ts    — MDX component map (CategoryNav, admonitions, etc.)
     docs/
       [[...slug]].tsx     — catch-all docs route
     lib/
-      _head-with-defaults.tsx     — <head> slot with ColorSchemeProvider
-      _header-with-defaults.tsx   — site header wrapper
-      _footer-with-defaults.tsx   — minimal footer wrapper
-      _sidebar-with-defaults.tsx  — SidebarTree island wrapper
-      _body-end-islands.tsx       — ClientRouterBootstrap island
-      _compose-meta-title.ts      — "<page> | CCResDoc" title helper
+      _route-context.ts   — serializable host payload → zudo-doc RouteContext
+      _chrome.ts          — one createChrome() seam shared by host routes
   src/
     config/
-      settings.ts         — site settings (siteName, colorMode, headerNav, etc.)
-      i18n.ts             — single-locale "en" helpers
-      docs-schema.ts      — Zod schema for docs frontmatter
-      color-schemes.ts    — light/dark color scheme definitions
-      color-scheme-utils.ts — builds ColorSchemeProvider cssText
-    types/
-      docs-entry.ts       — DocsEntry interface
-      locale.ts           — LocaleLink (single-locale stub)
-    utils/
-      base.ts             — withBase, stripBase, navHref, docsUrl
-      slug.ts             — toRouteSlug, toSlugParams
-      docs.ts             — NavNode type + buildNavTree (SidebarNode → NavNode bridge)
-      smart-break.tsx     — smart word-break for path-like labels
-    components/
-      sidebar-tree.tsx    — SidebarTree island (filter + tree nav)
-      sidebar-toggle.tsx  — mobile hamburger + slide-in aside
-      tree-nav-shared.tsx — connector lines, icons shared by sidebar components
-      client-router-bootstrap.tsx — SPA router activation island
+      settings.ts         — shared typed settings for config and host routes
     content/
       docs/               — MDX content root
+        index.mdx         — routed resource-category landing page
         welcome.mdx       — placeholder page (draft: true; excluded from build)
         claude*/          — Wave 2 generated (gitignored — see below)
     styles/
-      global.css          — Tailwind CSS v4 + @theme tokens (from zudo-doc template)
+      global.css          — package CSS imports + CCResDoc accessibility overrides
 ```
+
+Sidebar/tree rendering, mobile and desktop toggles, path-aware labels, active
+route tracking, filtering, and connector geometry come directly from the public
+`@takazudo/zudo-doc` navigation entry points. Do not add host copies of those
+components; see `docs/architecture/sidebar-navigation.md` for the ownership and
+accessibility contract.
 
 ## MDX Content Contract (Wave 2)
 
@@ -149,22 +137,21 @@ path is NOT emitted as a docs page.
 
 ### Claude overview page
 
-`claude/index.mdx` includes a `<CategoryNav>` component that renders
-the category cards:
+The checked-in routed `docs/index.mdx` includes a `<CategoryNav>` component
+that renders category cards. Generated `claude*/index.mdx` files remain
+`category_no_page` metadata and do not emit routes:
 
 ```mdx
 ---
-title: Claude Resources
-sidebar_position: 899
-category_no_page: true
-generated: true
+title: Claude Code Resources
+description: Browse generated Claude Code resources.
 ---
 
 <CategoryNav categories={["claude-md", "claude-commands", "claude-skills", "claude-agents"]} />
 ```
 
-The `CategoryNavWrapper` in `pages/_mdx-components.ts` resolves the
-slug strings to `NavNode[]` from the built sidebar tree.
+The wrapper produced by zudo-doc's MDX factory resolves those slug strings
+against the current package-owned navigation tree.
 
 ### Route building
 

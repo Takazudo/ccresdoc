@@ -3,41 +3,46 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.30.3",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
   "description": "CCResDoc zudo-doc consumer — built by zfb, served node-free by `zfb dev` (port 4892) under the Tauri sidecar host",
   "scripts": {
     "dev": "zfb dev",
     "build": "zfb build",
     "preview": "zfb preview",
-    "zfb": "zfb"
+    "zfb": "zfb",
+    "validate:dependencies": "node ../scripts/validate-dependencies.mjs --installed",
+    "typecheck": "tsc --noEmit",
+    "check:zfb": "zfb check",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "check": "pnpm run validate:dependencies && pnpm run typecheck && pnpm run check:zfb && pnpm run test:run"
   },
   "dependencies": {
-    "@takazudo/zfb": "0.1.0-next.78",
-    "@takazudo/zfb-adapter-cloudflare": "0.1.0-next.78",
-    "@takazudo/zfb-runtime": "0.1.0-next.78",
-    "@takazudo/zudo-doc": "^3.2.0",
-    "clsx": "^2.1.1",
-    "gray-matter": "^4.0.0",
-    "katex": "^0.16.38",
-    "mermaid": "^11.12.3",
-    "preact": "^10.29.1",
-    "preact-render-to-string": "^6.6.6",
-    "remark-cjk-friendly": "^2.0.1",
-    "remark-directive": "^3.0.0",
-    "zod": "^4.3.6"
+    "@takazudo/zfb": "2.7.1",
+    "@takazudo/zfb-md-wasm": "2.7.1",
+    "@takazudo/zfb-runtime": "2.7.1",
+    "@takazudo/zudo-doc": "5.6.0",
+    "katex": "0.16.22",
+    "preact": "10.29.1",
+    "preact-render-to-string": "6.6.7",
+    "zod": "4.3.6"
   },
   "optionalDependencies": {
-    "@takazudo/zfb-darwin-arm64": "0.1.0-next.78",
-    "@takazudo/zfb-darwin-x64": "0.1.0-next.78",
-    "@takazudo/zfb-linux-arm64-gnu": "0.1.0-next.78",
-    "@takazudo/zfb-linux-x64-gnu": "0.1.0-next.78",
-    "@takazudo/zfb-win32-x64-msvc": "0.1.0-next.78"
+    "@takazudo/zfb-darwin-arm64": "2.7.1",
+    "@takazudo/zfb-darwin-x64": "2.7.1",
+    "@takazudo/zfb-linux-arm64-gnu": "2.7.1",
+    "@takazudo/zfb-linux-x64-gnu": "2.7.1",
+    "@takazudo/zfb-win32-x64-msvc": "2.7.1"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.2.0",
-    "@types/node": "^22.0.0",
-    "@types/react": "^19.2.0",
-    "html-validate": "^10.0.0",
-    "tailwindcss": "^4.2.0",
-    "typescript": "^5.6.0"
+    "@tailwindcss/vite": "4.2.0",
+    "happy-dom": "20.7.0",
+    "tailwindcss": "4.2.0",
+    "typescript": "5.9.2",
+    "vitest": "4.0.17"
   }
 }

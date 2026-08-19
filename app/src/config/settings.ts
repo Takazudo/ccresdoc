@@ -1,21 +1,15 @@
-// CCResDoc site settings — minimal zudo-doc consumer configuration.
-//
-// No i18n, no versions, no search plugin, no doc-history, no tags.
-// All content generation is handled by the Rust sidecar (Wave 2 / Wave 3).
+// Serializable product settings for the plugin-free host route context.
+// zudo-doc owns the behavior; CCResDoc owns only these product choices.
 
+import { DEFAULT_SETTINGS } from "@takazudo/zudo-doc/config";
 import type {
   HeaderNavItem,
   HeaderRightItem,
-} from "@takazudo/zudo-doc/header";
-
-export interface ColorModeConfig {
-  defaultMode: "light" | "dark";
-  lightScheme: string;
-  darkScheme: string;
-  respectPrefersColorScheme: boolean;
-}
+  Settings,
+} from "@takazudo/zudo-doc/settings";
 
 export const settings = {
+  ...DEFAULT_SETTINGS,
   siteName: "CCResDoc",
   siteDescription: "Browse Claude Code resources from your local ~/.claude/",
   base: "/",
@@ -39,32 +33,33 @@ export const settings = {
     lightScheme: "Default Light",
     darkScheme: "Default Dark",
     respectPrefersColorScheme: true,
-  } as ColorModeConfig | false,
+  },
   // Sidebar resizer — drag the desktop sidebar's right edge to resize it
   // (width persisted in localStorage; client-side only, node-free).
   sidebarResizer: true,
   // Sidebar toggle for mobile
   sidebarToggle: true,
+  dynamicPageTransition: true,
+  findInPage: true,
   // Simple footer (no link columns, just copyright)
   footer: {
     links: [] as Array<{ title: string; items: Array<{ label: string; href: string }> }>,
     copyright: `Copyright © ${new Date().getFullYear()} CCResDoc`,
-  } as { links: Array<{ title: string; items: Array<{ label: string; href: string }> }>; copyright?: string } | false,
+  },
   // Header nav — link to the claude docs overview section
   headerNav: [
-    { label: "Claude", path: "/docs/claude", categoryMatch: "claude" },
+    { label: "Claude", path: "/docs", categoryMatch: "claude" },
   ] as HeaderNavItem[],
   headerRightItems: [
     { type: "component", component: "theme-toggle" },
   ] as HeaderRightItem[],
   // No default-locale-only paths (no i18n)
   defaultLocaleOnlyPrefixes: [] as string[],
-  // Heading ID strategy: flat (simpler for auto-generated content)
-  headingIdStrategy: "flat" as "flat" | "hierarchical",
   // No image enlarge
   imageEnlarge: false,
   // No HTML preview
   htmlPreview: undefined,
   // No frontmatter preview
   frontmatterPreview: false as false,
-};
+  packageOwnedRoutes: false,
+} satisfies Settings;

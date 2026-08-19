@@ -1,0 +1,74 @@
+{
+  "wholesale": {
+    "checkStatus": 0,
+    "buildStatus": 1,
+    "nodeInvocationsDuringBuild": 1,
+    "nodeInvocationArgs": [
+      "--enable-source-maps <zfb-plugin-host>/plugin-host.mjs"
+    ],
+    "checkTail": [
+      "info running <isolated-workspace>/node_modules/.bin/tsc --noEmit",
+      "✓ checked 1 collection and tsc — no errors"
+    ],
+    "buildTail": [
+      "info package route `/404` → pages/404.tsx",
+      "info package route `/sitemap.xml` → pages/sitemap.xml.tsx",
+      "info package route `/robots.txt` → pages/robots.txt.tsx",
+      "info package route `/docs/[[...slug]]` → pages/docs/[[...slug]].tsx",
+      "✗ error: bundler step failed",
+      "  caused by: bundler: esbuild exited with status exit status: 1: ✘ [ERROR] Could not resolve \"diff\"",
+      "",
+      "    ../..<probe-root>/node_modules/@takazudo/zudo-doc/dist/doc-history/index.js:97:37:",
+      "      97 │   const { diffLines } = await import(\"diff\");",
+      "         ╵                                      ~~~~~~",
+      "",
+      "  You can mark the path \"diff\" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle. You can also add \".catch()\" here to handle this failure at run-time instead of bundle-time."
+    ]
+  },
+  "routes-off": {
+    "checkStatus": 0,
+    "buildStatus": 0,
+    "nodeInvocationsDuringBuild": 1,
+    "nodeInvocationArgs": [
+      "--enable-source-maps <zfb-plugin-host>/plugin-host.mjs"
+    ],
+    "checkTail": [
+      "zudo-doc: packageOwnedRoutes is off but doc content is configured — no doc routes will be injected; the build will produce only host pages/. Set packageOwnedRoutes: true in settings.",
+      "info running <isolated-workspace>/node_modules/.bin/tsc --noEmit",
+      "✓ checked 1 collection and tsc — no errors"
+    ],
+    "buildTail": [
+      "zudo-doc: packageOwnedRoutes is off but doc content is configured — no doc routes will be injected; the build will produce only host pages/. Set packageOwnedRoutes: true in settings.",
+      "✓ 2 pages built in <duration>",
+      "zfb info: [plugin:search-index] Generated search index with 1 entries"
+    ]
+  },
+  "selected": {
+    "checkStatus": 0,
+    "buildStatus": 0,
+    "nodeInvocationsDuringBuild": 0,
+    "nodeInvocationArgs": [],
+    "checkTail": [
+      "zudo-doc: packageOwnedRoutes is off but doc content is configured — no doc routes will be injected; the build will produce only host pages/. Set packageOwnedRoutes: true in settings.",
+      "info running <isolated-workspace>/node_modules/.bin/tsc --noEmit",
+      "✓ checked 1 collection and tsc — no errors"
+    ],
+    "buildTail": [
+      "zudo-doc: packageOwnedRoutes is off but doc content is configured — no doc routes will be injected; the build will produce only host pages/. Set packageOwnedRoutes: true in settings.",
+      "✓ 2 pages built in <duration>"
+    ]
+  },
+  "manual": {
+    "checkStatus": 0,
+    "buildStatus": 0,
+    "nodeInvocationsDuringBuild": 0,
+    "nodeInvocationArgs": [],
+    "checkTail": [
+      "info running <isolated-workspace>/node_modules/.bin/tsc --noEmit",
+      "✓ checked 1 collection and tsc — no errors"
+    ],
+    "buildTail": [
+      "✓ 2 pages built in <duration>"
+    ]
+  }
+}

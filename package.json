@@ -2,11 +2,25 @@
   "name": "ccresdoc",
   "version": "0.0.1",
   "private": true,
+  "packageManager": "pnpm@10.30.3",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
   "scripts": {
     "dev": "pnpm -C app run dev",
     "build": "pnpm -C app run build",
     "app:dev": "cargo tauri dev",
     "app:build": "cargo tauri build",
-    "b4push": "./scripts/run-b4push.sh"
+    "b4push": "./scripts/run-b4push.sh",
+    "check:dependencies": "bash scripts/check-zfb-pin.sh && pnpm -C app run validate:dependencies",
+    "check:types": "pnpm -C app run typecheck",
+    "check:zfb": "pnpm -C app run check:zfb",
+    "test:frontend": "pnpm -C app run test:run",
+    "check:frontend": "pnpm -C app run check",
+    "check:compatibility": "bash scripts/check-node-free-compatibility.sh",
+    "stage:runtime": "node scripts/stage-runtime-workspace.mjs",
+    "check:runtime-package": "node scripts/stage-runtime-workspace.mjs && node scripts/verify-runtime-workspace.mjs",
+    "probe:runtime-package": "pnpm run check:runtime-package && node scripts/probe-tauri-runtime.mjs"
   }
 }

@@ -3,9 +3,9 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    branches: [main, "base/ccresdoc-zudo-doc-rewrite"]
+    branches: [main, "base/**"]
   push:
-    branches: [main, "base/ccresdoc-zudo-doc-rewrite"]
+    branches: [main]
 
 concurrency:
   group: ci-${{ github.head_ref || github.ref }}
@@ -15,6 +15,50 @@ permissions:
   contents: read
 
 jobs:
+  frontend:
+    name: Frontend published-toolchain gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # The app intentionally consumes the npm-published native zfb package.
+      # No private sibling checkout or local upstream build is required.
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 10.30.3
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Install app dependencies (frozen)
+        run: pnpm --dir app install --frozen-lockfile
+
+      - name: Validate package and installed-tree pins
+        run: pnpm --dir app run validate:dependencies
+
+      - name: Strict TypeScript
+        run: pnpm --dir app run typecheck
+
+      - name: zfb check
+        run: pnpm --dir app run check:zfb
+
+      - name: Frontend tests
+        run: pnpm --dir app run test:run
+
+      - name: Native zfb build
+        run: pnpm --dir app exec zfb build
+
+      - name: Pruned runtime workspace lifecycle
+        run: pnpm run probe:runtime-package
+
+      - name: Frozen zero-plugin compatibility fixture
+        run: pnpm run check:compatibility
+
   checks:
     name: Rust checks
     runs-on: ubuntu-latest
@@ -42,13 +86,3 @@ jobs:
 
       - name: cargo test --workspace --exclude ccresdoc
         run: cargo test --workspace --exclude ccresdoc
-
-# NOTE: `zfb build` (app/ frontend) is deferred from CI (v1).
-#
-# The app build requires the `zfb` Rust binary — installed from
-# $HOME/repos/myoss/zfb, which is a separate private repo not available
-# on CI runners. The Rust checks (fmt + clippy + test) cover the core
-# library code. The app build is verified locally via `bash scripts/run-b4push.sh`
-# (which runs `pnpm install` then `pnpm exec zfb build`) before every push,
-# and is exercised end-to-end by `cargo tauri build` before each release.
-# Re-enable once zfb is published to crates.io.

@@ -1,0 +1,11 @@
+{
+  "extends": "@takazudo/zudo-doc/tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": ["pages/**/*", "src/**/*", "zfb.config.ts"],
+  "exclude": ["dist", "node_modules"]
+}

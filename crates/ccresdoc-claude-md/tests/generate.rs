@@ -39,6 +39,21 @@ fn config_for(claude_dir: &Path, docs_dir: &Path) -> Config {
     }
 }
 
+fn representative_fixture() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/representative")
+}
+
+fn generated_files(root: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<_> = walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .map(|entry| entry.into_path())
+        .collect();
+    files.sort();
+    files
+}
+
 // ---------------------------------------------------------------------------
 // CLAUDE.md hierarchy → claude-md/{global,project-*}.mdx
 // ---------------------------------------------------------------------------
@@ -113,7 +128,7 @@ fn commands_emit_one_file_each_with_description() {
 }
 
 // ---------------------------------------------------------------------------
-// Skills → claude-skills/<dir>.mdx + unlisted sub-pages
+// Skills → claude-skills/<dir>/index.mdx + unlisted sibling sub-pages
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -146,7 +161,7 @@ fn skills_emit_page_tree_and_subpages() {
     let report = generate(&config_for(&claude, &docs)).unwrap();
     assert_eq!(report.skills, 1);
 
-    let skill = read(&docs.join("claude-skills/my-skill.mdx"));
+    let skill = read(&docs.join("claude-skills/my-skill/index.mdx"));
     assert!(skill.contains("title: \"My Skill\""));
     assert!(skill.contains("## File Structure"));
     // File tree lists both md and binary scripts + the reference.
@@ -160,20 +175,20 @@ fn skills_emit_page_tree_and_subpages() {
     assert!(skill.contains("[references/ref-a.md](./ref-ref-a)"));
     assert!(skill.contains("[scripts/run.md](./script-run)"));
 
-    // Unlisted reference sub-page with custom slug.
-    let ref_page = read(&docs.join("claude-skills/my-skill--ref-ref-a.mdx"));
-    assert!(ref_page.contains("slug: \"claude-skills/my-skill/ref-ref-a\""));
+    // Unlisted reference sub-page with a route derived from its nested path.
+    let ref_page = read(&docs.join("claude-skills/my-skill/ref-ref-a.mdx"));
+    assert!(!ref_page.contains("slug:"));
     assert!(ref_page.contains("unlisted: true"));
     assert!(ref_page.contains("Reference content."));
 
     // Unlisted markdown-script sub-page.
-    let script_page = read(&docs.join("claude-skills/my-skill--script-run.mdx"));
-    assert!(script_page.contains("slug: \"claude-skills/my-skill/script-run\""));
+    let script_page = read(&docs.join("claude-skills/my-skill/script-run.mdx"));
+    assert!(!script_page.contains("slug:"));
     assert!(script_page.contains("Script body."));
 
     // No sub-page for the binary script.
     assert!(!docs
-        .join("claude-skills/my-skill--script-run.sh.mdx")
+        .join("claude-skills/my-skill/script-run.sh.mdx")
         .exists());
 
     let idx = read(&docs.join("claude-skills/index.mdx"));
@@ -193,7 +208,7 @@ fn skill_description_truncated_to_200_chars() {
     );
 
     generate(&config_for(&claude, &docs)).unwrap();
-    let page = read(&docs.join("claude-skills/big.mdx"));
+    let page = read(&docs.join("claude-skills/big/index.mdx"));
     // 200 'x' + "..." should be present, but not the full 300.
     assert!(page.contains(&format!("{}...", "x".repeat(200))));
     assert!(!page.contains(&"x".repeat(201)));
@@ -220,8 +235,8 @@ fn skill_without_frontmatter_is_skipped() {
         report.skills, 1,
         "skill lacking frontmatter must be skipped"
     );
-    assert!(docs.join("claude-skills/has-fm.mdx").exists());
-    assert!(!docs.join("claude-skills/no-fm.mdx").exists());
+    assert!(docs.join("claude-skills/has-fm/index.mdx").exists());
+    assert!(!docs.join("claude-skills/no-fm/index.mdx").exists());
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +289,113 @@ fn overview_index_lists_only_generated_categories() {
     assert!(overview.contains("category_no_page: true"));
     // Only claude-md and claude-agents present; in contract order.
     assert!(overview.contains(r#"<CategoryNav categories={["claude-md","claude-agents"]} />"#));
+}
+
+#[test]
+fn representative_fixture_matches_latest_zudo_doc_resource_contract() {
+    let out = tempfile::TempDir::new().unwrap();
+    let fixture = representative_fixture();
+
+    let report = generate(&config_for(&fixture, out.path())).unwrap();
+    assert_eq!(report.claude_md, 2);
+    assert_eq!(report.commands, 1);
+    assert_eq!(report.skills, 1);
+    assert_eq!(report.agents, 1);
+
+    // Category metadata is ordered and remains navigation-only. zudo-doc 5.6
+    // excludes these entries from routes while retaining them in the nav tree.
+    for (category, position) in [
+        ("claude", 899),
+        ("claude-md", 900),
+        ("claude-commands", 901),
+        ("claude-skills", 902),
+        ("claude-agents", 903),
+    ] {
+        let index = read(&out.path().join(category).join("index.mdx"));
+        assert!(index.contains(&format!("sidebar_position: {position}")));
+        assert!(index.contains("category_no_page: true"));
+        assert!(index.contains("generated: true"));
+    }
+
+    let overview = read(&out.path().join("claude/index.mdx"));
+    assert!(overview.contains(
+        r#"<CategoryNav categories={["claude-md","claude-commands","claude-skills","claude-agents"]} />"#
+    ));
+
+    // Skill pages and their unlisted resources use the hierarchical on-disk
+    // layout required by zfb's route-aware relative-link resolver.
+    let skill = read(&out.path().join("claude-skills/fixture-skill/index.mdx"));
+    assert!(skill.contains("[the reference](./ref-contract)"));
+    assert!(skill.contains("[the script](./script-check)"));
+    assert!(skill.contains("[the asset](./asset-example)"));
+    assert_eq!(skill.matches("## Duplicate heading").count(), 2);
+    assert!(!out.path().join("claude-skills/fixture-skill.mdx").exists());
+
+    for subpage in ["ref-contract.mdx", "script-check.mdx", "asset-example.mdx"] {
+        let content = read(&out.path().join("claude-skills/fixture-skill").join(subpage));
+        assert!(content.contains("unlisted: true"));
+        assert!(content.contains("generated: true"));
+        assert!(!content.contains("slug:"));
+    }
+
+    // Flattened CLAUDE.md pages cannot serve repository files. Current
+    // zudo-doc downgrades those dangling links while preserving resolvable and
+    // literal examples. Heading text remains unchanged so zudo-doc's
+    // hierarchical heading allocator owns duplicate IDs.
+    let global = read(&out.path().join("claude-md/global.mdx"));
+    assert!(global.contains("`local configuration`"));
+    assert!(!global.contains("](./settings.json)"));
+    assert!(global.contains("](/docs/)"));
+    assert!(global.contains("](https://example.com/project)"));
+    assert!(global.contains("](#duplicate-heading)"));
+    assert!(global.contains("](mailto:test@example.com)"));
+    assert!(global.contains("`a local diagram`"));
+    assert!(!global.contains("!`a local diagram`"));
+    assert!(global.contains("`[local](./inside-inline.md)`"));
+    assert!(global.contains("[fenced link](./inside-fence.md)"));
+    assert!(global.contains("[tilde fenced link](./inside-tilde-fence.md)"));
+    assert!(global.contains("&lt;FixtureWidget&gt;"));
+    assert!(global.contains("&#123;fixtureValue&#125;"));
+    assert_eq!(global.matches("## Duplicate heading").count(), 2);
+    assert_eq!(global.matches("### Nested heading").count(), 2);
+
+    let command = read(&out.path().join("claude-commands/audit.mdx"));
+    assert!(command.contains("description: \"Audit generated documentation\""));
+    assert!(command.contains("&lt;GeneratedOutput&gt;"));
+    assert!(command.contains("&#123;result&#125;"));
+    assert_eq!(command.matches("## Duplicate heading").count(), 2);
+
+    let agent = read(&out.path().join("claude-agents/architecture.mdx"));
+    assert!(agent.contains("**Model:** `sonnet`"));
+
+    // Every emitted document uses schema-supported generated metadata; none is
+    // drafted. The only unlisted pages are the routable skill resources above.
+    for path in generated_files(out.path()) {
+        let content = read(&path);
+        assert!(
+            content.contains("generated: true"),
+            "missing marker: {path:?}"
+        );
+        assert!(
+            !content.contains("draft: true"),
+            "unexpected draft: {path:?}"
+        );
+    }
+
+    // A second run over the complete representative corpus is byte/mtime
+    // idempotent, so zfb's content watcher receives no false HMR signal.
+    let before_paths = generated_files(out.path());
+    let before_mtimes: Vec<_> = before_paths.iter().map(|path| mtime(path)).collect();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    generate(&config_for(&fixture, out.path())).unwrap();
+    assert_eq!(generated_files(out.path()), before_paths);
+    for (path, before) in before_paths.iter().zip(before_mtimes) {
+        assert_eq!(
+            mtime(path),
+            before,
+            "unchanged fixture was rewritten: {path:?}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +646,7 @@ fn changing_one_source_rewrites_only_that_output() {
 #[test]
 fn regeneration_prunes_stale_skill_subpages() {
     // The skills category is the most complex keep-set (main page + ref/script/
-    // asset sub-pages, all flat in claude-skills/). Removing a reference must
+    // asset sub-pages, nested under each skill). Removing a reference must
     // prune exactly that sub-page while leaving the skill's other outputs.
     let tmp = tempfile::TempDir::new().unwrap();
     let claude = tmp.path().join("dot-claude");
@@ -547,8 +669,8 @@ fn regeneration_prunes_stale_skill_subpages() {
     );
 
     generate(&config_for(&claude, &docs)).unwrap();
-    let keep_page = docs.join("claude-skills/my-skill--ref-keep-ref.mdx");
-    let drop_page = docs.join("claude-skills/my-skill--ref-drop-ref.mdx");
+    let keep_page = docs.join("claude-skills/my-skill/ref-keep-ref.mdx");
+    let drop_page = docs.join("claude-skills/my-skill/ref-drop-ref.mdx");
     assert!(keep_page.exists());
     assert!(drop_page.exists());
 
@@ -565,9 +687,44 @@ fn regeneration_prunes_stale_skill_subpages() {
         "the removed reference's sub-page must be pruned"
     );
     assert!(
-        docs.join("claude-skills/my-skill.mdx").exists(),
+        docs.join("claude-skills/my-skill/index.mdx").exists(),
         "the main skill page must still exist"
     );
+}
+
+#[test]
+fn regeneration_prunes_deleted_skill_directory_and_legacy_flat_outputs() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+    write(
+        &claude,
+        "skills/remove-me/SKILL.md",
+        "---\nname: Remove Me\ndescription: stale\n---\n\nbody",
+    );
+    write(
+        &claude,
+        "skills/keep-me/SKILL.md",
+        "---\nname: Keep Me\ndescription: retained\n---\n\nbody",
+    );
+
+    generate(&config_for(&claude, &docs)).unwrap();
+    let nested = docs.join("claude-skills/remove-me/index.mdx");
+    assert!(nested.exists());
+
+    // Simulate output from the old flat generator layout. The migration run
+    // must clean it as well as deleted hierarchical skills.
+    write(
+        &docs,
+        "claude-skills/legacy-flat.mdx",
+        "---\ntitle: Legacy\ngenerated: true\n---\n",
+    );
+    fs::remove_dir_all(claude.join("skills/remove-me")).unwrap();
+    generate(&config_for(&claude, &docs)).unwrap();
+
+    assert!(!docs.join("claude-skills/remove-me").exists());
+    assert!(!docs.join("claude-skills/legacy-flat.mdx").exists());
+    assert!(docs.join("claude-skills/keep-me/index.mdx").exists());
 }
 
 // ---------------------------------------------------------------------------
@@ -725,7 +882,7 @@ fn skill_link_rewrite_skips_fenced_code_blocks() {
     );
 
     generate(&config_for(&claude, &docs)).unwrap();
-    let page = read(&docs.join("claude-skills/link-test.mdx"));
+    let page = read(&docs.join("claude-skills/link-test/index.mdx"));
 
     // Prose links OUTSIDE the fence must be rewritten.
     assert!(
