@@ -2,10 +2,13 @@
 // zudo-doc owns the behavior; CCResDoc owns only these product choices.
 
 import { DEFAULT_SETTINGS } from "@takazudo/zudo-doc/config";
+import themePackCatalog from "@takazudo/zudo-doc/catalog";
 import type {
   HeaderRightItem,
   Settings,
 } from "@takazudo/zudo-doc/settings";
+
+export const themePackSlugs = themePackCatalog.packs.map(({ slug }) => slug);
 
 export const settings = {
   ...DEFAULT_SETTINGS,
@@ -21,10 +24,18 @@ export const settings = {
   versions: false as false,
   // No tags
   docTags: false,
-  noindex: false,
+  noindex: true,
   editUrl: false as string | false,
   githubUrl: false as string | false,
   siteUrl: "",
+  metaTags: {
+    description: false,
+    keywords: false,
+    ogImage: false,
+    ogSiteName: false,
+    twitterCard: false,
+  },
+  cjkFriendly: true,
   // Default dark, with light/dark toggle
   colorScheme: "Default Dark",
   colorMode: {
@@ -38,6 +49,7 @@ export const settings = {
   sidebarResizer: true,
   // Sidebar toggle for mobile
   sidebarToggle: true,
+  tocToggle: true,
   dynamicPageTransition: true,
   findInPage: true,
   // Simple footer (no link columns, just copyright)
@@ -53,11 +65,13 @@ export const settings = {
   ] as HeaderRightItem[],
   // No default-locale-only paths (no i18n)
   defaultLocaleOnlyPrefixes: [] as string[],
-  // No image enlarge
-  imageEnlarge: false,
+  imageEnlarge: true,
   // No HTML preview
   htmlPreview: undefined,
   // No frontmatter preview
   frontmatterPreview: false as false,
   packageOwnedRoutes: false,
+  themePack: "default",
+  themePackSwitcher: true,
+  themePacks: themePackSlugs,
 } satisfies Settings;

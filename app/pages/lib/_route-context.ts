@@ -9,16 +9,30 @@ import { createRouteContext } from "@takazudo/zudo-doc/route-context";
 import type { RouteContextPayload } from "@takazudo/zudo-doc/route-context";
 import { defaultColorSchemes } from "@takazudo/zudo-doc/color-schemes-defaults";
 import { defaultTranslations } from "@takazudo/zudo-doc/i18n-defaults";
+import themePackCatalog from "@takazudo/zudo-doc/catalog";
 import { settings } from "@/config/settings";
+
+type ThemePackRegistry = NonNullable<
+  RouteContextPayload["themePackRegistry"]
+>;
+
+export const themePackRegistry = themePackCatalog.packs.map((meta) => ({
+  slug: meta.slug,
+  meta,
+  // `default` is the catalog's reserved metadata-only entry. Every other
+  // published entry is CSS-bearing under the public pack contract.
+  hasStylesheet: meta.slug !== "default",
+})) satisfies ThemePackRegistry;
 
 const payload = {
   settings,
   translations: defaultTranslations,
   tagVocabulary: [],
   colorSchemes: defaultColorSchemes,
-  // The routes plugin normally resolves theme-pack metadata. With no plugin,
-  // null intentionally keeps the switcher/bootstrap inert.
-  themePackRegistry: null,
+  // The routes plugin normally resolves this browser-safe registry. CCResDoc's
+  // host-owned routes recreate it from the public catalog without filesystem
+  // access so the runtime remains node-free.
+  themePackRegistry,
 } satisfies RouteContextPayload<typeof settings>;
 
 export const routeContext = createRouteContext(payload);
