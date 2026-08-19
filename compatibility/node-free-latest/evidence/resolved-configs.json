@@ -1,0 +1,1099 @@
+{
+  "wholesale": {
+    "framework": "preact",
+    "port": 4892,
+    "base": "/",
+    "trailingSlash": true,
+    "minifyHtml": true,
+    "collections": [
+      {
+        "name": "docs",
+        "path": "src/content/docs",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string"
+            },
+            "sidebar_position": {
+              "type": "number"
+            },
+            "sidebar_label": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "search_exclude": {
+              "type": "boolean"
+            },
+            "pagination_next": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pagination_prev": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "draft": {
+              "type": "boolean"
+            },
+            "unlisted": {
+              "type": "boolean"
+            },
+            "hide_sidebar": {
+              "type": "boolean"
+            },
+            "hide_toc": {
+              "type": "boolean"
+            },
+            "wide": {
+              "type": "boolean"
+            },
+            "doc_history": {
+              "type": "boolean"
+            },
+            "standalone": {
+              "type": "boolean"
+            },
+            "slug": {
+              "type": "string"
+            },
+            "generated": {
+              "type": "boolean"
+            },
+            "category_no_page": {
+              "type": "boolean"
+            },
+            "category_sort_order": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
+          },
+          "required": [
+            "title"
+          ],
+          "additionalProperties": {}
+        }
+      }
+    ],
+    "plugins": [
+      {
+        "name": "@takazudo/zudo-doc/plugins/routes",
+        "options": {
+          "settings": {
+            "colorScheme": "Default Dark",
+            "colorMode": {
+              "defaultMode": "dark",
+              "lightScheme": "Default Light",
+              "darkScheme": "Default Dark",
+              "respectPrefersColorScheme": true
+            },
+            "siteName": "CCResDoc compatibility probe",
+            "siteDescription": "zfb 2.7.1 + zudo-doc 5.6.0 node-free architecture probe",
+            "logo": "auto",
+            "base": "/",
+            "trailingSlash": true,
+            "home": {
+              "wide": false
+            },
+            "minifyHtml": true,
+            "docsDir": "src/content/docs",
+            "entryDocSlug": "getting-started",
+            "defaultLocale": "en",
+            "locales": {},
+            "mermaid": true,
+            "noindex": false,
+            "editUrl": false,
+            "githubUrl": false,
+            "siteUrl": "",
+            "metaTags": {
+              "description": true,
+              "keywords": false,
+              "ogImage": false,
+              "ogSiteName": true,
+              "twitterCard": false
+            },
+            "sitemap": false,
+            "docMetainfo": false,
+            "docTags": false,
+            "tagPlacement": "after-title",
+            "tagGovernance": "off",
+            "tagVocabulary": false,
+            "llmsTxt": false,
+            "changelogs": false,
+            "math": false,
+            "cjkFriendly": false,
+            "onBrokenMarkdownLinks": "warn",
+            "aiAssistant": false,
+            "aiChatDemoMode": false,
+            "aiChatAllowedOrigins": [],
+            "aiChatGlobalDailyLimit": false,
+            "designTokenPanel": false,
+            "tocMinDepth": 2,
+            "tocMaxDepth": 4,
+            "sidebarResizer": true,
+            "sidebarToggle": true,
+            "tocToggle": false,
+            "imageEnlarge": false,
+            "findInPage": true,
+            "dynamicPageTransition": true,
+            "frontmatterPreview": false,
+            "docHistory": false,
+            "docHistoryExclude": [],
+            "bodyFootUtilArea": false,
+            "versions": false,
+            "claudeResources": false,
+            "defaultLocaleOnlyPrefixes": [],
+            "footer": false,
+            "headerNav": [],
+            "headerRightItems": [
+              {
+                "type": "component",
+                "component": "theme-toggle"
+              }
+            ],
+            "packageOwnedRoutes": true,
+            "themePack": "default",
+            "themePackSwitcher": false
+          },
+          "translations": {
+            "en": {
+              "nav.gettingStarted": "Getting Started",
+              "nav.learn": "Learn",
+              "nav.guides": "Guides",
+              "nav.components": "Components",
+              "nav.reference": "Reference",
+              "nav.claude": "Claude",
+              "nav.changelog": "Changelog",
+              "nav.develop": "Develop",
+              "nav.previous": "Previous",
+              "nav.next": "Next",
+              "nav.overview": "Overview",
+              "toc.title": "On this page",
+              "docs.browseAll": "Browse all documentation sections.",
+              "search.label": "Search",
+              "search.placeholder": "Type to search...",
+              "search.shortcutHint": "to open search from anywhere",
+              "search.resultCount": "{count} results",
+              "search.unavailable": "Search unavailable",
+              "search.loadingIndex": "Loading search index…",
+              "search.noResults": "No results found.",
+              "code.copy": "Copy code",
+              "code.copied": "Copied!",
+              "code.wrapToggle": "Toggle word wrap",
+              "doc.editPage": "Edit this page",
+              "doc.viewSource": "View source on GitHub",
+              "header.github": "GitHub repository",
+              "doc.tags": "Tags",
+              "doc.taggedWith": "Pages tagged with",
+              "doc.allTags": "All Tags",
+              "doc.seeAllTags": "See all tags",
+              "doc.created": "Created",
+              "doc.updated": "Updated",
+              "doc.noTags": "No tags found.",
+              "doc.pageCount": "{count} pages",
+              "doc.pageCountSingle": "{count} page",
+              "nav.backToMenu": "Back to main menu",
+              "doc.fallbackNotice": "This page has not been translated yet and is shown in the original language.",
+              "frontmatter.preview.title": "Frontmatter",
+              "frontmatter.preview.keyCol": "Key",
+              "frontmatter.preview.valueCol": "Value",
+              "version.latest": "Latest",
+              "version.switcher.label": "Version",
+              "version.banner.unmaintained": "You are viewing documentation for an older version.",
+              "version.banner.unreleased": "You are viewing unreleased documentation.",
+              "version.banner.latestLink": "View the latest version",
+              "version.switcher.unavailable": "Not available in this version",
+              "version.switcher.allVersions": "All versions",
+              "version.page.title": "Documentation Versions",
+              "version.page.latest.title": "Latest Version (Current)",
+              "version.page.latest.description": "The most up-to-date documentation for the latest stable release.",
+              "version.page.latest.link": "View latest docs",
+              "version.page.past.title": "Past Versions",
+              "version.page.past.description": "Documentation for previously released versions.",
+              "version.page.unmaintained": "Unmaintained",
+              "version.page.unreleased": "Unreleased",
+              "version.page.status": "Status",
+              "version.page.docs": "Docs"
+            },
+            "ja": {
+              "nav.gettingStarted": "はじめに",
+              "nav.learn": "学ぶ",
+              "nav.guides": "ガイド",
+              "nav.components": "コンポーネント",
+              "nav.reference": "リファレンス",
+              "nav.claude": "Claude",
+              "nav.changelog": "変更履歴",
+              "nav.develop": "開発",
+              "nav.previous": "前へ",
+              "nav.next": "次へ",
+              "nav.overview": "概要",
+              "toc.title": "目次",
+              "docs.browseAll": "すべてのドキュメントセクションを閲覧",
+              "search.label": "検索",
+              "search.placeholder": "検索したい単語を入力",
+              "search.shortcutHint": "いつでも検索バーを開ける",
+              "search.resultCount": "{count} 件",
+              "search.unavailable": "検索を利用できません",
+              "search.loadingIndex": "検索インデックスを読み込み中…",
+              "search.noResults": "検索結果が見つかりませんでした。",
+              "code.copy": "コードをコピー",
+              "code.copied": "コピーしました！",
+              "code.wrapToggle": "折り返し切替",
+              "doc.editPage": "このページを編集",
+              "doc.viewSource": "GitHub でソースを見る",
+              "header.github": "GitHub リポジトリ",
+              "doc.tags": "タグ",
+              "doc.taggedWith": "タグ付きページ",
+              "doc.allTags": "すべてのタグ",
+              "doc.seeAllTags": "すべてのタグを見る",
+              "doc.created": "作成",
+              "doc.updated": "更新",
+              "doc.noTags": "タグが見つかりません。",
+              "doc.pageCount": "{count}ページ",
+              "doc.pageCountSingle": "{count}ページ",
+              "nav.backToMenu": "メインメニューに戻る",
+              "doc.fallbackNotice": "このページはまだ翻訳されていません。原文のまま表示しています。",
+              "frontmatter.preview.title": "フロントマター",
+              "frontmatter.preview.keyCol": "キー",
+              "frontmatter.preview.valueCol": "値",
+              "version.latest": "最新",
+              "version.switcher.label": "バージョン",
+              "version.banner.unmaintained": "これは旧バージョンのドキュメントです。",
+              "version.banner.unreleased": "これは未リリースのドキュメントです。",
+              "version.banner.latestLink": "最新バージョンを見る",
+              "version.switcher.unavailable": "このバージョンでは利用できません",
+              "version.switcher.allVersions": "すべてのバージョン",
+              "version.page.title": "ドキュメントバージョン",
+              "version.page.latest.title": "最新バージョン（現在）",
+              "version.page.latest.description": "最新の安定版リリースのドキュメントです。",
+              "version.page.latest.link": "最新ドキュメントを見る",
+              "version.page.past.title": "過去のバージョン",
+              "version.page.past.description": "以前にリリースされたバージョンのドキュメントです。",
+              "version.page.unmaintained": "メンテナンス終了",
+              "version.page.unreleased": "未リリース",
+              "version.page.status": "ステータス",
+              "version.page.docs": "ドキュメント"
+            },
+            "de": {
+              "nav.gettingStarted": "Erste Schritte",
+              "nav.learn": "Lernen",
+              "nav.guides": "Anleitungen",
+              "nav.components": "Komponenten",
+              "nav.reference": "Referenz",
+              "nav.claude": "Claude",
+              "nav.changelog": "Changelog",
+              "nav.develop": "Entwicklung",
+              "nav.previous": "Zurück",
+              "nav.next": "Weiter",
+              "nav.overview": "Überblick",
+              "toc.title": "Auf dieser Seite",
+              "docs.browseAll": "Alle Dokumentationsabschnitte durchsuchen.",
+              "search.label": "Suche",
+              "search.placeholder": "Suchbegriff eingeben...",
+              "search.shortcutHint": "Suche von überall öffnen",
+              "search.resultCount": "{count} Ergebnisse",
+              "search.unavailable": "Suche nicht verfügbar",
+              "search.loadingIndex": "Suchindex wird geladen…",
+              "search.noResults": "Keine Ergebnisse gefunden.",
+              "code.copy": "Code kopieren",
+              "code.copied": "Kopiert!",
+              "code.wrapToggle": "Zeilenumbruch umschalten",
+              "nav.backToMenu": "Zurück zum Hauptmenü",
+              "doc.editPage": "Diese Seite bearbeiten",
+              "doc.viewSource": "Quellcode auf GitHub ansehen",
+              "header.github": "GitHub-Repository",
+              "doc.tags": "Tags",
+              "doc.taggedWith": "Seiten mit Tag",
+              "doc.allTags": "Alle Tags",
+              "doc.seeAllTags": "Alle Tags anzeigen",
+              "doc.created": "Erstellt",
+              "doc.updated": "Aktualisiert",
+              "doc.noTags": "Keine Tags gefunden.",
+              "doc.pageCount": "{count} Seiten",
+              "doc.pageCountSingle": "{count} Seite",
+              "doc.fallbackNotice": "Diese Seite wurde noch nicht übersetzt und wird in der Originalsprache angezeigt.",
+              "frontmatter.preview.title": "Frontmatter",
+              "frontmatter.preview.keyCol": "Schlüssel",
+              "frontmatter.preview.valueCol": "Wert",
+              "version.latest": "Neueste",
+              "version.switcher.label": "Version",
+              "version.banner.unmaintained": "Sie sehen die Dokumentation einer älteren Version.",
+              "version.banner.unreleased": "Sie sehen unveröffentlichte Dokumentation.",
+              "version.banner.latestLink": "Neueste Version anzeigen"
+            }
+          },
+          "tagVocabulary": [],
+          "colorSchemes": {
+            "Default Light": {
+              "ramps": {
+                "base": [
+                  "oklch(.965 .004 65)",
+                  "oklch(.705 .008 65)",
+                  "oklch(.480 .008 65)",
+                  "oklch(.300 .006 65)",
+                  "oklch(.185 .005 65)"
+                ],
+                "accent": [
+                  "oklch(.755 .130 64)",
+                  "oklch(.700 .158 62)",
+                  "oklch(.470 .120 56)"
+                ],
+                "state": {
+                  "danger": "oklch(.640 .170 25)",
+                  "success": "oklch(.680 .145 145)",
+                  "warning": "oklch(.760 .135 82)",
+                  "info": "oklch(.680 .130 245)"
+                }
+              },
+              "map": {
+                "bg": {
+                  "base": 0
+                },
+                "fg": {
+                  "base": 4
+                },
+                "selectionBg": {
+                  "base": 1
+                },
+                "selectionFg": {
+                  "base": 4
+                },
+                "semantic": {
+                  "surface": {
+                    "base": 0
+                  },
+                  "muted": {
+                    "base": 2
+                  },
+                  "accent": {
+                    "accent": 2
+                  },
+                  "accentHover": "oklch(.400 .096 56)",
+                  "codeBg": {
+                    "base": 0
+                  },
+                  "codeFg": {
+                    "base": 4
+                  },
+                  "success": "oklch(.470 .140 145)",
+                  "danger": "oklch(.505 .170 25)",
+                  "warning": "oklch(.490 .100 82)",
+                  "info": "oklch(.485 .122 245)",
+                  "mermaidNodeBg": {
+                    "base": 1
+                  },
+                  "mermaidText": {
+                    "base": 4
+                  },
+                  "mermaidLine": {
+                    "base": 2
+                  },
+                  "mermaidLabelBg": {
+                    "base": 1
+                  },
+                  "mermaidNoteBg": {
+                    "base": 1
+                  },
+                  "chatUserBg": {
+                    "accent": 1
+                  },
+                  "chatUserText": {
+                    "base": 4
+                  },
+                  "chatAssistantBg": {
+                    "base": 0
+                  },
+                  "chatAssistantText": {
+                    "base": 4
+                  },
+                  "imageOverlayBg": {
+                    "base": 4
+                  },
+                  "imageOverlayFg": {
+                    "base": 0
+                  },
+                  "matchedKeywordBg": "oklch(.700 .158 62)",
+                  "matchedKeywordFg": "oklch(.300 .003 65)"
+                },
+                "syntax": {
+                  "syntaxInserted": "oklch(.460 .140 145)",
+                  "syntaxDeleted": "oklch(.490 .170 25)"
+                }
+              }
+            },
+            "Default Dark": {
+              "ramps": {
+                "base": [
+                  "oklch(.965 .004 65)",
+                  "oklch(.705 .008 65)",
+                  "oklch(.480 .008 65)",
+                  "oklch(.300 .006 65)",
+                  "oklch(.185 .005 65)"
+                ],
+                "accent": [
+                  "oklch(.755 .130 64)",
+                  "oklch(.700 .158 62)",
+                  "oklch(.470 .120 56)"
+                ],
+                "state": {
+                  "danger": "oklch(.640 .170 25)",
+                  "success": "oklch(.680 .145 145)",
+                  "warning": "oklch(.760 .135 82)",
+                  "info": "oklch(.680 .130 245)"
+                }
+              },
+              "map": {
+                "bg": {
+                  "base": 4
+                },
+                "fg": {
+                  "base": 0
+                },
+                "selectionBg": {
+                  "base": 2
+                },
+                "selectionFg": {
+                  "base": 0
+                },
+                "semantic": {
+                  "surface": {
+                    "base": 4
+                  },
+                  "muted": {
+                    "base": 1
+                  },
+                  "accent": {
+                    "accent": 1
+                  },
+                  "accentHover": {
+                    "accent": 0
+                  },
+                  "codeBg": {
+                    "base": 3
+                  },
+                  "codeFg": {
+                    "base": 0
+                  },
+                  "success": {
+                    "state": "success"
+                  },
+                  "danger": "oklch(.655 .170 25)",
+                  "warning": {
+                    "state": "warning"
+                  },
+                  "info": {
+                    "state": "info"
+                  },
+                  "mermaidNodeBg": {
+                    "base": 3
+                  },
+                  "mermaidText": {
+                    "base": 0
+                  },
+                  "mermaidLine": {
+                    "base": 1
+                  },
+                  "mermaidLabelBg": {
+                    "base": 3
+                  },
+                  "mermaidNoteBg": {
+                    "base": 2
+                  },
+                  "chatUserBg": {
+                    "accent": 1
+                  },
+                  "chatUserText": {
+                    "base": 4
+                  },
+                  "chatAssistantBg": {
+                    "base": 4
+                  },
+                  "chatAssistantText": {
+                    "base": 0
+                  },
+                  "imageOverlayBg": {
+                    "base": 4
+                  },
+                  "imageOverlayFg": {
+                    "base": 0
+                  },
+                  "matchedKeywordBg": "oklch(.700 .158 62)",
+                  "matchedKeywordFg": "oklch(.300 .003 65)"
+                },
+                "syntax": {
+                  "syntaxInserted": "oklch(.750 .145 145)",
+                  "syntaxDeleted": "oklch(.820 .100 25)"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "@takazudo/zudo-doc/plugins/search-index",
+        "options": {
+          "docsDir": "src/content/docs",
+          "locales": {},
+          "base": "/"
+        }
+      },
+      {
+        "name": "@takazudo/zudo-doc/plugins/theme-packs",
+        "options": {
+          "base": "/",
+          "themePack": "default"
+        }
+      }
+    ],
+    "markdown": {
+      "features": {
+        "directives": {
+          "note": "Note",
+          "tip": "Tip",
+          "info": "Info",
+          "warning": "Warning",
+          "danger": "Danger",
+          "caution": "Caution",
+          "details": "Details"
+        },
+        "mermaid": true,
+        "headingMarkerToc": true,
+        "githubAlerts": true,
+        "readingTime": true,
+        "codeEnrichment": {},
+        "codeTabs": true,
+        "ruby": true,
+        "tocExport": {},
+        "imageDimensions": {},
+        "linkValidation": {
+          "failOnBroken": false
+        },
+        "headingIds": {
+          "strategy": "hierarchical"
+        }
+      },
+      "cjkFriendly": false,
+      "gfm": {
+        "taskListItem": true,
+        "footnoteDefinition": true
+      }
+    },
+    "codeHighlight": {
+      "mode": "class",
+      "defaultStylesheet": true
+    },
+    "resolveMarkdownLinks": {
+      "enabled": true,
+      "dirs": [
+        {
+          "dir": "src/content/docs",
+          "routePrefix": "/docs/"
+        }
+      ],
+      "onBrokenLinks": "warn"
+    },
+    "stripMdExt": true
+  },
+  "routesOff": {
+    "framework": "preact",
+    "port": 4892,
+    "base": "/",
+    "trailingSlash": true,
+    "minifyHtml": true,
+    "collections": [
+      {
+        "name": "docs",
+        "path": "src/content/docs",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string"
+            },
+            "sidebar_position": {
+              "type": "number"
+            },
+            "sidebar_label": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "search_exclude": {
+              "type": "boolean"
+            },
+            "pagination_next": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pagination_prev": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "draft": {
+              "type": "boolean"
+            },
+            "unlisted": {
+              "type": "boolean"
+            },
+            "hide_sidebar": {
+              "type": "boolean"
+            },
+            "hide_toc": {
+              "type": "boolean"
+            },
+            "wide": {
+              "type": "boolean"
+            },
+            "doc_history": {
+              "type": "boolean"
+            },
+            "standalone": {
+              "type": "boolean"
+            },
+            "slug": {
+              "type": "string"
+            },
+            "generated": {
+              "type": "boolean"
+            },
+            "category_no_page": {
+              "type": "boolean"
+            },
+            "category_sort_order": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
+          },
+          "required": [
+            "title"
+          ],
+          "additionalProperties": {}
+        }
+      }
+    ],
+    "plugins": [
+      {
+        "name": "@takazudo/zudo-doc/plugins/search-index",
+        "options": {
+          "docsDir": "src/content/docs",
+          "locales": {},
+          "base": "/"
+        }
+      },
+      {
+        "name": "@takazudo/zudo-doc/plugins/theme-packs",
+        "options": {
+          "base": "/",
+          "themePack": "default"
+        }
+      }
+    ],
+    "markdown": {
+      "features": {
+        "directives": {
+          "note": "Note",
+          "tip": "Tip",
+          "info": "Info",
+          "warning": "Warning",
+          "danger": "Danger",
+          "caution": "Caution",
+          "details": "Details"
+        },
+        "mermaid": true,
+        "headingMarkerToc": true,
+        "githubAlerts": true,
+        "readingTime": true,
+        "codeEnrichment": {},
+        "codeTabs": true,
+        "ruby": true,
+        "tocExport": {},
+        "imageDimensions": {},
+        "linkValidation": {
+          "failOnBroken": false
+        },
+        "headingIds": {
+          "strategy": "hierarchical"
+        }
+      },
+      "cjkFriendly": false,
+      "gfm": {
+        "taskListItem": true,
+        "footnoteDefinition": true
+      }
+    },
+    "codeHighlight": {
+      "mode": "class",
+      "defaultStylesheet": true
+    },
+    "resolveMarkdownLinks": {
+      "enabled": true,
+      "dirs": [
+        {
+          "dir": "src/content/docs",
+          "routePrefix": "/docs/"
+        }
+      ],
+      "onBrokenLinks": "warn"
+    },
+    "stripMdExt": true
+  },
+  "selected": {
+    "framework": "preact",
+    "port": 4892,
+    "base": "/",
+    "trailingSlash": true,
+    "minifyHtml": true,
+    "collections": [
+      {
+        "name": "docs",
+        "path": "src/content/docs",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string"
+            },
+            "sidebar_position": {
+              "type": "number"
+            },
+            "sidebar_label": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "search_exclude": {
+              "type": "boolean"
+            },
+            "pagination_next": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pagination_prev": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "draft": {
+              "type": "boolean"
+            },
+            "unlisted": {
+              "type": "boolean"
+            },
+            "hide_sidebar": {
+              "type": "boolean"
+            },
+            "hide_toc": {
+              "type": "boolean"
+            },
+            "wide": {
+              "type": "boolean"
+            },
+            "doc_history": {
+              "type": "boolean"
+            },
+            "standalone": {
+              "type": "boolean"
+            },
+            "slug": {
+              "type": "string"
+            },
+            "generated": {
+              "type": "boolean"
+            },
+            "category_no_page": {
+              "type": "boolean"
+            },
+            "category_sort_order": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
+          },
+          "required": [
+            "title"
+          ],
+          "additionalProperties": {}
+        }
+      }
+    ],
+    "plugins": [],
+    "markdown": {
+      "features": {
+        "directives": {
+          "note": "Note",
+          "tip": "Tip",
+          "info": "Info",
+          "warning": "Warning",
+          "danger": "Danger",
+          "caution": "Caution",
+          "details": "Details"
+        },
+        "mermaid": true,
+        "headingMarkerToc": true,
+        "githubAlerts": true,
+        "readingTime": true,
+        "codeEnrichment": {},
+        "codeTabs": true,
+        "ruby": true,
+        "tocExport": {},
+        "imageDimensions": {},
+        "linkValidation": {
+          "failOnBroken": false
+        },
+        "headingIds": {
+          "strategy": "hierarchical"
+        }
+      },
+      "cjkFriendly": false,
+      "gfm": {
+        "taskListItem": true,
+        "footnoteDefinition": true
+      }
+    },
+    "codeHighlight": {
+      "mode": "class",
+      "defaultStylesheet": true
+    },
+    "resolveMarkdownLinks": {
+      "enabled": true,
+      "dirs": [
+        {
+          "dir": "src/content/docs",
+          "routePrefix": "/docs/"
+        }
+      ],
+      "onBrokenLinks": "warn"
+    },
+    "stripMdExt": true
+  },
+  "manual": {
+    "framework": "preact",
+    "port": 4892,
+    "base": "/",
+    "trailingSlash": true,
+    "minifyHtml": true,
+    "collections": [
+      {
+        "name": "docs",
+        "path": "src/content/docs",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string"
+            },
+            "sidebar_position": {
+              "type": "number"
+            },
+            "sidebar_label": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "search_exclude": {
+              "type": "boolean"
+            },
+            "pagination_next": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pagination_prev": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "draft": {
+              "type": "boolean"
+            },
+            "unlisted": {
+              "type": "boolean"
+            },
+            "hide_sidebar": {
+              "type": "boolean"
+            },
+            "hide_toc": {
+              "type": "boolean"
+            },
+            "wide": {
+              "type": "boolean"
+            },
+            "doc_history": {
+              "type": "boolean"
+            },
+            "standalone": {
+              "type": "boolean"
+            },
+            "slug": {
+              "type": "string"
+            },
+            "generated": {
+              "type": "boolean"
+            },
+            "category_no_page": {
+              "type": "boolean"
+            },
+            "category_sort_order": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
+          },
+          "required": [
+            "title"
+          ],
+          "additionalProperties": {}
+        }
+      }
+    ],
+    "plugins": [],
+    "markdown": {
+      "features": {
+        "directives": {
+          "note": "Note",
+          "tip": "Tip",
+          "info": "Info",
+          "warning": "Warning",
+          "danger": "Danger",
+          "caution": "Caution",
+          "details": "Details"
+        },
+        "mermaid": true,
+        "headingMarkerToc": true,
+        "githubAlerts": true,
+        "readingTime": true,
+        "codeEnrichment": {},
+        "codeTabs": true,
+        "ruby": true,
+        "tocExport": {},
+        "imageDimensions": {},
+        "linkValidation": {
+          "failOnBroken": false
+        },
+        "headingIds": {
+          "strategy": "hierarchical"
+        }
+      },
+      "cjkFriendly": false,
+      "gfm": {
+        "taskListItem": true,
+        "footnoteDefinition": true
+      }
+    },
+    "codeHighlight": {
+      "mode": "class",
+      "defaultStylesheet": true
+    },
+    "resolveMarkdownLinks": {
+      "enabled": true,
+      "dirs": [
+        {
+          "dir": "src/content/docs",
+          "routePrefix": "/docs/"
+        }
+      ],
+      "onBrokenLinks": "warn"
+    },
+    "stripMdExt": true
+  }
+}
