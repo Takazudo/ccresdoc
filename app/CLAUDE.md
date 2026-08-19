@@ -5,18 +5,22 @@ zudo-doc consumer project built by zfb. Output in `dist/` is served by `zfb dev`
 ## Architecture
 
 - **Framework**: Preact + zfb SSG
-- **Package**: `@takazudo/zfb@0.1.0-next.78` (binary) + `@takazudo/zudo-doc@^3.2.0` (components)
+- **Package**: `@takazudo/zfb@2.7.1` (binary) + `@takazudo/zudo-doc@5.6.0` (components)
 - **Port**: 4892 (pinned in `zfb.config.ts`)
 - **Node-free mode**: Zero `.mjs` plugins → no `plugin-host.mjs` spawned
 - **Collections**: single `"docs"` collection at `src/content/docs/`
 
 ## Build
 
-`node_modules` must be populated at setup time via `pnpm install` (Node at setup only — not at runtime). Build/dev checks may use `pnpm exec zfb`, whose package wrapper spawns the native `@takazudo/zfb-<platform>/zfb` binary. The Tauri runtime must resolve that native binary directly — do NOT use `node_modules/.bin/zfb`, which is a Node-shebang wrapper that requires Node at runtime.
+`node_modules` must be populated at setup time via `pnpm install --frozen-lockfile` (Node at setup only — not at runtime). Build/dev checks may use `pnpm exec zfb`, whose package wrapper spawns the native `@takazudo/zfb-<platform>/zfb` binary. The Tauri runtime must resolve that native binary directly — do NOT use `node_modules/.bin/zfb`, which is a Node-shebang wrapper that requires Node at runtime.
 
 ```sh
 cd app
-pnpm install          # once — populates node_modules incl. native zfb binary
+pnpm install --frozen-lockfile  # once — populates node_modules incl. native zfb binary
+pnpm run validate:dependencies  # manifest/lock/installed-tree contract
+pnpm run typecheck
+pnpm run check:zfb
+pnpm run test:run
 pnpm exec zfb build   # setup/build check: wrapper spawns native binary
 ```
 
@@ -41,12 +45,13 @@ single-source mechanism in JSON; `scripts/check-zfb-pin.sh` is the enforcement g
 (run by `scripts/run-b4push.sh` step 1). When bumping the pin, update every
 `@takazudo/zfb*` entry simultaneously.
 
-### @takazudo/zfb-adapter-cloudflare
-This dep is a peer/runtime requirement imposed by zfb itself: zfb requires an adapter
-to be declared even for local dev/build targets. The Cloudflare adapter is the
-supported default for zudo-doc consumers. It does NOT mean the app is deployed to
-Cloudflare — at runtime the Tauri host uses `zfb dev` locally with no adapter code
-executed.
+### Published toolchain contract
+The first-party zfb packages and all five native platform packages are pinned to
+`2.7.1`; zudo-doc is pinned to `5.6.0`. Reachable runtime peers are pinned to
+`preact@10.29.1`, `preact-render-to-string@6.6.7`, `zod@4.3.6`, and `katex@0.16.22`.
+The Cloudflare adapter and legacy local Markdown mirrors are intentionally absent:
+zudo-doc supplies the selected Markdown pipeline while CCResDoc's Rust generator
+owns content generation.
 
 ## Structure
 
