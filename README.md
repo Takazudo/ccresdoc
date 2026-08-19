@@ -19,7 +19,7 @@ WebView → http://localhost:4892/docs/
 Key facts:
 - **Node-free at runtime**: `zfb dev` with zero `.mjs` plugins spawns no Node host. The native `@takazudo/zfb-<platform>/zfb` binary is bundled in `node_modules` (populated at build/setup time via `pnpm install --frozen-lockfile`, Node at setup only).
 - **Port 4892**: pinned in `app/zfb.config.ts` and `src-tauri/tauri.conf.json`.
-- **Writable workspace**: a pruned, lockfile-faithful runtime tree is copied to `<app_data_dir>/app-workspace/` on first launch, gated by a generated lockfile/config token + a `.ccresdoc-workspace-ready` sentinel. Dev mode uses the repo `app/` directly.
+- **Writable workspace**: a pruned, lockfile-faithful runtime tree is copied to `<app_data_dir>/app-workspace/` on first launch, gated by a verified digest of every staged runtime byte + a `.ccresdoc-workspace-ready` sentinel. Dev mode uses the repo `app/` directly.
 - **Rust generator** (`crates/ccresdoc-claude-md`): `generate()` + `watch()` walk `~/.claude/` and emit zudo-doc-compatible MDX. `zfb dev` content-watch HMRs the result.
 
 ## Prerequisites (development only)

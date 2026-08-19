@@ -70,8 +70,9 @@ wrappers, non-host binaries, and zudo-doc's disabled Node plugin/CLI packages.
 On bundled launch the host copies `Resources/runtime-workspace/app/` →
 `app-workspace/` and
 writes a sentinel `.ccresdoc-workspace-ready` containing the **version token**.
-The stage script writes `Resources/runtime-workspace/version.txt` as a
-SHA-256-derived digest of the frozen lockfile and selected zfb configuration;
+The stage script writes `Resources/runtime-workspace/version.txt` from a
+verified SHA-256 tree digest of the complete staged app plus the staging/digest
+implementation;
 the host falls back to `CARGO_PKG_VERSION` only if it is missing or invalid.
 A dependency/config rebuild therefore refreshes the writable copy. On the next
 launch:
@@ -199,7 +200,7 @@ navigate flow must run in both modes.
 
 - **`beforeBuildCommand`** runs a frozen app install, native `zfb build`, then
   `scripts/stage-runtime-workspace.mjs` from the repository root.
-- **`version.txt`** is generated from the lockfile + selected config and gates
+- **`version.txt`** is generated from the full staged runtime tree and gates
   refresh of the app-data copy.
 - **Bundling** includes only `runtime-workspace/**/*`; that directory is
   ignored by Git and recreated for every package build.

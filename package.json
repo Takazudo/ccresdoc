@@ -17,10 +17,11 @@
     "check:types": "pnpm -C app run typecheck",
     "check:zfb": "pnpm -C app run check:zfb",
     "test:frontend": "pnpm -C app run test:run",
+    "test:runtime-digest": "node --test scripts/runtime-workspace-digest.test.mjs",
     "check:frontend": "pnpm -C app run check",
     "check:compatibility": "bash scripts/check-node-free-compatibility.sh",
     "stage:runtime": "node scripts/stage-runtime-workspace.mjs",
-    "check:runtime-package": "node scripts/stage-runtime-workspace.mjs && node scripts/verify-runtime-workspace.mjs",
+    "check:runtime-package": "pnpm run test:runtime-digest && node scripts/stage-runtime-workspace.mjs && node scripts/verify-runtime-workspace.mjs",
     "probe:runtime-package": "pnpm run check:runtime-package && node scripts/probe-tauri-runtime.mjs"
   }
 }

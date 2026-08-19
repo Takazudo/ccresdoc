@@ -5,6 +5,11 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  RUNTIME_WORKSPACE_DIGEST_ALGORITHM,
+  refreshTokenFromWorkspaceDigest,
+  runtimeWorkspaceDigest,
+} from "./runtime-workspace-digest.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const stageRoot = join(repoRoot, "src-tauri", "runtime-workspace");
@@ -53,8 +58,21 @@ assert(!manifest.nativeBinary.includes("node_modules/.bin"), "must resolve the p
 
 const config = readFileSync(join(stageApp, "zfb.config.ts"), "utf8");
 assert.match(config, /plugins:\s*\[\s*\]/, "selected runtime config must force an empty plugin list");
-const lockfile = readFileSync(join(stageApp, "pnpm-lock.yaml"));
-const expectedToken = createHash("sha256").update(lockfile).update(config).digest("hex").slice(0, 32);
+const workspaceDigest = runtimeWorkspaceDigest(stageApp, {
+  implementationFiles: [
+    {
+      label: "scripts/runtime-workspace-digest.mjs",
+      path: fileURLToPath(new URL("./runtime-workspace-digest.mjs", import.meta.url)),
+    },
+    {
+      label: "scripts/stage-runtime-workspace.mjs",
+      path: fileURLToPath(new URL("./stage-runtime-workspace.mjs", import.meta.url)),
+    },
+  ],
+});
+assert.equal(manifest.workspaceDigest.algorithm, RUNTIME_WORKSPACE_DIGEST_ALGORITHM);
+assert.equal(manifest.workspaceDigest.value, workspaceDigest);
+const expectedToken = refreshTokenFromWorkspaceDigest(workspaceDigest);
 assert.equal(readFileSync(join(stageRoot, "version.txt"), "utf8").trim(), expectedToken);
 assert.equal(manifest.refreshToken, expectedToken);
 

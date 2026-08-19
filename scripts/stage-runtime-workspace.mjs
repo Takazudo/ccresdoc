@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import {
   chmodSync,
   cpSync,
@@ -19,6 +18,11 @@ import {
   themePackInputDigest,
   validateGeneratedThemePacks,
 } from "../app/scripts/sync-theme-packs.mjs";
+import {
+  RUNTIME_WORKSPACE_DIGEST_ALGORITHM,
+  refreshTokenFromWorkspaceDigest,
+  runtimeWorkspaceDigest,
+} from "./runtime-workspace-digest.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appRoot = join(repoRoot, "app");
@@ -119,24 +123,39 @@ if (process.platform !== "win32") {
 
 const themeAssetsDigest = themePackInputDigest();
 
-const lockfile = readFileSync(join(appRoot, "pnpm-lock.yaml"));
 const sourceConfig = readFileSync(join(appRoot, "zfb.config.ts"), "utf8");
-// The verifier intentionally derives the refresh token only from staged lock +
-// config bytes. Embed the complete generated-theme input digest as a harmless
-// config comment so catalog, CSS, font, or sync changes participate too.
+// Embed the complete generated-theme input digest as a harmless config comment
+// so a sync-implementation or package-source change participates even when it
+// happens to produce byte-identical public assets.
 const stagedConfig = `${sourceConfig.trimEnd()}\n// staged theme-assets digest: ${themeAssetsDigest}\n`;
 writeFileSync(join(stageApp, "zfb.config.ts"), stagedConfig);
-const token = createHash("sha256").update(lockfile).update(stagedConfig).digest("hex").slice(0, 32);
+const workspaceDigest = runtimeWorkspaceDigest(stageApp, {
+  implementationFiles: [
+    {
+      label: "scripts/runtime-workspace-digest.mjs",
+      path: fileURLToPath(new URL("./runtime-workspace-digest.mjs", import.meta.url)),
+    },
+    {
+      label: "scripts/stage-runtime-workspace.mjs",
+      path: fileURLToPath(import.meta.url),
+    },
+  ],
+});
+const token = refreshTokenFromWorkspaceDigest(workspaceDigest);
 writeFileSync(join(stageRoot, "version.txt"), `${token}\n`);
 
 const stagedNames = [...packages.keys()].sort();
 const manifest = {
   schemaVersion: 1,
-  source: "app/pnpm-lock.yaml",
+  source: "src-tauri/runtime-workspace/app",
   refreshToken: token,
   host: `${process.platform}-${process.arch}`,
   hostPackage,
   nativeBinary: relative(stageRoot, nativeBinary),
+  workspaceDigest: {
+    algorithm: RUNTIME_WORKSPACE_DIGEST_ALGORITHM,
+    value: workspaceDigest,
+  },
   themeAssets: {
     digest: themeAssetsDigest,
     packs: themeAssets.packs,
