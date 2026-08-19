@@ -187,10 +187,9 @@ fn log_to(path: &str, msg: &str) {
 
 /// The version token used to decide whether the writable workspace copy is
 /// stale. The effective token is the app's Cargo package version, embedded at
-/// compile time. An optional `version.txt` beside the bundled `app/` overrides
-/// it if present (so a build could emit a per-build token), but the build does
-/// NOT currently emit one — so the compiled-in version is what's used. Bump the
-/// crate version per release and the workspace refreshes on upgrade.
+/// compile time. The package build emits a verified content-derived
+/// `version.txt` beside the bundled `app/`; the Cargo version is only the
+/// defensive fallback for a malformed or missing staging token.
 fn bundled_version_token(resources_app_parent: &Path) -> String {
     let version_file = resources_app_parent.join("version.txt");
     if let Ok(v) = fs::read_to_string(&version_file) {

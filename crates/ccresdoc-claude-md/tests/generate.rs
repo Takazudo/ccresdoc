@@ -40,7 +40,25 @@ fn config_for(claude_dir: &Path, docs_dir: &Path) -> Config {
 }
 
 fn representative_fixture() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/representative")
+    // Resolve this at runtime so a shared Cargo target does not bake a removed
+    // worktree's `CARGO_MANIFEST_DIR` into a cached integration-test binary.
+    let cwd = std::env::current_dir().expect("failed to resolve the test working directory");
+
+    for ancestor in cwd.ancestors() {
+        for relative in [
+            Path::new("tests/fixtures/representative"),
+            Path::new("crates/ccresdoc-claude-md/tests/fixtures/representative"),
+        ] {
+            let candidate = ancestor.join(relative);
+            if candidate.is_dir() {
+                return candidate
+                    .canonicalize()
+                    .expect("failed to canonicalize the representative fixture");
+            }
+        }
+    }
+
+    panic!("failed to find the representative fixture from {cwd:?}")
 }
 
 fn generated_files(root: &Path) -> Vec<PathBuf> {

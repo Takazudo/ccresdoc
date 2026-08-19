@@ -34,9 +34,11 @@ frees port 4892.
 `@takazudo/zudo-doc/catalog` is the source of truth. The postinstall/prebuild
 sync validates every metadata file, copies every current non-default `pack.css`
 and its referenced fonts to `app/public/theme-packs/`, and writes `index.json`.
-The runtime stage embeds the catalog/file list and includes its input digest in
-the generated refresh token. Thus a catalog, CSS, font, or sync implementation
-change cannot reuse an older writable workspace.
+The runtime stage embeds the catalog/file list, then hashes every staged app and
+dependency byte plus the staging/digest implementation into the generated
+refresh token. Thus a route, catalog, CSS, font, package, config, or staging
+change cannot reuse an older writable workspace. The verifier recomputes the
+tree digest, and a focused test proves a `pages/` edit changes the token.
 
 The frontend derives route settings, switcher order, and the typed registry
 from the same catalog. The deterministic tests and staged probe verify that
