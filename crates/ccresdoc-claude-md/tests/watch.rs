@@ -71,7 +71,10 @@ fn watcher_regenerates_on_add_edit_remove() {
     );
     let count = wait_regen(&rx, Duration::from_secs(10));
     assert_eq!(count, 2, "after add, expected 2 commands");
-    assert!(docs.join("claude-commands/second.mdx").exists());
+    let second_output = docs.join("claude-commands/second.mdx");
+    assert!(second_output.exists());
+    let before_edit = fs::metadata(&second_output).unwrap().modified().unwrap();
+    std::thread::sleep(Duration::from_millis(20));
 
     // --- EDIT a command (change its description) ---
     write(
@@ -80,10 +83,15 @@ fn watcher_regenerates_on_add_edit_remove() {
         "---\ndescription: edited\n---\nnew body",
     );
     let _ = wait_regen(&rx, Duration::from_secs(10));
-    let edited = fs::read_to_string(docs.join("claude-commands/second.mdx")).unwrap();
+    let edited = fs::read_to_string(&second_output).unwrap();
     assert!(
         edited.contains("description: \"edited\""),
         "edit should be reflected in regenerated MDX"
+    );
+    assert_ne!(
+        before_edit,
+        fs::metadata(&second_output).unwrap().modified().unwrap(),
+        "a changed source must advance the generated MDX mtime observed by zfb HMR"
     );
 
     // --- REMOVE a command ---

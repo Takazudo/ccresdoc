@@ -106,6 +106,43 @@ fn prune_stale(dir: &Path, keep: &HashSet<String>) -> Result<()> {
     Ok(())
 }
 
+/// Remove generated child directories that are no longer present in `keep`.
+///
+/// Skill pages use the latest zudo-doc hierarchical layout
+/// (`<skill>/index.mdx` plus sibling sub-pages), so stale skills are whole
+/// directories rather than flat files. The category output directory is owned
+/// by this generator; removing an unreferenced child directory is therefore
+/// safe and prevents deleted skills from remaining routable.
+fn prune_stale_subdirs(dir: &Path, keep: &HashSet<String>) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    let entries = std::fs::read_dir(dir).map_err(|e| GenerateError::Io {
+        path: dir.to_owned(),
+        source: e,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|e| GenerateError::Io {
+            path: dir.to_owned(),
+            source: e,
+        })?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !keep.contains(name) {
+            std::fs::remove_dir_all(&path).map_err(|e| GenerateError::Io {
+                path: path.clone(),
+                source: e,
+            })?;
+        }
+    }
+    Ok(())
+}
+
 /// Write `contents` to `path`, but skip the write if the file already holds
 /// byte-identical content.
 ///
@@ -155,15 +192,156 @@ fn write_category_index(
     write_file(&output_dir.join("index.mdx"), &mdx)
 }
 
-/// Write an unlisted sub-page MDX file (flat file with a custom nested slug).
-fn write_unlisted_sub_page(output_path: &Path, title: &str, slug: &str, body: &str) -> Result<()> {
+/// Write an unlisted sub-page MDX file.
+///
+/// Its route is derived from its hierarchical on-disk path. This is required
+/// by current zfb Markdown-link resolution: a `./ref-name` link from
+/// `<skill>/index.mdx` resolves to the sibling `<skill>/ref-name.mdx` file.
+fn write_unlisted_sub_page(output_path: &Path, title: &str, body: &str) -> Result<()> {
     let mdx = format!(
-        "---\ntitle: \"{}\"\nslug: \"{}\"\nunlisted: true\ngenerated: true\n---\n\n{}\n",
+        "---\ntitle: \"{}\"\nunlisted: true\ngenerated: true\n---\n\n{}\n",
         escape_title(title),
-        slug,
         body,
     );
     write_file(output_path, &mdx)
+}
+
+/// Whether a Markdown link points at a repository-relative file rather than a
+/// URL the generated documentation site can resolve.
+fn is_repo_relative_link(url: &str) -> bool {
+    let url = url.trim();
+    if url.is_empty() || url.starts_with('#') || url.starts_with('/') {
+        return false;
+    }
+
+    // URI scheme: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) ":"
+    let Some(colon) = url.find(':') else {
+        return true;
+    };
+    let scheme = &url[..colon];
+    let mut chars = scheme.chars();
+    !matches!(chars.next(), Some(first) if first.is_ascii_alphabetic())
+        || !chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+/// Downgrade repository-relative links in a mirrored `CLAUDE.md` to inline
+/// code. The flattened CLAUDE.md output has no matching repository files, so
+/// retaining those hrefs produces broken-link diagnostics in current zfb.
+/// Resolvable URLs, anchors, site-absolute links, fenced code, and inline code
+/// remain untouched.
+fn downgrade_repo_relative_links(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut fence: Option<(char, usize)> = None;
+
+    for line in content.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let delimiter = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'));
+        let run = delimiter.map_or(0, |delimiter| {
+            trimmed.chars().take_while(|c| *c == delimiter).count()
+        });
+
+        if let Some((open, width)) = fence {
+            out.push_str(line);
+            if delimiter == Some(open) && run >= width {
+                fence = None;
+            }
+            continue;
+        }
+        if let Some(delimiter) = delimiter.filter(|_| run >= 3) {
+            fence = Some((delimiter, run));
+            out.push_str(line);
+            continue;
+        }
+
+        out.push_str(&downgrade_links_in_prose(line));
+    }
+
+    // `split_inclusive` emits the final non-newline-terminated segment, but it
+    // emits nothing for an empty input.
+    out
+}
+
+fn downgrade_links_in_prose(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let mut out = String::with_capacity(line.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        // Preserve an inline-code span, including its exact backtick width.
+        if bytes[i] == b'`' {
+            let width = bytes[i..].iter().take_while(|b| **b == b'`').count();
+            if let Some(close) = find_backtick_close(bytes, i + width, width) {
+                out.push_str(&line[i..close]);
+                i = close;
+                continue;
+            }
+        }
+
+        let marker_start = i;
+        let bracket_start = if bytes[i] == b'!' && bytes.get(i + 1) == Some(&b'[') {
+            i + 1
+        } else if bytes[i] == b'[' {
+            i
+        } else {
+            let width = utf8_char_width(bytes[i]);
+            out.push_str(&line[i..i + width]);
+            i += width;
+            continue;
+        };
+
+        let Some(label_end_rel) = line[bracket_start + 1..].find(']') else {
+            out.push_str(&line[marker_start..]);
+            break;
+        };
+        let label_end = bracket_start + 1 + label_end_rel;
+        if bytes.get(label_end + 1) != Some(&b'(') {
+            let width = utf8_char_width(bytes[marker_start]);
+            out.push_str(&line[marker_start..marker_start + width]);
+            i = marker_start + width;
+            continue;
+        }
+        let Some(url_end_rel) = line[label_end + 2..].find(')') else {
+            out.push_str(&line[marker_start..]);
+            break;
+        };
+        let url_end = label_end + 2 + url_end_rel;
+        let label = &line[bracket_start + 1..label_end];
+        let url = &line[label_end + 2..url_end];
+        if is_repo_relative_link(url) {
+            out.push('`');
+            out.push_str(label);
+            out.push('`');
+        } else {
+            out.push_str(&line[marker_start..=url_end]);
+        }
+        i = url_end + 1;
+    }
+
+    out
+}
+
+fn find_backtick_close(bytes: &[u8], mut i: usize, width: usize) -> Option<usize> {
+    while i < bytes.len() {
+        if bytes[i] != b'`' {
+            i += utf8_char_width(bytes[i]);
+            continue;
+        }
+        let run = bytes[i..].iter().take_while(|b| **b == b'`').count();
+        if run == width {
+            return Some(i + run);
+        }
+        i += run;
+    }
+    None
+}
+
+fn utf8_char_width(first: u8) -> usize {
+    match first {
+        0x00..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        _ => 4,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -228,7 +406,7 @@ fn generate_claudemd_docs(items: &[ClaudeMdItem], docs_dir: &Path) -> Result<usi
             position,
             escape_title(&item.rel_path),
             item.rel_path,
-            escape_for_mdx(item.raw_content.trim()),
+            escape_for_mdx(&downgrade_repo_relative_links(item.raw_content.trim())),
         );
         let file_name = format!("{out_name}.mdx");
         write_file(&output_dir.join(&file_name), &mdx)?;
@@ -341,8 +519,9 @@ fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
 
     ensure_dir(&output_dir)?;
 
-    let mut keep: HashSet<String> = HashSet::new();
-    keep.insert("index.mdx".to_owned());
+    let mut keep_files: HashSet<String> = HashSet::new();
+    keep_files.insert("index.mdx".to_owned());
+    let mut keep_dirs: HashSet<String> = HashSet::new();
 
     // Per-category slug collision tracking: skill dirs whose names differ
     // only by case would produce the same output .mdx filename.
@@ -360,6 +539,11 @@ fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
             )));
         }
         emitted_slugs.insert(skill.dir.to_ascii_lowercase(), skill.dir.clone());
+        keep_dirs.insert(skill.dir.clone());
+        let skill_output_dir = output_dir.join(&skill.dir);
+        ensure_dir(&skill_output_dir)?;
+        let mut keep_skill_files: HashSet<String> = HashSet::new();
+        keep_skill_files.insert("index.mdx".to_owned());
 
         let script_md: Vec<&_> = skill
             .script_files
@@ -456,53 +640,51 @@ fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
             escape_title(&skill.name),
             body,
         );
-        let skill_file = format!("{}.mdx", skill.dir);
-        write_file(&output_dir.join(&skill_file), &mdx)?;
-        keep.insert(skill_file);
+        write_file(&skill_output_dir.join("index.mdx"), &mdx)?;
 
-        // Unlisted sub-pages.
-        let skill_slug_base = format!("claude-skills/{}", skill.dir);
+        // Unlisted sub-pages are genuine siblings of the skill's index page.
 
         for r in &skill.references {
-            let file_name = format!("{}--ref-{}.mdx", skill.dir, r.name);
+            let file_name = format!("ref-{}.mdx", r.name);
             write_unlisted_sub_page(
-                &output_dir.join(&file_name),
+                &skill_output_dir.join(&file_name),
                 &r.title,
-                &format!("{skill_slug_base}/ref-{}", r.name),
                 &escape_for_mdx(r.raw_content.trim()),
             )?;
-            keep.insert(file_name);
+            keep_skill_files.insert(file_name);
         }
         for f in &script_md {
             let slug = f.filename.trim_end_matches(".md");
             let raw = f.raw_content.as_deref().unwrap_or("");
             let title = f.title.clone().unwrap_or_else(|| slug.to_owned());
-            let file_name = format!("{}--script-{}.mdx", skill.dir, slug);
+            let file_name = format!("script-{slug}.mdx");
             write_unlisted_sub_page(
-                &output_dir.join(&file_name),
+                &skill_output_dir.join(&file_name),
                 &title,
-                &format!("{skill_slug_base}/script-{slug}"),
                 &escape_for_mdx(raw.trim()),
             )?;
-            keep.insert(file_name);
+            keep_skill_files.insert(file_name);
         }
         for f in &asset_md {
             let slug = f.filename.trim_end_matches(".md");
             let raw = f.raw_content.as_deref().unwrap_or("");
             let title = f.title.clone().unwrap_or_else(|| slug.to_owned());
-            let file_name = format!("{}--asset-{}.mdx", skill.dir, slug);
+            let file_name = format!("asset-{slug}.mdx");
             write_unlisted_sub_page(
-                &output_dir.join(&file_name),
+                &skill_output_dir.join(&file_name),
                 &title,
-                &format!("{skill_slug_base}/asset-{slug}"),
                 &escape_for_mdx(raw.trim()),
             )?;
-            keep.insert(file_name);
+            keep_skill_files.insert(file_name);
         }
+        prune_stale(&skill_output_dir, &keep_skill_files)?;
     }
 
     write_category_index(&output_dir, "Skills", 902, "Skill packages")?;
-    prune_stale(&output_dir, &keep)?;
+    // Remove legacy flat skill pages while preserving the category index, then
+    // prune nested directories for skills that were deleted.
+    prune_stale(&output_dir, &keep_files)?;
+    prune_stale_subdirs(&output_dir, &keep_dirs)?;
     Ok(items.len())
 }
 
