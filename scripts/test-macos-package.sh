@@ -64,7 +64,14 @@ test ! -e "$RUNTIME_ROOT/node_modules/vitest"
 test ! -e "$RUNTIME_ROOT/node_modules/@takazudo/zfb-darwin-x64"
 
 for RUN in 1 2; do
-  HOME="$PROBE_HOME" ZFB_DEV_BOOT_LAZY=1 PATH="$SENTINEL_DIR:$PATH" "$APP_PATH/Contents/MacOS/ccresdoc" &
+  # Launch through LaunchServices so Tauri resolves the app bundle's resource
+  # directory. Running Contents/MacOS/ccresdoc directly lacks NSBundle context
+  # and fails before it can copy the staged runtime workspace.
+  open -n -W \
+    --env "HOME=$PROBE_HOME" \
+    --env "ZFB_DEV_BOOT_LAZY=1" \
+    --env "PATH=$SENTINEL_DIR:$PATH" \
+    "$APP_PATH" &
   APP_PID=$!
   READY=0
   for _ in $(seq 1 300); do
