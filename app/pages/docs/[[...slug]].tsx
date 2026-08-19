@@ -1,177 +1,43 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource preact */
-// CCResDoc docs catch-all route.
-//
-// Optional catch-all [[...slug]] so the root docs/index.mdx builds at
-// /docs/ (zero-segment slug) and all nested pages build at their
-// respective paths (e.g. /docs/claude/index → /docs/claude/).
-//
-// paths() is synchronous per zfb ADR-004: getCollection() resolves from
-// the pre-loaded ContentSnapshot. category_no_page index files produce no
-// route (they render as non-linked sidebar headers).
+// Host-owned dynamic route: zfb dev cannot render an injected dynamic route,
+// and plugins are intentionally disabled. All route data and rendering below
+// are nevertheless provided by zudo-doc's public factories.
 
 import type { JSX } from "preact";
-import { DocLayoutWithDefaults } from "@takazudo/zudo-doc/doclayout";
-import { getDocs } from "../_data";
-import { mdxComponents } from "../_mdx-components";
-import { HeadWithDefaults } from "../lib/_head-with-defaults";
-import { HeaderWithDefaults } from "../lib/_header-with-defaults";
-import { FooterWithDefaults } from "../lib/_footer-with-defaults";
-import { SidebarWithDefaults } from "../lib/_sidebar-with-defaults";
-import { BodyEndIslands } from "../lib/_body-end-islands";
-import { composeMetaTitle } from "../lib/_compose-meta-title";
-import { toSlugParams } from "@/utils/slug";
-import { settings } from "@/config/settings";
-import { extractHeadings } from "@takazudo/zudo-doc/extract-headings";
-import type { HeadingItem } from "@takazudo/zudo-doc/extract-headings";
+import type {
+  DocPageAutoIndexProps,
+  DocPageEntryProps,
+} from "@takazudo/zudo-doc/doc-page-props";
+import { renderDocPage } from "../lib/_chrome";
+import { routeContext } from "../lib/_route-context";
 
-// ---------------------------------------------------------------------------
-// Props contract
-// ---------------------------------------------------------------------------
+export const frontmatter = { title: "Docs" };
 
-interface DocPageProps {
-  slug: string;
-  title: string;
-  description?: string;
-  navSection?: string;
-  hideSidebar?: boolean;
-  hideToc?: boolean;
-  /** TOC headings extracted from the entry body. Passed to DocLayoutWithDefaults so
-   *  its built-in Toc/MobileToc render the item list. Pages with hide_toc: true
-   *  still carry headings — the layout suppresses them via hideToc. */
-  headings: readonly HeadingItem[];
-  // MDX render function for this entry. zfb does NOT auto-inject `Content` for a
-  // programmatic catch-all route (only for MDX-backed page modules), so paths()
-  // wires it explicitly from the collection entry — mirrors zudo-doc's scaffold
-  // `<props.entry.Content />`. Optional only because TS can't prove it's set.
-  Content?: (props: { components?: Record<string, unknown> }) => JSX.Element;
-}
-
-// ---------------------------------------------------------------------------
-// Nav section detection
-// ---------------------------------------------------------------------------
-
-function detectNavSection(slug: string): string | undefined {
-  // Match by first path segment: "claude-md/global" → first segment "claude-md"
-  // must equal or start-with-dash the categoryMatch (e.g. "claude" matches
-  // "claude", "claude/...", "claude-md/...", "claude-commands/..." etc.).
-  // Concretely: segment === match  (exact: "claude")
-  //          or segment.startsWith(match + "-")  (sibling: "claude-md", "claude-commands" …)
-  //          or segment.startsWith(match + "/")  (subdirectory handled by first-segment split)
-  // This lets a single categoryMatch: "claude" in headerNav cover all claude-* categories
-  // without requiring one entry per category.
-  const firstSegment = slug.split("/")[0];
-  for (const item of settings.headerNav) {
-    const match = (item as { categoryMatch?: string }).categoryMatch;
-    if (
-      match &&
-      (firstSegment === match ||
-        firstSegment.startsWith(match + "-") ||
-        firstSegment.startsWith(match + "/"))
-    ) {
-      return match;
-    }
-  }
-  return undefined;
-}
-
-// ---------------------------------------------------------------------------
-// paths() — synchronous route enumeration
-// ---------------------------------------------------------------------------
+type DocPageProps = DocPageEntryProps | DocPageAutoIndexProps;
 
 export function paths(): Array<{
   params: { slug: string[] };
-  props: DocPageProps & { params: { slug: string[] } };
+  props: DocPageProps;
 }> {
-  const entries = getDocs("docs");
+  const locale = routeContext.defaultLocale;
+  const source = routeContext.resolveNavSource(locale, undefined, {
+    keepUnlisted: true,
+  });
 
-  return entries
-    .filter((entry) => {
-      // Skip category_no_page entries — they label sidebar categories but
-      // produce no page routes.
-      if (entry.data.category_no_page) return false;
-      // Skip draft entries
-      if (entry.data.draft) return false;
-      return true;
-    })
-    .map((entry) => {
-      const slug = entry.id;
-      const slugParams = toSlugParams(slug);
-      const navSection = detectNavSection(slug);
-      // Current zudo-doc heading IDs are always hierarchical, matching the
-      // Markdown pipeline and rendered anchors.
-      const headings = extractHeadings(entry.body ?? "");
-      const props: DocPageProps & { params: { slug: string[] } } = {
-        slug,
-        title: entry.data.title,
-        description: entry.data.description,
-        navSection,
-        hideSidebar: entry.data.hide_sidebar ?? false,
-        hideToc: entry.data.hide_toc ?? false,
-        headings,
-        Content: entry.Content as DocPageProps["Content"],
-        params: { slug: slugParams },
-      };
-      return { params: { slug: slugParams }, props };
-    });
+  return routeContext
+    .buildDocRouteEntries({ source, locale, routeSig: `docs;${locale}` })
+    .map((item) => ({
+      params: { slug: item.slugParams },
+      props: item.props,
+    }));
 }
 
-// ---------------------------------------------------------------------------
-// Page component
-// ---------------------------------------------------------------------------
+type PageArgs = DocPageProps & { params: { slug: string[] } };
 
-interface PageProps extends DocPageProps {
-  params: { slug: string[] };
-}
-
-export default function DocsPage({
-  slug,
-  title,
-  description,
-  navSection,
-  hideSidebar,
-  hideToc,
-  headings,
-  Content,
-}: PageProps): JSX.Element {
-  const metaTitle = composeMetaTitle(title);
-
-  return (
-    <DocLayoutWithDefaults
-      title={metaTitle}
-      lang="en"
-      head={
-        <HeadWithDefaults
-          title={metaTitle}
-          description={description}
-        />
-      }
-      headerOverride={
-        <HeaderWithDefaults
-          lang="en"
-          currentSlug={slug}
-          navSection={navSection}
-        />
-      }
-      sidebarOverride={
-        hideSidebar ? undefined : (
-          <SidebarWithDefaults
-            currentSlug={slug}
-            navSection={navSection}
-          />
-        )
-      }
-      hideSidebar={hideSidebar}
-      hideToc={hideToc}
-      headings={headings}
-      footerOverride={<FooterWithDefaults />}
-      bodyEndComponents={<BodyEndIslands />}
-    >
-      {Content ? (
-        <Content components={mdxComponents as Record<string, unknown>} />
-      ) : (
-        <p>No content.</p>
-      )}
-    </DocLayoutWithDefaults>
-  );
+export default function DocsPage(props: PageArgs): JSX.Element {
+  return renderDocPage(props, {
+    locale: routeContext.defaultLocale,
+    docHistoryContentDir: routeContext.settings.docsDir,
+  });
 }

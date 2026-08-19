@@ -1,5 +1,5 @@
-// Temporary host-route compatibility adapter. zfb.config.ts is authoritative;
-// issue #96 migrates the remaining host pages to package route/context APIs.
+// Serializable product settings for the plugin-free host route context.
+// zudo-doc owns the behavior; CCResDoc owns only these product choices.
 
 import { DEFAULT_SETTINGS } from "@takazudo/zudo-doc/config";
 import type {
@@ -39,6 +39,8 @@ export const settings = {
   sidebarResizer: true,
   // Sidebar toggle for mobile
   sidebarToggle: true,
+  dynamicPageTransition: true,
+  findInPage: true,
   // Simple footer (no link columns, just copyright)
   footer: {
     links: [] as Array<{ title: string; items: Array<{ label: string; href: string }> }>,
@@ -46,7 +48,7 @@ export const settings = {
   },
   // Header nav — link to the claude docs overview section
   headerNav: [
-    { label: "Claude", path: "/docs/claude", categoryMatch: "claude" },
+    { label: "Claude", path: "/docs", categoryMatch: "claude" },
   ] as HeaderNavItem[],
   headerRightItems: [
     { type: "component", component: "theme-toggle" },
@@ -59,4 +61,5 @@ export const settings = {
   htmlPreview: undefined,
   // No frontmatter preview
   frontmatterPreview: false as false,
+  packageOwnedRoutes: false,
 } satisfies Settings;

@@ -8,13 +8,15 @@
 import { useState, useCallback, useEffect, useMemo, useRef, useContext } from "preact/hooks";
 import { createContext } from "preact";
 import type { JSX } from "preact";
-import type { NavNode } from "@/utils/docs";
-import type { LocaleLink } from "@/types/locale";
+import type {
+  SidebarLocaleLink as LocaleLink,
+  SidebarNavNode as NavNode,
+} from "@takazudo/zudo-doc/sidebar/types";
 // Sidebar nav must react to the same client-router lifecycle event the mobile
 // toggle (sidebar-toggle.tsx) listens on, so soft swaps re-sync the active slug.
 import { AFTER_NAVIGATE_EVENT } from "@takazudo/zudo-doc/transitions";
 import { INDENT, BASE_PAD, connectorLeft, ConnectorLines, CategoryLinkIcon } from "./tree-nav-shared";
-import { stripBase } from "@/utils/base";
+import { urlHelpers } from "@/config/i18n";
 // BARE ThemeToggle (#2012 E2) — this footer toggle renders inside the
 // SidebarToggle island, so it must NOT bring its own island wrapper.
 import { ThemeToggle } from "@takazudo/zudo-doc/theme-toggle";
@@ -263,7 +265,7 @@ function findActiveSlug(nodes: NavNode[], pathname: string): string | undefined 
   // Strip the base prefix from pathname so that node.href values (which are
   // stored without the base) compare correctly under a non-root deployment
   // (fix: active highlight was broken when base !== "/").
-  const pathnameWithoutBase = normalizePath(stripBase(pathname));
+  const pathnameWithoutBase = normalizePath(urlHelpers.stripBase(pathname));
   for (const node of nodes) {
     if (node.href && normalizePath(node.href) === pathnameWithoutBase) return node.slug;
     const found = findActiveSlug(node.children, pathname);

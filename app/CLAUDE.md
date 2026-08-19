@@ -63,17 +63,11 @@ app/
   pages/
     index.tsx             — home page
     404.tsx               — 404 page
-    _data.ts              — zfb collection → DocsEntry bridge
-    _mdx-components.ts    — MDX component map (CategoryNav, admonitions, etc.)
     docs/
       [[...slug]].tsx     — catch-all docs route
     lib/
-      _head-with-defaults.tsx     — <head> slot with ColorSchemeProvider
-      _header-with-defaults.tsx   — site header wrapper
-      _footer-with-defaults.tsx   — minimal footer wrapper
-      _sidebar-with-defaults.tsx  — SidebarTree island wrapper
-      _body-end-islands.tsx       — ClientRouterBootstrap island
-      _compose-meta-title.ts      — "<page> | CCResDoc" title helper
+      _route-context.ts   — serializable host payload → zudo-doc RouteContext
+      _chrome.ts          — one createChrome() seam shared by host routes
   src/
     config/
       settings.ts         — temporary host-route adapter (removed by issue #96)
@@ -93,6 +87,7 @@ app/
       client-router-bootstrap.tsx — SPA router activation island
     content/
       docs/               — MDX content root
+        index.mdx         — routed resource-category landing page
         welcome.mdx       — placeholder page (draft: true; excluded from build)
         claude*/          — Wave 2 generated (gitignored — see below)
     styles/
@@ -150,22 +145,21 @@ path is NOT emitted as a docs page.
 
 ### Claude overview page
 
-`claude/index.mdx` includes a `<CategoryNav>` component that renders
-the category cards:
+The checked-in routed `docs/index.mdx` includes a `<CategoryNav>` component
+that renders category cards. Generated `claude*/index.mdx` files remain
+`category_no_page` metadata and do not emit routes:
 
 ```mdx
 ---
-title: Claude Resources
-sidebar_position: 899
-category_no_page: true
-generated: true
+title: Claude Code Resources
+description: Browse generated Claude Code resources.
 ---
 
 <CategoryNav categories={["claude-md", "claude-commands", "claude-skills", "claude-agents"]} />
 ```
 
-The `CategoryNavWrapper` in `pages/_mdx-components.ts` resolves the
-slug strings to `NavNode[]` from the built sidebar tree.
+The wrapper produced by zudo-doc's MDX factory resolves those slug strings
+against the current package-owned navigation tree.
 
 ### Route building
 

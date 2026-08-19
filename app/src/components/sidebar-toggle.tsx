@@ -10,8 +10,10 @@ import { useState, useEffect } from "preact/hooks";
 // than hard-coding `astro:*` literals.
 import { AFTER_NAVIGATE_EVENT } from "@takazudo/zudo-doc/transitions";
 import SidebarTree from "@/components/sidebar-tree";
-import type { NavNode } from "@/utils/docs";
-import type { LocaleLink } from "@/types/locale";
+import type {
+  SidebarLocaleLink as LocaleLink,
+  SidebarNavNode as NavNode,
+} from "@takazudo/zudo-doc/sidebar/types";
 // Types-only subpath (`./sidebar/types`) sidesteps the JSX type-graph
 // pulled in by `./sidebar`'s runtime barrel.
 import type { SidebarRootMenuItem } from "@takazudo/zudo-doc/sidebar/types";
