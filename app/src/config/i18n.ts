@@ -1,7 +1,9 @@
-// Temporary single-locale adapter for host-owned routes. Issue #96 replaces
-// it with package route context; translation data is already package-owned.
+// Browser-safe single-locale adapter retained only by the legacy navigation
+// islands. Server routes use pages/lib/_route-context.ts directly.
 
 import { defaultTranslations } from "@takazudo/zudo-doc/i18n-defaults";
+import type { FactoryI18n } from "@takazudo/zudo-doc/factory-context";
+import { makeUrlHelpers } from "@takazudo/zudo-doc/url-helpers";
 import { settings } from "./settings";
 
 export const defaultLocale = settings.defaultLocale;
@@ -28,3 +30,17 @@ export function t(key: TranslationKey | string, _locale?: string): string {
   }
   return value ?? key;
 }
+
+/**
+ * Browser-safe package contexts retained for the legacy navigation islands.
+ * Issue #97 replaces those islands directly; keeping this adapter here avoids
+ * making a server-side route context reachable from their client bundles.
+ */
+export const i18n = {
+  defaultLocale,
+  locales,
+  getLocaleLabel: (locale: string) => locale.toUpperCase(),
+  t,
+} satisfies FactoryI18n;
+
+export const urlHelpers = makeUrlHelpers(settings, i18n);
