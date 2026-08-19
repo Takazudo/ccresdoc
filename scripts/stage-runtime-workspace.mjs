@@ -15,6 +15,10 @@ import {
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  themePackInputDigest,
+  validateGeneratedThemePacks,
+} from "../app/scripts/sync-theme-packs.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appRoot = join(repoRoot, "app");
@@ -38,11 +42,13 @@ const appFiles = [
   "tsconfig.json",
   "zfb.config.ts",
   "pages",
+  "public",
   "src",
   "dist",
 ];
 
 const packageJson = JSON.parse(readFileSync(join(appRoot, "package.json"), "utf8"));
+const themeAssets = validateGeneratedThemePacks();
 const packageQueue = Object.keys(packageJson.dependencies ?? {});
 const packages = new Map();
 const skippedZudoDocBuildOnly = new Set();
@@ -84,6 +90,7 @@ for (const entry of appFiles) {
   if (!existsSync(source)) continue;
   cpSync(source, join(stageApp, entry), { recursive: true, dereference: true });
 }
+validateGeneratedThemePacks({ outputRoot: join(stageApp, "public", "theme-packs") });
 
 const runtimePackageJson = {
   name: packageJson.name,
@@ -110,9 +117,16 @@ if (process.platform !== "win32") {
   assert((statSync(nativeBinary).mode & 0o111) !== 0, "native zfb binary must remain executable");
 }
 
+const themeAssetsDigest = themePackInputDigest();
+
 const lockfile = readFileSync(join(appRoot, "pnpm-lock.yaml"));
-const config = readFileSync(join(appRoot, "zfb.config.ts"));
-const token = createHash("sha256").update(lockfile).update(config).digest("hex").slice(0, 32);
+const sourceConfig = readFileSync(join(appRoot, "zfb.config.ts"), "utf8");
+// The verifier intentionally derives the refresh token only from staged lock +
+// config bytes. Embed the complete generated-theme input digest as a harmless
+// config comment so catalog, CSS, font, or sync changes participate too.
+const stagedConfig = `${sourceConfig.trimEnd()}\n// staged theme-assets digest: ${themeAssetsDigest}\n`;
+writeFileSync(join(stageApp, "zfb.config.ts"), stagedConfig);
+const token = createHash("sha256").update(lockfile).update(stagedConfig).digest("hex").slice(0, 32);
 writeFileSync(join(stageRoot, "version.txt"), `${token}\n`);
 
 const stagedNames = [...packages.keys()].sort();
@@ -123,6 +137,12 @@ const manifest = {
   host: `${process.platform}-${process.arch}`,
   hostPackage,
   nativeBinary: relative(stageRoot, nativeBinary),
+  themeAssets: {
+    digest: themeAssetsDigest,
+    packs: themeAssets.packs,
+    files: themeAssets.files,
+    publicRoot: "app/public/theme-packs",
+  },
   packages: stagedNames.map((name) => ({ name, version: packages.get(name).version })),
   excluded: {
     appEntries: ["test", "vitest.config.ts", ".zfb", ".zfb-build", "node_modules/.bin"],

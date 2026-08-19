@@ -11,6 +11,7 @@ node_modules/
 app/.zfb/
 app/.zfb-build/
 app/dist/**
+app/public/theme-packs/
 
 # Wave 2 — Rust-generated MDX content (not committed; rebuilt on launch)
 app/src/content/docs/claude*/
