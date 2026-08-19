@@ -75,15 +75,7 @@ app/
     types/
       docs-entry.ts       — DocsEntry interface
       locale.ts           — LocaleLink (single-locale stub)
-    utils/
-      base.ts             — withBase, stripBase, navHref, docsUrl
-      slug.ts             — toRouteSlug, toSlugParams
-      docs.ts             — NavNode type + buildNavTree (SidebarNode → NavNode bridge)
-      smart-break.tsx     — smart word-break for path-like labels
     components/
-      sidebar-tree.tsx    — SidebarTree island (filter + tree nav)
-      sidebar-toggle.tsx  — mobile hamburger + slide-in aside
-      tree-nav-shared.tsx — connector lines, icons shared by sidebar components
       client-router-bootstrap.tsx — SPA router activation island
     content/
       docs/               — MDX content root
@@ -93,6 +85,12 @@ app/
     styles/
       global.css          — package CSS imports + CCResDoc accessibility overrides
 ```
+
+Sidebar/tree rendering, mobile and desktop toggles, path-aware labels, active
+route tracking, filtering, and connector geometry come directly from the public
+`@takazudo/zudo-doc` navigation entry points. Do not add host copies of those
+components; see `docs/architecture/sidebar-navigation.md` for the ownership and
+accessibility contract.
 
 ## MDX Content Contract (Wave 2)
 

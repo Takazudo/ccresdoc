@@ -149,6 +149,15 @@ Decision gate output: Keep host-owned `pages/index.tsx`, `pages/404.tsx`, and `p
 
 Decision gate output: Target `@takazudo/zudo-doc/sidebar-tree-island`, `sidebar-toggle-island`, `desktop-sidebar-toggle-island`, `site-tree-nav-island`, `tree-nav-shared`, `smart-break`, `sidebar-active-slug`, `current-path`, `sidebar-utils`, and browser-safe `site-schema`; delete local `sidebar-tree.tsx`, `sidebar-toggle.tsx`, `tree-nav-shared.tsx`, and `smart-break.tsx` after parity. Retain only a thin adapter for CCResDoc's generated category grouping if package `nav-scope` cannot express it; do not retain duplicated tree keyboard/rendering logic. Automated DOM states: roving tabindex, Arrow/Home/End/Enter/Space, roles/labels, expanded/selected, focus restore, persisted open state, filter, active path after soft navigation, no duplicate handlers, mobile drawer/inert, theme toggle, smart path wrapping, and connector geometry. Run Vitest/happy-dom plus the issue's browser harness at desktop 1440x900 and narrow 390x844; manually inspect horizontal overflow and focus rings in both light/dark modes.
 
+Issue #97 resolved this gate with direct package ownership and no generated-
+category adapter. zudo-doc 5.6.0's public sidebar uses native links and
+disclosure buttons rather than a WAI-ARIA tree, so roving tabindex and tree-level
+Arrow/Home/End handling are not applicable to the selected upstream component.
+The supported DOM states and this explicit deviation are guarded and documented
+in `app/test/navigation-islands.test.tsx` and
+`docs/architecture/sidebar-navigation.md`; a host keyboard/rendering fork was
+not retained.
+
 ### Issue #98
 
 Decision gate output: The final schema is `@takazudo/zudo-doc/docs-schema`'s passthrough schema. Existing generator fields remain valid: `title`, `description`, `sidebar_position`, `sidebar_label`, `draft`, `unlisted`, `hide_sidebar`, `hide_toc`, `slug`, `generated`, and `category_no_page`; current schema additionally accepts `category`, `tags`, `search_exclude`, pagination overrides, `wide`, `doc_history`, `standalone`, and `category_sort_order`, and preserves unknown fields. Routes remain `/docs/` plus hierarchical generated slugs; `category_no_page` emits navigation metadata without a page, draft stays unrouted, and unlisted stays routable but absent from navigation. Heading IDs are now hierarchical and require no generator frontmatter change. Keep the in-process Rust generator/watcher and `<CategoryNav categories={...}>`; update only the thin MDX binding if Task #96 requires it. Test unchanged-input idempotence, safe `~/.claude` scoping, category ordering/no-page behavior, generated markers, escaping, duplicate headings, changed-content HMR, and representative skills/commands/agents/CLAUDE.md fixtures.
