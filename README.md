@@ -17,7 +17,7 @@ WebView → http://localhost:4892/
 ```
 
 Key facts:
-- **Node-free at runtime**: `zfb dev` with zero `.mjs` plugins spawns no Node host. The native `@takazudo/zfb-<platform>/zfb` binary is bundled in `node_modules` (populated at build/setup time via `pnpm install`, Node at setup only).
+- **Node-free at runtime**: `zfb dev` with zero `.mjs` plugins spawns no Node host. The native `@takazudo/zfb-<platform>/zfb` binary is bundled in `node_modules` (populated at build/setup time via `pnpm install --frozen-lockfile`, Node at setup only).
 - **Port 4892**: pinned in `app/zfb.config.ts` and `src-tauri/tauri.conf.json`.
 - **Writable workspace**: the bundled `app/` tree is copied to `<app_data_dir>/app-workspace/` on first launch, gated by a version token + a `.ccresdoc-workspace-ready` sentinel. The token is the host's compiled `CARGO_PKG_VERSION` (bumped per release → the copy refreshes on upgrade); an optional `version.txt` beside the bundled `app/` overrides it if present. Dev mode uses the repo `app/` directly.
 - **Rust generator** (`crates/ccresdoc-claude-md`): `generate()` + `watch()` walk `~/.claude/` and emit zudo-doc-compatible MDX. `zfb dev` content-watch HMRs the result.
@@ -33,7 +33,8 @@ End users need nothing beyond the `.app` bundle. To develop or build from source
 ## Develop
 
 ```bash
-cd app && pnpm install   # once — populates node_modules incl. native zfb binary
+cd app && pnpm install --frozen-lockfile   # once — populates node_modules incl. native zfb binary
+pnpm --dir app run validate:dependencies
 cargo tauri dev
 ```
 
@@ -55,7 +56,7 @@ cd app && pnpm exec zfb build
 cargo tauri build
 ```
 
-`beforeBuildCommand` runs `cd app && pnpm install && pnpm exec zfb build` automatically
+`beforeBuildCommand` runs `cd app && pnpm install --frozen-lockfile && pnpm exec zfb build` automatically
 (Tauri runs build hooks from the project root) — no global `zfb` on PATH required. Output: `src-tauri/target/release/bundle/macos/CCResDoc.app`.
 
 See `.claude/skills/ccresdoc-build/SKILL.md` for the full install workflow (clean → build → verify → kill → install → launch).
@@ -76,7 +77,11 @@ See per-directory CLAUDE.md files for detailed architecture notes.
 
 ## CI
 
-GitHub Actions runs `cargo fmt --check`, `cargo clippy --workspace --exclude ccresdoc`, and `cargo test --workspace --exclude ccresdoc` on every push and PR targeting `main` or `base/ccresdoc-zudo-doc-rewrite`. The `ccresdoc` (src-tauri) crate is excluded because webkit2gtk is not available on ubuntu-latest. The `zfb build` step is run locally (via `scripts/run-b4push.sh`) but deferred from CI — see `.github/workflows/ci.yml` for the rationale.
+GitHub Actions runs frozen npm-published frontend dependency, type, zfb-check,
+Vitest, and native-build gates alongside `cargo fmt --check`,
+`cargo clippy --workspace --exclude ccresdoc`, and `cargo test --workspace
+--exclude ccresdoc`. The `ccresdoc` (src-tauri) crate is excluded because
+webkit2gtk is not available on ubuntu-latest.
 
 ## Before pushing
 
@@ -84,4 +89,8 @@ GitHub Actions runs `cargo fmt --check`, `cargo clippy --workspace --exclude ccr
 bash scripts/run-b4push.sh
 ```
 
-Runs all checks locally: cargo fmt, clippy (`--exclude ccresdoc`), test (`--exclude ccresdoc`), plus `pnpm install` and `pnpm exec zfb build` in `app/`. The `ccresdoc` (src-tauri) crate is excluded from clippy/test to match CI — it requires webkit2gtk/gtk3 which are not available on Linux CI runners.
+Runs all checks locally: frozen dependency install and validation, strict
+TypeScript, `zfb check`, Vitest, native zfb build, cargo fmt, clippy
+(`--exclude ccresdoc`), and tests (`--exclude ccresdoc`). The `ccresdoc`
+(src-tauri) crate is excluded from clippy/test to match CI — it requires
+webkit2gtk/gtk3 which are not available on Linux CI runners.
