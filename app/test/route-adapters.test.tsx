@@ -168,7 +168,7 @@ describe("host-owned package route adapters", () => {
     expect(home).not.toContain("data-home-page");
   });
 
-  it("renders empty header navigation and a /docs/ logo target", () => {
+  it("renders empty header navigation, a /docs/ logo, and full mobile resources", () => {
     expect(routeContext.settings.headerNav).toEqual([]);
 
     const docsRoot = routeItems.find((item) => item.params.slug.length === 0);
@@ -179,6 +179,24 @@ describe("host-owned package route adapters", () => {
 
     expect(html).toMatch(/<a href="\/docs\/" data-header-logo="true"/);
     expect(html).not.toContain(">Claude</a>");
+
+    const shell = document.createElement("div");
+    shell.innerHTML = html;
+    const mobileToggle = shell.querySelector<HTMLElement>(
+      '[data-zfb-island="SidebarToggle"]',
+    );
+    expect(mobileToggle).not.toBeNull();
+    const mobileProps = JSON.parse(
+      mobileToggle!.getAttribute("data-props") ?? "null",
+    );
+    expect(mobileProps.nodes.length).toBeGreaterThan(0);
+    expect(mobileProps.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ slug: "claude-md" }),
+      ]),
+    );
+    expect(mobileProps).not.toHaveProperty("rootMenuItems");
+    expect(mobileProps).not.toHaveProperty("backToMenuLabel");
   });
 
   it("SSR-bootstraps every catalog theme pack and serializes switcher order", () => {
