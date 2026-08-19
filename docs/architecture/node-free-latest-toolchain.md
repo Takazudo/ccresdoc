@@ -1,6 +1,6 @@
 # Node-free latest-toolchain compatibility decision
 
-Status: implemented for the zfb 2.7.1 / zudo-doc 5.6.0 migration. This document
+Status: implemented for the zfb 2.7.1 / zudo-doc 5.7.0 migration. This document
 preserves the issue #93 architecture decision and its reproducible evidence;
 the current acceptance commands and explicit host-only gaps are in
 [`verification-matrix.md`](verification-matrix.md).
@@ -65,7 +65,7 @@ Committed evidence:
 - `evidence/config-matrix.json`: native `zfb check` and build results plus Node-invocation evidence.
 - `evidence/native-runtime.json`: port 4892 route serving, island marker, live content update, process sample, and silent failing sentinel.
 
-Official immutable source anchors are zfb tag `v2.7.1` at `0d59f4d5273c13ed9769f965eb3d299714119747` and zudo-doc tag `v5.6.0` at `2ea74ee1e07ca2f162a146a5461ca3d7f038a927`. The exact npm tarball integrity values are recorded in `package-facts.json` and the lockfile.
+Official immutable source anchors are zfb tag `v2.7.1` at `0d59f4d5273c13ed9769f965eb3d299714119747`; zudo-doc `5.7.0` is pinned in `app/pnpm-lock.yaml`. The exact npm tarball integrity values are recorded in the lockfile.
 
 ## Candidate results
 
@@ -83,7 +83,7 @@ The selected native Linux probe served `/` and `/docs/probe/`, emitted the `Prob
 Pin first-party packages exactly:
 
 - `@takazudo/zfb`, `@takazudo/zfb-runtime`, and `@takazudo/zfb-md-wasm`: `2.7.1`.
-- `@takazudo/zudo-doc`: `5.6.0`.
+- `@takazudo/zudo-doc`: `5.7.0`.
 - Direct optional platform packages retained at `2.7.1`: `zfb-darwin-arm64`, `zfb-darwin-x64`, `zfb-linux-arm64-gnu`, `zfb-linux-x64-gnu`, `zfb-win32-x64-msvc`. pnpm installs only the matching host package, but explicit declarations keep the Tauri resolver and cross-platform package map stable.
 - Reachable peers: `preact@10.29.1`, `preact-render-to-string@6.6.7`, `zod@4.3.6`, and `katex@0.16.22`. KaTeX is reachable even with `math:false` because `createMdxComponents()` imports the package `MathBlock` implementation.
 - Build-only foundation: `tailwindcss@4.2.0`, `@tailwindcss/vite@4.2.0`, `typescript@5.9.2`. The downstream test harness uses `vitest@4.0.17` with `happy-dom@20.7.0`.
@@ -153,7 +153,7 @@ Decision gate output: Keep host-owned `pages/index.tsx`, `pages/404.tsx`, and `p
 Decision gate output: Target `@takazudo/zudo-doc/sidebar-tree-island`, `sidebar-toggle-island`, `desktop-sidebar-toggle-island`, `site-tree-nav-island`, `tree-nav-shared`, `smart-break`, `sidebar-active-slug`, `current-path`, `sidebar-utils`, and browser-safe `site-schema`; delete local `sidebar-tree.tsx`, `sidebar-toggle.tsx`, `tree-nav-shared.tsx`, and `smart-break.tsx` after parity. Retain only a thin adapter for CCResDoc's generated category grouping if package `nav-scope` cannot express it; do not retain duplicated tree keyboard/rendering logic. Automated DOM states: roving tabindex, Arrow/Home/End/Enter/Space, roles/labels, expanded/selected, focus restore, persisted open state, filter, active path after soft navigation, no duplicate handlers, mobile drawer/inert, theme toggle, smart path wrapping, and connector geometry. Run Vitest/happy-dom plus the issue's browser harness at desktop 1440x900 and narrow 390x844; manually inspect horizontal overflow and focus rings in both light/dark modes.
 
 Issue #97 resolved this gate with direct package ownership and no generated-
-category adapter. zudo-doc 5.6.0's public sidebar uses native links and
+category adapter. The historical zudo-doc 5.6.0 public sidebar used native links and
 disclosure buttons rather than a WAI-ARIA tree, so roving tabindex and tree-level
 Arrow/Home/End handling are not applicable to the selected upstream component.
 The supported DOM states and this explicit deviation are guarded and documented

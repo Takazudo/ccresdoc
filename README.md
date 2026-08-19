@@ -13,7 +13,7 @@ The app is a thin Tauri host around a **node-free sidecar architecture**: at lau
 app/src/content/docs/claude*/   ← generated MDX (gitignored)
      │
      ▼  zfb dev (native binary, port 4892, node-free at runtime)
-WebView → http://localhost:4892/
+WebView → http://localhost:4892/docs/
 ```
 
 Key facts:
@@ -40,7 +40,9 @@ cargo tauri dev
 
 `cargo tauri dev` resolves the native `zfb` binary from `app/node_modules`, runs the
 Rust generator + watcher in-process, spawns `zfb dev --port 4892`, and opens the Tauri
-window once `GET /` returns 200. Changes to `~/.claude/` are picked up live via HMR.
+window once `GET /docs/` returns HTTP 200 with the generated `Claude Resources`
+marker. `/` is the exact canonical docs-shell alias, and the logo links directly
+to `/docs/`. Changes to `~/.claude/` are picked up live via HMR.
 
 To rebuild the frontend shell manually (e.g. after changing `app/pages/`):
 
