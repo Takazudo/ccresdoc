@@ -5,7 +5,7 @@
   "build": {
     "frontendDist": "./frontend",
     "beforeBuildCommand": "pnpm --dir app install --frozen-lockfile && pnpm --dir app exec zfb build && node scripts/stage-runtime-workspace.mjs",
-    "devUrl": "http://localhost:4892/"
+    "devUrl": "http://localhost:4892/docs/"
   },
   "app": {
     "windows": [],

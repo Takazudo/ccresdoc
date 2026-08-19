@@ -11,8 +11,9 @@
 //!      `~/.claude` regenerate the MDX tree and `zfb dev`'s content-watch HMRs,
 //!   3. spawns `zfb dev --port 4892` (cwd = the writable app project) as a
 //!      process-group sidecar,
-//!   4. polls readiness on `/` (scaled for the cold first build of ~135
-//!      skills) and navigates the WebView to `http://localhost:4892/`.
+//!   4. polls semantic readiness on `/docs/` (scaled for the cold first build
+//!      of ~135 skills) and navigates the WebView there only after generated
+//!      resource navigation is present.
 //!
 //! On window close the sidecar process group is SIGTERM→SIGKILL'd so nothing
 //! is left holding port 4892.
@@ -30,7 +31,12 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const PORT: u16 = 4892;
-const DOCS_PATH: &str = "/";
+const DOCS_PATH: &str = "/docs/";
+/// Generator-owned category title rendered into `/docs/`'s full navigation
+/// tree. The checked-in staged snapshot lacks this marker, so a stale 200 can
+/// never release the loading screen before generation + zfb rendering finish.
+const READINESS_MARKER: &str = "Claude Resources";
+const LOADING_URL: &str = "tauri://localhost/index.html";
 const IS_DEV: bool = cfg!(debug_assertions);
 
 /// Cold first launch must walk + render ~135 skills (plus commands/agents/
@@ -88,6 +94,10 @@ struct AppState {
     /// retry). A launch thread that finishes after a newer one began sees a
     /// mismatch and skips its navigate/emit so the two cannot race.
     launch_gen: AtomicU64,
+    /// Serializes launch mutation (watcher/sidecar replacement). A newer
+    /// generation can supersede an older one immediately, while this lock
+    /// prevents their teardown/spawn phases from interleaving.
+    launch_lock: Mutex<()>,
 }
 
 // ── Helpers ───────────────────────────────────────
@@ -128,6 +138,17 @@ fn log_path(app_handle: &AppHandle) -> String {
 fn navigate_to_docs(app_handle: &AppHandle) {
     if let Some(w) = app_handle.get_webview_window("main") {
         if let Ok(url) = docs_url().parse::<tauri::Url>() {
+            let _ = w.navigate(url);
+        }
+    }
+}
+
+/// Restore the bundled loading surface before a Refresh begins. Retry already
+/// runs from this page's error panel, so both paths converge on the same launch
+/// lease and semantic-readiness classifier.
+fn navigate_to_loading(app_handle: &AppHandle) {
+    if let Some(w) = app_handle.get_webview_window("main") {
+        if let Ok(url) = LOADING_URL.parse::<tauri::Url>() {
             let _ = w.navigate(url);
         }
     }
@@ -523,6 +544,17 @@ fn resolve_zfb_binary(workspace: &Path) -> Result<PathBuf, String> {
 
 // ── Sidecar (zfb dev) management ──────────────────
 
+/// Build the native zfb command. `ZFB_DEV_BOOT_LAZY` is removed explicitly:
+/// Finder and terminal launches may inherit it, but boot-lazy is allowed to
+/// serve staged `dist/` before the freshly generated resource tree is ready.
+fn zfb_dev_command(zfb_bin: &Path, workspace: &Path) -> Command {
+    let mut cmd = Command::new(zfb_bin);
+    cmd.args(["dev", "--port", &PORT.to_string()])
+        .current_dir(workspace)
+        .env_remove("ZFB_DEV_BOOT_LAZY");
+    cmd
+}
+
 /// Spawn `zfb dev --port 4892` with cwd = the writable workspace, in its own
 /// process group so the whole tree dies on window close (no orphan on 4892).
 fn spawn_zfb_dev(zfb_bin: &Path, workspace: &Path, log_path: &str) -> Result<Sidecar, String> {
@@ -535,11 +567,18 @@ fn spawn_zfb_dev(zfb_bin: &Path, workspace: &Path, log_path: &str) -> Result<Sid
         ),
     );
 
-    let mut cmd = Command::new(zfb_bin);
-    cmd.args(["dev", "--port", &PORT.to_string()])
-        .current_dir(workspace)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    let sidecar_log = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .map_err(|e| format!("open sidecar log {log_path}: {e}"))?;
+    let sidecar_stderr = sidecar_log
+        .try_clone()
+        .map_err(|e| format!("clone sidecar log {log_path}: {e}"))?;
+
+    let mut cmd = zfb_dev_command(zfb_bin, workspace);
+    cmd.stdout(Stdio::from(sidecar_log))
+        .stderr(Stdio::from(sidecar_stderr));
 
     #[cfg(unix)]
     {
@@ -724,31 +763,78 @@ fn kill_port(log_path: &str) {
 enum ReadyResult {
     Ready,
     Timeout,
+    Superseded,
     /// The sidecar exited before becoming ready — short-circuit the wait.
     SidecarExited {
         code: Option<i32>,
     },
 }
 
-fn curl_root() -> String {
-    tool_command("/usr/bin/curl", "curl")
-        .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", &docs_url()])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|_| "err".to_string())
+#[derive(Debug, PartialEq, Eq)]
+enum ReadinessState {
+    HttpUnavailable,
+    StaleContent,
+    Ready,
 }
 
-/// Poll `GET /` until 200, up to `timeout`. Each tick first checks sidecar
-/// liveness via `try_wait` so a crashed `zfb dev` surfaces an error within ~1s
-/// rather than burning the whole timeout on the spinner.
+fn classify_readiness(http_status: &str, body: &str) -> ReadinessState {
+    if http_status != "200" {
+        ReadinessState::HttpUnavailable
+    } else if !body.contains(READINESS_MARKER) {
+        ReadinessState::StaleContent
+    } else {
+        ReadinessState::Ready
+    }
+}
+
+#[derive(Debug)]
+struct HttpProbe {
+    status: String,
+    body: String,
+    diagnostic: String,
+}
+
+fn curl_docs() -> HttpProbe {
+    match tool_command("/usr/bin/curl", "curl")
+        .args(["-sS", "-w", "\n%{http_code}", &docs_url()])
+        .output()
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let (body, status) = stdout
+                .rsplit_once('\n')
+                .map(|(body, status)| (body.to_string(), status.trim().to_string()))
+                .unwrap_or_else(|| (stdout.into_owned(), "err".to_string()));
+            HttpProbe {
+                status,
+                body,
+                diagnostic: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            }
+        }
+        Err(error) => HttpProbe {
+            status: "err".to_string(),
+            body: String::new(),
+            diagnostic: error.to_string(),
+        },
+    }
+}
+
+/// Poll `GET /docs/` until it is both HTTP-successful and contains the
+/// generator-owned resource marker. Each tick first checks sidecar liveness so
+/// a crashed `zfb dev` surfaces an error within ~1s.
 fn wait_for_ready(
     timeout: Duration,
     sidecar: &Arc<Mutex<Option<Sidecar>>>,
     log_path: &str,
+    generation: (&AtomicU64, u64),
 ) -> ReadyResult {
     log_to(log_path, "wait_for_ready: start");
     let start = Instant::now();
     while start.elapsed() < timeout {
+        if !is_current_generation(generation.0, generation.1) {
+            log_to(log_path, "wait_for_ready: superseded");
+            return ReadyResult::Superseded;
+        }
         {
             let mut guard = sidecar.lock().unwrap();
             if let Some(ref mut s) = *guard {
@@ -767,13 +853,20 @@ fn wait_for_ready(
             }
         }
 
-        let code = curl_root();
+        let probe = curl_docs();
+        let state = classify_readiness(&probe.status, &probe.body);
         log_to(
             log_path,
-            &format!("curl /: {code} ({}s)", start.elapsed().as_secs()),
+            &format!(
+                "curl {DOCS_PATH}: http={} semantic={state:?} bytes={} diagnostic={:?} ({}s)",
+                probe.status,
+                probe.body.len(),
+                probe.diagnostic,
+                start.elapsed().as_secs()
+            ),
         );
-        if code == "200" {
-            log_to(log_path, "wait_for_ready: ready");
+        if state == ReadinessState::Ready {
+            log_to(log_path, "wait_for_ready: semantically ready");
             return ReadyResult::Ready;
         }
         thread::sleep(Duration::from_secs(1));
@@ -802,7 +895,7 @@ fn emit_launch_error_str(app_handle: &AppHandle, reason: &str) {
 
 fn emit_launch_error(app_handle: &AppHandle, result: &ReadyResult) {
     let reason = match result {
-        ReadyResult::Ready => return,
+        ReadyResult::Ready | ReadyResult::Superseded => return,
         ReadyResult::Timeout => "timeout",
         ReadyResult::SidecarExited { code } => {
             log_to(
@@ -817,24 +910,54 @@ fn emit_launch_error(app_handle: &AppHandle, result: &ReadyResult) {
 
 // ── Launch (boot + retry) ─────────────────────────
 
-/// The full node-free boot, runnable from both initial setup and the retry
-/// path. Resolves workspace + zfb binary + `~/.claude`, runs `generate()`
-/// once, starts `watch()`, spawns `zfb dev`, polls readiness, then navigates.
-///
-/// `launch_gen` guards against a restart-race: a retry pressed mid-wait bumps
-/// the generation so the older launch thread skips its terminal navigate/emit.
-fn launch(app_handle: &AppHandle) {
-    let log_path = log_path(app_handle);
-    let sidecar_arc = app_handle.state::<AppState>().sidecar.clone();
-
-    // Claim a new generation; any in-flight launch is now stale.
-    let my_gen = app_handle
+fn claim_launch_generation(app_handle: &AppHandle) -> u64 {
+    app_handle
         .state::<AppState>()
         .launch_gen
         .fetch_add(1, Ordering::SeqCst)
-        + 1;
+        + 1
+}
 
-    log_to(&log_path, "launch: start");
+fn is_current_generation(counter: &AtomicU64, generation: u64) -> bool {
+    counter.load(Ordering::SeqCst) == generation
+}
+
+fn launch_is_current(app_handle: &AppHandle, generation: u64) -> bool {
+    is_current_generation(&app_handle.state::<AppState>().launch_gen, generation)
+}
+
+fn emit_launch_error_if_current(app_handle: &AppHandle, generation: u64, reason: &str) {
+    if launch_is_current(app_handle, generation) {
+        emit_launch_error_str(app_handle, reason);
+    } else {
+        log_to(
+            &log_path(app_handle),
+            &format!("launch[{generation}]: superseded — suppressing error {reason}"),
+        );
+    }
+}
+
+/// The full node-free boot, runnable from initial setup, Refresh, and Retry.
+/// Resolves workspace + zfb binary + `~/.claude`, runs `generate()`
+/// once, starts `watch()`, spawns `zfb dev`, polls readiness, then navigates.
+///
+/// `launch_gen` guards against restart races, while `launch_lock` prevents two
+/// generations from interleaving watcher/sidecar replacement.
+fn launch(app_handle: &AppHandle, my_gen: u64) {
+    let log_path = log_path(app_handle);
+    let sidecar_arc = app_handle.state::<AppState>().sidecar.clone();
+    let state = app_handle.state::<AppState>();
+    let _launch_guard = state.launch_lock.lock().unwrap();
+
+    if !launch_is_current(app_handle, my_gen) {
+        log_to(
+            &log_path,
+            &format!("launch[{my_gen}]: superseded before acquiring launch lock"),
+        );
+        return;
+    }
+
+    log_to(&log_path, &format!("launch[{my_gen}]: start"));
 
     // 1. Resolve a writable workspace.
     let workspace = match resolve_workspace(app_handle, &log_path) {
@@ -844,7 +967,7 @@ fn launch(app_handle: &AppHandle) {
                 &log_path,
                 &format!("launch: workspace resolution failed: {e}"),
             );
-            emit_launch_error_str(app_handle, "workspace_unavailable");
+            emit_launch_error_if_current(app_handle, my_gen, "workspace_unavailable");
             return;
         }
     };
@@ -854,7 +977,7 @@ fn launch(app_handle: &AppHandle) {
         Ok(b) => b,
         Err(e) => {
             log_to(&log_path, &format!("launch: zfb binary unresolved: {e}"));
-            emit_launch_error_str(app_handle, "zfb_binary_missing");
+            emit_launch_error_if_current(app_handle, my_gen, "zfb_binary_missing");
             return;
         }
     };
@@ -864,7 +987,7 @@ fn launch(app_handle: &AppHandle) {
         Some(c) => c,
         None => {
             log_to(&log_path, "launch: $HOME unset — cannot resolve ~/.claude");
-            emit_launch_error_str(app_handle, "home_unavailable");
+            emit_launch_error_if_current(app_handle, my_gen, "home_unavailable");
             return;
         }
     };
@@ -873,7 +996,7 @@ fn launch(app_handle: &AppHandle) {
             &log_path,
             &format!("launch: ~/.claude missing at {}", claude.display()),
         );
-        emit_launch_error_str(app_handle, "claude_dir_missing");
+        emit_launch_error_if_current(app_handle, my_gen, "claude_dir_missing");
         return;
     }
 
@@ -895,9 +1018,17 @@ fn launch(app_handle: &AppHandle) {
         ),
         Err(e) => {
             log_to(&log_path, &format!("launch: generate failed: {e}"));
-            emit_launch_error_str(app_handle, "generate_failed");
+            emit_launch_error_if_current(app_handle, my_gen, "generate_failed");
             return;
         }
+    }
+
+    if !launch_is_current(app_handle, my_gen) {
+        log_to(
+            &log_path,
+            &format!("launch[{my_gen}]: superseded after generation"),
+        );
+        return;
     }
 
     // Start the watcher; keep its handle in AppState so it lives for the
@@ -938,6 +1069,14 @@ fn launch(app_handle: &AppHandle) {
         }
     }
 
+    if !launch_is_current(app_handle, my_gen) {
+        log_to(
+            &log_path,
+            &format!("launch[{my_gen}]: superseded after watcher setup"),
+        );
+        return;
+    }
+
     // 5. Clear any stale port holder, then (re)spawn zfb dev.
     {
         let mut guard = sidecar_arc.lock().unwrap();
@@ -953,22 +1092,22 @@ fn launch(app_handle: &AppHandle) {
             Err(e) => {
                 drop(guard);
                 log_to(&log_path, &format!("launch: spawn failed: {e}"));
-                emit_launch_error_str(app_handle, "spawn_failed");
+                emit_launch_error_if_current(app_handle, my_gen, "spawn_failed");
                 return;
             }
         }
     }
 
-    // 6. Poll readiness on / (scaled for the cold first build).
-    let result = wait_for_ready(READY_TIMEOUT, &sidecar_arc, &log_path);
+    // 6. Poll semantic readiness on /docs/ (scaled for the cold first build).
+    let result = wait_for_ready(
+        READY_TIMEOUT,
+        &sidecar_arc,
+        &log_path,
+        (&state.launch_gen, my_gen),
+    );
 
     // 7. Skip navigate/emit if a newer launch superseded this one.
-    if app_handle
-        .state::<AppState>()
-        .launch_gen
-        .load(Ordering::SeqCst)
-        != my_gen
-    {
+    if !launch_is_current(app_handle, my_gen) {
         log_to(
             &log_path,
             "launch: superseded by a newer launch — skipping navigate/emit",
@@ -981,7 +1120,14 @@ fn launch(app_handle: &AppHandle) {
         ReadyResult::Timeout | ReadyResult::SidecarExited { .. } => {
             emit_launch_error(app_handle, &result);
         }
+        ReadyResult::Superseded => {}
     }
+}
+
+fn start_launch(app_handle: &AppHandle) {
+    let generation = claim_launch_generation(app_handle);
+    let handle = app_handle.clone();
+    thread::spawn(move || launch(&handle, generation));
 }
 
 /// The JS that applies a zoom level to the page body. Used both by `apply_zoom`
@@ -1022,7 +1168,7 @@ fn retry_launch(app_handle: AppHandle) {
         &log_path(&app_handle),
         "retry_launch: invoked from frontend",
     );
-    thread::spawn(move || launch(&app_handle));
+    start_launch(&app_handle);
 }
 
 // ── Navigation filter ─────────────────────────────
@@ -1057,6 +1203,7 @@ fn main() {
         zoom: Mutex::new(1.0),
         log_path: Mutex::new(String::new()),
         launch_gen: AtomicU64::new(0),
+        launch_lock: Mutex::new(()),
     };
     let sidecar_for_exit = app_state.sidecar.clone();
 
@@ -1132,7 +1279,10 @@ fn main() {
             app.set_menu(menu)?;
 
             app.on_menu_event(|app_handle, event| match event.id().as_ref() {
-                "refresh" => navigate_to_docs(app_handle),
+                "refresh" => {
+                    navigate_to_loading(app_handle);
+                    start_launch(app_handle);
+                }
                 "devtools" => {
                     if let Some(w) = app_handle.get_webview_window("main") {
                         if w.is_devtools_open() {
@@ -1178,8 +1328,7 @@ fn main() {
                 })
                 .build()?;
 
-            let handle = app.handle().clone();
-            thread::spawn(move || launch(&handle));
+            start_launch(app.handle());
 
             Ok(())
         })
@@ -1235,10 +1384,51 @@ mod tests {
     }
 
     #[test]
-    fn docs_url_is_root_on_port() {
-        assert_eq!(docs_url(), format!("http://localhost:{PORT}/"));
+    fn docs_url_is_canonical_docs_shell_on_port() {
+        assert_eq!(DOCS_PATH, "/docs/");
+        assert_eq!(docs_url(), format!("http://localhost:{PORT}/docs/"));
         let url: Result<tauri::Url, _> = docs_url().parse();
         assert!(url.is_ok(), "docs_url should parse: {}", docs_url());
+    }
+
+    #[test]
+    fn readiness_classifier_rejects_non_200_and_stale_200() {
+        assert_eq!(
+            classify_readiness("503", READINESS_MARKER),
+            ReadinessState::HttpUnavailable
+        );
+        assert_eq!(
+            classify_readiness("200", "checked-in shell without generated navigation"),
+            ReadinessState::StaleContent
+        );
+        assert_eq!(
+            classify_readiness(
+                "200",
+                &format!("<nav><span>{READINESS_MARKER}</span></nav>")
+            ),
+            ReadinessState::Ready
+        );
+    }
+
+    #[test]
+    fn zfb_command_removes_inherited_boot_lazy() {
+        let command = zfb_dev_command(Path::new("/tmp/native-zfb"), Path::new("/tmp/app"));
+        let boot_lazy = command
+            .get_envs()
+            .find(|(key, _)| *key == "ZFB_DEV_BOOT_LAZY");
+        assert!(
+            matches!(boot_lazy, Some((_, None))),
+            "ZFB_DEV_BOOT_LAZY must be explicitly removed from the child environment"
+        );
+    }
+
+    #[test]
+    fn newer_generation_supersedes_every_older_terminal_result() {
+        let generation = AtomicU64::new(1);
+        assert!(is_current_generation(&generation, 1));
+        generation.store(2, Ordering::SeqCst);
+        assert!(!is_current_generation(&generation, 1));
+        assert!(is_current_generation(&generation, 2));
     }
 
     #[test]
@@ -1346,7 +1536,7 @@ mod tests {
     // ── tauri.conf.json assertions ──────────────────
 
     #[test]
-    fn tauri_conf_devurl_points_to_port_4892_root() {
+    fn tauri_conf_devurl_points_to_canonical_docs_shell() {
         let conf = read_tauri_conf();
         let dev_url = conf["build"]["devUrl"]
             .as_str()
@@ -1354,7 +1544,7 @@ mod tests {
         assert_eq!(
             dev_url,
             docs_url(),
-            "devUrl should equal http://localhost:{PORT}/"
+            "devUrl should equal the canonical docs URL"
         );
     }
 

@@ -2,22 +2,16 @@
 /** @jsxImportSource preact */
 
 import type { JSX } from "preact";
-import { prepareHomeData } from "@takazudo/zudo-doc/home-page";
-import { HomePageView } from "./lib/_chrome";
-import { routeContext } from "./lib/_route-context";
+import DocsPage, { paths as docsPaths } from "./docs/[[...slug]]";
 
-export const frontmatter = { title: "Home" };
+export const frontmatter = { title: "Claude Code Resources" };
 
-/** Host-owned static route; zudo-doc owns its data preparation and body. */
+/** `/` is an SSR alias of the canonical `/docs/` document shell. */
 export default function IndexPage(): JSX.Element {
-  const locale = routeContext.defaultLocale;
-  const data = prepareHomeData(routeContext, locale);
+  const root = docsPaths().find((item) => item.params.slug.length === 0);
+  if (!root) {
+    throw new Error("The canonical /docs/ route is missing");
+  }
 
-  return (
-    <HomePageView
-      locale={locale}
-      {...data}
-      wide={routeContext.settings.home?.wide ?? false}
-    />
-  );
+  return <DocsPage params={root.params} {...root.props} />;
 }

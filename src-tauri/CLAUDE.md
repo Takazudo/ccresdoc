@@ -29,8 +29,8 @@ main() ──► setup()
                    4. ccresdoc_claude_md::generate(&config)   one-shot MDX
                       ccresdoc_claude_md::watch(config, …)     live regenerate
                    5. spawn `zfb dev --port 4892` (process group, cwd=workspace)
-                   6. wait_for_ready(/ , 300s)  ← scaled for cold ~135-skill build
-                   7. navigate WebView → http://localhost:4892/
+                   6. wait_for_ready(/docs/ + generated marker, 300s)
+                   7. navigate WebView → http://localhost:4892/docs/
 on window Destroyed ──► drop WatchHandle + SIGTERM→SIGKILL sidecar group, exit
 ```
 
@@ -121,7 +121,10 @@ scoped-walk safety, zudolab/zudo-doc#2115).
 
 ## Readiness & cold first build
 
-Readiness polls `GET /` (NOT the old `/___ready`) with a **300s** window — the
+Readiness polls `GET /docs/` (NOT the old `/___ready`) with a **300s** window and
+accepts only a 200 body containing the generator-owned `Claude Resources`
+navigation marker. This prevents a staged or boot-lazy response from releasing
+the loading screen before current generated resources are rendered. The
 cold first launch must walk + render ~135 skills (plus commands/agents/CLAUDE.md)
 and let `zfb dev` build the whole site once. The loading page stays informative
 (spinner; a "still building" hint appears after 20s). `wait_for_ready` also
@@ -176,7 +179,7 @@ rejected by the WebView so they open in the OS browser.
 
 | Menu item | Shortcut | Behaviour |
 | --- | --- | --- |
-| Refresh | Cmd+R | Re-navigates window to docs URL |
+| Refresh | Cmd+R | Returns to bundled loading, regenerates, restarts, and passes semantic readiness again |
 | Toggle Developer Tools | Cmd+Alt+I | Opens/closes WebKit devtools |
 | Actual Size | Cmd+0 | Resets zoom to 1.0 |
 | Zoom In | Cmd+= | Zoom +0.1 (max 3.0) |

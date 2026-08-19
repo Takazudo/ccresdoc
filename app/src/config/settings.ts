@@ -3,7 +3,6 @@
 
 import { DEFAULT_SETTINGS } from "@takazudo/zudo-doc/config";
 import type {
-  HeaderNavItem,
   HeaderRightItem,
   Settings,
 } from "@takazudo/zudo-doc/settings";
@@ -46,10 +45,9 @@ export const settings = {
     links: [] as Array<{ title: string; items: Array<{ label: string; href: string }> }>,
     copyright: `Copyright © ${new Date().getFullYear()} CCResDoc`,
   },
-  // Header nav — link to the claude docs overview section
-  headerNav: [
-    { label: "Claude", path: "/docs", categoryMatch: "claude" },
-  ] as HeaderNavItem[],
+  // The resource tree belongs in the unscoped sidebar; the logo is the only
+  // primary navigation entry and points directly at the canonical doc shell.
+  headerNav: [],
   headerRightItems: [
     { type: "component", component: "theme-toggle" },
   ] as HeaderRightItem[],

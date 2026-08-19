@@ -154,13 +154,35 @@ describe("host-owned package route adapters", () => {
     expect(html).not.toContain("[zfb fallback render]");
   });
 
-  it("renders package home and 404 chrome with client-navigation wiring", () => {
+  it("renders / as the exact canonical docs shell with no marketing cover", () => {
     const home = render(<HomePage />);
+    const docsRoot = routeItems.find((item) => item.params.slug.length === 0);
+    expect(docsRoot).toBeDefined();
+    const canonical = render(
+      <DocsPage params={docsRoot!.params} {...docsRoot!.props} />,
+    );
+
+    expect(home).toBe(canonical);
+    expect(home).toContain("Docs root content");
+    expect(home).not.toContain("data-home-page");
+  });
+
+  it("renders empty header navigation and a /docs/ logo target", () => {
+    expect(routeContext.settings.headerNav).toEqual([]);
+
+    const docsRoot = routeItems.find((item) => item.params.slug.length === 0);
+    expect(docsRoot).toBeDefined();
+    const html = render(
+      <DocsPage params={docsRoot!.params} {...docsRoot!.props} />,
+    );
+
+    expect(html).toMatch(/<a href="\/docs\/" data-header-logo="true"/);
+    expect(html).not.toContain(">Claude</a>");
+  });
+
+  it("renders package 404 chrome with client-navigation wiring", () => {
     const notFound = render(<NotFoundPage />);
 
-    expect(home).toContain("CCResDoc");
-    expect(home).toContain("Nested generated resource");
-    expect(home).toContain("data-zfb-island");
     expect(notFound).toContain("Page not found.");
     expect(notFound).toContain('name="robots" content="noindex, nofollow"');
     expect(notFound).toContain('name="zfb-view-transitions-enabled" content="true"');
