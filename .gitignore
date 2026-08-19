@@ -8,6 +8,7 @@ src-tauri/target/
 
 # Node
 node_modules/
+app/.zfb/
 app/.zfb-build/
 app/dist/**
 
