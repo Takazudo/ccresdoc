@@ -18,8 +18,8 @@ importers:
         specifier: 2.7.1
         version: 2.7.1(@takazudo/zfb@2.7.1)
       '@takazudo/zudo-doc':
-        specifier: 5.6.0
-        version: 5.6.0(@takazudo/zfb-md-wasm@2.7.1)(@takazudo/zfb-runtime@2.7.1(@takazudo/zfb@2.7.1))(@takazudo/zfb@2.7.1)(@types/node@26.2.0)(katex@0.16.22)(preact@10.29.1)(zod@4.3.6)
+        specifier: 5.7.0
+        version: 5.7.0(@takazudo/zfb-md-wasm@2.7.1)(@takazudo/zfb-runtime@2.7.1(@takazudo/zfb@2.7.1))(@takazudo/zfb@2.7.1)(@types/node@26.2.0)(katex@0.16.22)(preact@10.29.1)(zod@4.3.6)
       katex:
         specifier: 0.16.22
         version: 0.16.22
@@ -664,8 +664,8 @@ packages:
       react:
         optional: true
 
-  '@takazudo/zudo-doc@5.6.0':
-    resolution: {integrity: sha512-xhcSed/3PvAHSh95mOFJG02ceXS7O9cqI6epIVlazBlkuGcx9zRPTNRaMeh/i9DqO638Jp7gKGnygRCk15ehZA==}
+  '@takazudo/zudo-doc@5.7.0':
+    resolution: {integrity: sha512-b7I7UXVj4mEQTdNq6TEMd9xJKpuVjdPQVWUg5xSiam7h2X6DEwYTdGpTsCNf/iLy2NcPn70SSoA3GCuB934lhg==}
     hasBin: true
     peerDependencies:
       '@takazudo/zdtp': ^0.4.11
@@ -1748,7 +1748,7 @@ snapshots:
       '@takazudo/zfb-linux-x64-gnu': 2.7.1
       '@takazudo/zfb-win32-x64-msvc': 2.7.1
 
-  '@takazudo/zudo-doc@5.6.0(@takazudo/zfb-md-wasm@2.7.1)(@takazudo/zfb-runtime@2.7.1(@takazudo/zfb@2.7.1))(@takazudo/zfb@2.7.1)(@types/node@26.2.0)(katex@0.16.22)(preact@10.29.1)(zod@4.3.6)':
+  '@takazudo/zudo-doc@5.7.0(@takazudo/zfb-md-wasm@2.7.1)(@takazudo/zfb-runtime@2.7.1(@takazudo/zfb@2.7.1))(@takazudo/zfb@2.7.1)(@types/node@26.2.0)(katex@0.16.22)(preact@10.29.1)(zod@4.3.6)':
     dependencies:
       '@inquirer/prompts': 8.5.2(@types/node@26.2.0)
       '@takazudo/zfb': 2.7.1
