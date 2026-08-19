@@ -102,6 +102,7 @@ function launch() {
 async function runOnce({ hmr }) {
   const child = launch();
   activeChild = child;
+  const reloadController = new AbortController();
   const sampler = setInterval(() => {
     try {
       sampleProcesses(child);
@@ -115,10 +116,21 @@ async function runOnce({ hmr }) {
     const assets = home.match(/\/assets\/[A-Za-z0-9._-]+/g) ?? [];
     assert.ok(assets.length > 0, "representative SSR route must reference packaged assets");
 
+    const docs = await fetchUntil("/docs/", "Claude Code Resources");
+    assert.match(docs, /data-zfb-island=/, "docs route must preserve hydration markers");
+    const missing = await fetch(`http://127.0.0.1:${port}/definitely-missing/`);
+    assert.equal(missing.status, 404, "missing routes must return the host-owned 404 response");
+    await missing.text();
+
     if (hmr) {
-      const reload = await fetch(`http://127.0.0.1:${port}/__zfb/reload`);
+      const reload = await fetch(`http://127.0.0.1:${port}/__zfb/reload`, {
+        signal: reloadController.signal,
+      });
       assert.equal(reload.ok, true);
       const reader = reload.body.getReader();
+      // Attach the rejection handler synchronously. Aborting the stream during
+      // cleanup must never become an unhandled rejection under Node's strict
+      // promise policy.
       const event = (async () => {
         let transcript = "";
         const decoder = new TextDecoder();
@@ -128,14 +140,25 @@ async function runOnce({ hmr }) {
           transcript += decoder.decode(value, { stream: true });
           if (/event:\s*(page|islands)\b/.test(transcript)) return transcript;
         }
-      })();
-      const content = join(workspace, "pages", "index.tsx");
+      })().then(
+        (transcript) => ({ transcript }),
+        (error) => ({ error }),
+      );
+      // Content edits exercise the generator -> zfb content-watch path. Page
+      // source edits restart the dev server and close the SSE stream, which is
+      // a different lifecycle and made this probe race Node's unhandled-
+      // rejection policy before it could report the actual runtime state.
+      const content = join(workspace, "src", "content", "docs", "index.mdx");
       const marker = `Packaged HMR probe ${Date.now()}`;
       const original = readFileSync(content, "utf8");
-      assert.match(original, /Browse Claude Resources/);
-      writeFileSync(content, original.replace("Browse Claude Resources", marker));
-      await fetchUntil("/", marker);
-      await Promise.race([event, delay(10_000).then(() => { throw new Error("reload event timeout"); })]);
+      assert.match(original, /Choose a resource category below\./);
+      writeFileSync(content, `${original}\n\n${marker}\n`);
+      await fetchUntil("/docs/", marker);
+      const reloadResult = await Promise.race([
+        event,
+        delay(10_000).then(() => { throw new Error("reload event timeout"); }),
+      ]);
+      if (reloadResult.error) throw reloadResult.error;
       await reader.cancel();
     }
 
@@ -144,6 +167,7 @@ async function runOnce({ hmr }) {
     assert.equal(readFileSync(sentinelLog, "utf8"), "", "Node sentinel was invoked");
     assert.equal(child.exitCode, null, child.output);
   } finally {
+    reloadController.abort();
     clearInterval(sampler);
     await stop(child);
     activeChild = undefined;
@@ -160,7 +184,7 @@ try {
     status: "passed",
     port,
     launches: 2,
-    routes: ["/"],
+    routes: ["/", "/docs/", "/definitely-missing/"],
     hmr: true,
     refreshToken: manifest.refreshToken,
     resolvedPluginDescriptors: 0,

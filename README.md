@@ -79,6 +79,8 @@ scripts/         run-b4push.sh, test-launch.sh
 ```
 
 See per-directory CLAUDE.md files for detailed architecture notes.
+The final automated and host-only acceptance matrix is documented in
+[`docs/architecture/verification-matrix.md`](docs/architecture/verification-matrix.md).
 
 ## CI
 
@@ -94,8 +96,10 @@ webkit2gtk is not available on ubuntu-latest.
 bash scripts/run-b4push.sh
 ```
 
-Runs all checks locally: frozen dependency install and validation, strict
-TypeScript, `zfb check`, Vitest, native zfb build, cargo fmt, clippy
-(`--exclude ccresdoc`), and tests (`--exclude ccresdoc`). The `ccresdoc`
-(src-tauri) crate is excluded from clippy/test to match CI — it requires
-webkit2gtk/gtk3 which are not available on Linux CI runners.
+Runs all reliable cross-platform checks locally: frozen dependency install and
+validation, strict TypeScript, `zfb check`, Vitest, native zfb build, cargo fmt,
+clippy/tests for the pure-Rust generator, the pruned node-free runtime lifecycle,
+and the independent compatibility fixture. The `ccresdoc` Tauri crate is
+excluded from Linux clippy/test because it requires webkit2gtk/gtk3. A release
+still requires the macOS-arm64 packaged and real-WebView visual gates listed in
+the verification matrix; Linux results do not falsely stand in for them.

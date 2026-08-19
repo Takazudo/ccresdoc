@@ -3,9 +3,9 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    branches: [main, "base/ccresdoc-zudo-doc-rewrite"]
+    branches: [main, "base/**"]
   push:
-    branches: [main, "base/ccresdoc-zudo-doc-rewrite"]
+    branches: [main]
 
 concurrency:
   group: ci-${{ github.head_ref || github.ref }}
@@ -55,6 +55,9 @@ jobs:
 
       - name: Pruned runtime workspace lifecycle
         run: pnpm run probe:runtime-package
+
+      - name: Frozen zero-plugin compatibility fixture
+        run: pnpm run check:compatibility
 
   checks:
     name: Rust checks
