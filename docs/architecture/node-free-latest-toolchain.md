@@ -1,6 +1,9 @@
 # Node-free latest-toolchain compatibility decision
 
-Status: accepted for the zfb 2.7.1 / zudo-doc 5.6.0 migration. This document is the architecture gate from issue #93; later issues implement the migration.
+Status: implemented for the zfb 2.7.1 / zudo-doc 5.6.0 migration. This document
+preserves the issue #93 architecture decision and its reproducible evidence;
+the current acceptance commands and explicit host-only gaps are in
+[`verification-matrix.md`](verification-matrix.md).
 
 ## Decision
 
@@ -73,7 +76,7 @@ Official immutable source anchors are zfb tag `v2.7.1` at `0d59f4d5273c13ed9769f
 | selected spread override | none | pass | pass | zero | accept |
 | fully manual zfb config | none | pass | pass | zero | viable control, reject duplicated policy |
 
-The selected native Linux probe served `/` and `/docs/probe/`, emitted the `ProbeCounter` hydration marker and props, rebuilt after a watched MDX edit, sampled only the native zfb process, and recorded no call to the failing `node` sentinel. Browser execution was intentionally not used in issue #93, so an actual click/hydration and visual parity remain required in the owning downstream issues.
+The selected native Linux probe served `/` and `/docs/probe/`, emitted the `ProbeCounter` hydration marker and props, rebuilt after a watched MDX edit, sampled only the native zfb process, and recorded no call to the failing `node` sentinel. The integrated staged-runtime probe repeats this contract against the pruned application workspace. Real-WebView visual parity remains a documented macOS release gate.
 
 ## Dependency contract
 

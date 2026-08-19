@@ -3,13 +3,14 @@ set -euo pipefail
 
 # Before-push comprehensive check script for CCResDoc.
 # Runs: dependency pin/lock checks, frozen install, strict frontend checks,
-# cargo fmt/clippy/test, and the native zfb build (app/).
+# cargo fmt/clippy/test, native zfb build, pruned runtime lifecycle, and the
+# frozen zero-plugin compatibility fixture.
 # All steps run even if one fails; summary at end.
 # Invocation: bash scripts/run-b4push.sh
 #
-# Node is used only by pnpm install (Step 2). The zfb build itself is
-# node-free: it invokes the native @takazudo/zfb-<platform>/zfb binary
-# via pnpm exec, not the .bin/zfb Node-shebang wrapper.
+# Node is development/build tooling for package validation and probes. The
+# runtime probes put a failing Node sentinel first on PATH and invoke the
+# native @takazudo/zfb-<platform>/zfb binary directly.
 
 START_TIME=$(date +%s)
 FAILURES=()
@@ -33,7 +34,7 @@ fail() {
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # ── Step 1: zfb pin consistency ──────────────────
-step "Step 1/8: zfb pin/lock consistency (check-zfb-pin.sh)"
+step "Step 1/9: zfb pin/lock consistency (check-zfb-pin.sh)"
 if bash "$ROOT_DIR/scripts/check-zfb-pin.sh"; then
   pass "zfb pin check passed"
 else
@@ -41,7 +42,7 @@ else
 fi
 
 # ── Step 2: frozen frontend install + installed-tree validation ─────────────
-step "Step 2/8: frozen frontend install + dependency validation"
+step "Step 2/9: frozen frontend install + dependency validation"
 INSTALL_OK=0
 if (cd "$ROOT_DIR/app" && pnpm install --frozen-lockfile); then
   pass "pnpm install --frozen-lockfile (app/) passed"
@@ -59,7 +60,7 @@ if [ "$INSTALL_OK" -eq 1 ]; then
 fi
 
 # ── Step 3: strict frontend gates ──────────────────────────────────────────
-step "Step 3/8: strict TypeScript + zfb check + Vitest"
+step "Step 3/9: strict TypeScript + zfb check + Vitest"
 if [ "$INSTALL_OK" -eq 1 ]; then
   if (cd "$ROOT_DIR/app" && pnpm run typecheck); then pass "strict TypeScript passed"; else fail "strict TypeScript"; fi
   if (cd "$ROOT_DIR/app" && pnpm run check:zfb); then pass "zfb check passed"; else fail "zfb check"; fi
@@ -70,7 +71,7 @@ else
 fi
 
 # ── Step 4: cargo fmt --check ────────────────────
-step "Step 4/8: cargo fmt --check"
+step "Step 4/9: cargo fmt --check"
 if (cd "$ROOT_DIR" && cargo fmt --check); then
   pass "cargo fmt passed"
 else
@@ -79,7 +80,7 @@ fi
 
 # ── Step 5: cargo clippy ─────────────────────────
 # --exclude ccresdoc mirrors CI: tauri crate needs webkit2gtk/gtk3, unavailable on Linux CI runners
-step "Step 5/8: cargo clippy --workspace --exclude ccresdoc --all-targets -- -D warnings"
+step "Step 5/9: cargo clippy --workspace --exclude ccresdoc --all-targets -- -D warnings"
 if (cd "$ROOT_DIR" && cargo clippy --workspace --exclude ccresdoc --all-targets -- -D warnings); then
   pass "cargo clippy passed"
 else
@@ -88,7 +89,7 @@ fi
 
 # ── Step 6: cargo test ───────────────────────────
 # --exclude ccresdoc mirrors CI: tauri crate needs webkit2gtk/gtk3, unavailable on Linux CI runners
-step "Step 6/8: cargo test --workspace --exclude ccresdoc"
+step "Step 6/9: cargo test --workspace --exclude ccresdoc"
 if (cd "$ROOT_DIR" && cargo test --workspace --exclude ccresdoc); then
   pass "cargo test passed"
 else
@@ -96,7 +97,7 @@ else
 fi
 
 # ── Step 7: native zfb build (app/) ──────────────
-step "Step 7/8: native zfb build (app/)"
+step "Step 7/9: native zfb build (app/)"
 
 # Invoke zfb build via pnpm exec so the native @takazudo/zfb-<platform>/zfb
 # binary is used — no global zfb on PATH required.
@@ -112,7 +113,26 @@ else
   FAILURES+=("zfb build (app/) — skipped: frozen install failed")
 fi
 
-# ── Step 8: summary ──────────────────────────────
+# ── Step 8: staged runtime lifecycle ─────────────
+step "Step 8/9: pruned runtime workspace + node-free lifecycle"
+if [ "$INSTALL_OK" -eq 1 ]; then
+  if (cd "$ROOT_DIR" && pnpm run probe:runtime-package); then
+    pass "pruned runtime lifecycle passed"
+  else
+    fail "pruned runtime lifecycle"
+  fi
+else
+  echo "⏭ skipping runtime lifecycle (frozen install failed)"
+  FAILURES+=("pruned runtime lifecycle — skipped: frozen install failed")
+fi
+
+# ── Step 9: frozen compatibility fixture ─────────
+step "Step 9/9: frozen zero-plugin compatibility fixture"
+if (cd "$ROOT_DIR" && pnpm run check:compatibility); then
+  pass "zero-plugin compatibility fixture passed"
+else
+  fail "zero-plugin compatibility fixture"
+fi
 
 # ── Summary ─────────────────────────────────────
 END_TIME=$(date +%s)

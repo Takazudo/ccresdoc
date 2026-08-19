@@ -70,13 +70,7 @@ app/
       _chrome.ts          — one createChrome() seam shared by host routes
   src/
     config/
-      settings.ts         — temporary host-route adapter (removed by issue #96)
-      i18n.ts             — temporary single-locale adapter over package data
-    types/
-      docs-entry.ts       — DocsEntry interface
-      locale.ts           — LocaleLink (single-locale stub)
-    components/
-      client-router-bootstrap.tsx — SPA router activation island
+      settings.ts         — shared typed settings for config and host routes
     content/
       docs/               — MDX content root
         index.mdx         — routed resource-category landing page
