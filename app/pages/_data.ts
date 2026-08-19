@@ -4,9 +4,9 @@
 // helpers expect. Synchronous per zfb ADR-004 (getCollection is synchronous
 // inside paths() evaluation).
 
-import { getCollection } from "zfb/content";
-import type { CollectionEntry } from "zfb/content";
-import type { DocsData } from "@/config/docs-schema";
+import { getCollection } from "@takazudo/zfb/content";
+import type { CollectionEntry } from "@takazudo/zfb/content";
+import type { DocsData } from "@takazudo/zudo-doc/docs-schema";
 import type { DocsEntry } from "@/types/docs-entry";
 import { toRouteSlug } from "@/utils/slug";
 
