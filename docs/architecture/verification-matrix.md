@@ -1,52 +1,122 @@
-# Latest zudo-doc/zfb verification matrix
+# CCResDoc architecture and verification contract
 
-CCResDoc consumes `@takazudo/zfb`/runtime/MD-WASM `2.7.1` and
-`@takazudo/zudo-doc` `5.6.0`. The application keeps host-owned routes and the
-in-process Rust resource generator, while the composed zfb configuration ends
-with `plugins: []`. Node and pnpm are setup/build tools only; the staged
-runtime resolves the platform `zfb` executable directly.
+This is the consolidated integration record for the current `@takazudo/zfb`
+2.7.1 / `@takazudo/zudo-doc` 5.7.0 application. CCResDoc is a native viewer
+for Claude Code Resources. The generated `/docs/` document is the sole product
+landing surface; `/` is its exact server-rendered alias. The product does not
+have a marketing home or a `Claude` header-navigation item.
+
+## Landing and readiness
+
+- `GET /` and `GET /docs/` return the same generated document shell. The logo
+  is a direct `href="/docs/"` link and the header navigation list is empty.
+- The Tauri loading page remains visible until `GET /docs/` is HTTP 200 and
+  contains the generator-owned `Claude Resources` marker. A generic 200 or a
+  stale checked-in shell cannot release the loading page.
+- Initial launch, Retry, and the View → Refresh menu all use the same
+  generation-guarded boot path: resolve a writable workspace, generate from
+  the absolute `$HOME/.claude` directory, start the Rust watcher, spawn the
+  native zfb binary, wait for semantic readiness, then navigate to `/docs/`.
+  A failed attempt emits the loading-page error state; a subsequent attempt
+  tears down the old sidecar and can reclaim port 4892.
+- `$HOME` is never passed as the generator project root. The generator is
+  scoped to `$HOME/.claude`, and an unset or empty home is an explicit launch
+  error. `ZFB_DEV_BOOT_LAZY` is removed from the sidecar environment.
+
+The host contract is exercised by `src-tauri` unit tests and by the staged and
+packaged probes. The packaged probe creates a unique, valid-frontmatter fake
+HOME fixture, waits for that fixture title in the *first accepted* `/docs/`
+response, requests its generated route, launches twice, and checks that quit
+frees port 4892.
+
+## Generated theme assets and catalog
+
+`@takazudo/zudo-doc/catalog` is the source of truth. The postinstall/prebuild
+sync validates every metadata file, copies every current non-default `pack.css`
+and its referenced fonts to `app/public/theme-packs/`, and writes `index.json`.
+The runtime stage embeds the catalog/file list and includes its input digest in
+the generated refresh token. Thus a catalog, CSS, font, or sync implementation
+change cannot reuse an older writable workspace.
+
+The frontend derives route settings, switcher order, and the typed registry
+from the same catalog. The deterministic tests and staged probe verify that
+the served index, each current stylesheet, every referenced font, and every
+declared loaded font family agree. The default pack is metadata-only.
+
+The theme head bootstrap restores the saved pack before paint, keeps a loading
+attribute until its stylesheet settles, preserves the independent light/dark
+state, and repairs the active pack head after soft navigation. Applying a pack
+is atomic: a stylesheet error leaves the previous link, storage value, and
+event untouched. Pack storage/events (`zudo-doc-theme-pack` /
+`theme-pack-changed`) are intentionally independent from light/dark storage
+(`zudo-doc-theme`). The hydrated `ThemePackSwitcher` is present in the docs
+shell and browse-all loads the current catalog lazily.
+
+## Ownership and intentional deviations
+
+- zudo-doc owns sidebar/tree rendering, mobile and desktop toggles, theme
+  controls, smart path breaks, and connector geometry. Its published resizer
+  owns a 16px hitbox, 192–448px clamp, separator ARIA state, pointer/keyboard
+  feedback, and width persistence. CCResDoc does not fork package CSS or
+  navigation behavior.
+- The Rust `ccresdoc-claude-md` generator/watcher owns Claude-resource
+  generation in-process. This is intentional: it avoids a Node plugin host and
+  keeps the packaged runtime node-free.
+- Tauri owns find-in-page through the WebView/native host contract. It is not
+  replaced by a Node plugin. The zfb config ends with `plugins: []`; the host
+  owns the three route adapters because package route plugins require virtual
+  modules and start Node.
+- Node and pnpm are setup/build tools only. The staged runtime resolves
+  `node_modules/@takazudo/zfb-<platform>/zfb` directly, never
+  `node_modules/.bin/zfb`, and excludes development tools, non-host binaries,
+  and disabled plugin-host dependencies.
 
 ## Automated gates
 
-Run the full local gate with:
+Run the local cross-layer gate with:
 
 ```sh
+pnpm install --frozen-lockfile
+pnpm run check:frontend
+pnpm -C app exec zfb build
 pnpm run b4push
 ```
 
-It proves the frozen dependency graph and installed tree, strict TypeScript,
-`zfb check`, Vitest route/Markdown/navigation contracts, native production
-build, Rust formatting/lints/tests (including generate, watch, live smoke, and
-unchanged-write coverage), the pruned runtime workspace, and the frozen
-compatibility fixture. The staged-runtime probe renders `/` and `/docs/`,
-checks missing-route status and hydration assets, observes a content reload
-event, samples the process group repeatedly, starts twice, and fails if Node or
-`plugin-host.mjs` appears. The compatibility fixture independently records why
-the package presets with plugins are rejected and proves the selected
-zero-plugin configuration.
+The frontend suite covers route aliases/chrome, generated fixture semantics,
+catalog/index/CSS/font parity, theme no-flash/bootstrap/switcher hydration,
+failed-pack rollback, font-bearing replacement, independent storage/events,
+and package-owned sidebar resizer DOM behavior. Rust tests cover formatting,
+generation/watch/live smoke, no-home scoping, readiness classification,
+boot-lazy neutralization, refresh/retry generations, workspace refresh tokens,
+native binary resolution, and process-group teardown.
 
-Linux CI runs the same frontend, runtime, compatibility, and pure-Rust gates.
-The Tauri crate is excluded from Linux clippy/test because its WebKit/GTK
-system libraries are unavailable on the runner; this is an environment limit,
-not a passed host check.
-
-## Host-only release gates
-
-Packaged support is macOS arm64. Before a release, run on that host:
+The staged runtime gate is:
 
 ```sh
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-scripts/test-macos-package.sh
+pnpm run probe:runtime-package
 ```
 
-The package script builds and launches `CCResDoc.app`, checks the direct
-`@takazudo/zfb-darwin-arm64/zfb` path and executable mode, samples processes,
-and verifies clean teardown. This Linux implementation session did not run
-that gate and does not claim it passed.
+It stages a lockfile-faithful workspace, checks the dynamic theme catalog and
+served assets, asserts the exact root/docs shell and semantic readiness,
+exercises content HMR, samples the process group with a recording/failing Node
+sentinel, rejects `plugin-host.mjs`, and proves two clean launches.
 
-Real-WebView/browser visual acceptance also remains manual: 1440x900 and
-390x844, light/dark, visible focus rings, overflow, mobile drawer and inert
-background, theme toggle, hydrated controls, and soft navigation. Unit tests
-cover the static hydration/client-navigation and keyboard/mobile contracts,
-but they are not a substitute for that visual pass.
+The packaged macOS arm64 gate uses an explicit fresh target directory and exact
+bundle shape. The script prints both paths on success:
+
+```sh
+scripts/test-macos-package.sh
+# $CARGO_TARGET_DIR/release/bundle/macos/CCResDoc.app
+```
+
+It must be run on macOS arm64 and must not be pointed at an installed app.
+Linux can run the staged native probe but cannot claim the Tauri/WebView gate.
+
+## Residual visual handoff
+
+The final Computer Use pass remains a post-merge release check on the exact
+fresh bundle: 1280×1049, native 1200×800, and a narrower desktop viewport;
+light/dark and two materially different font-bearing packs; reload/relaunch
+persistence; resizer pointer/keyboard/focus/feedback/clamp; soft navigation;
+and clean quit. Unit tests and the package probe are deterministic contracts,
+but they do not substitute for native WebView visual inspection.
