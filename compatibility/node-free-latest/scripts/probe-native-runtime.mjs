@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -36,7 +37,10 @@ const child = spawn(resolveNativeBinary(), ["dev", "--port", "4892"], {
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
-const childExit = new Promise((resolve) => child.once("exit", resolve));
+const childExit = new Promise((resolve) => {
+  child.once("exit", (code, signal) => resolve({ code, signal }));
+  child.once("error", (error) => resolve({ error }));
+});
 
 let serverLog = "";
 let processTreeChildren = [];
@@ -107,7 +111,7 @@ try {
     assert.ok(descendants.some((line) => line.trimStart().startsWith(`${child.pid} `)), descendants.join("\n"));
     assert.equal(descendants.some((line) => /plugin-host\.mjs/.test(line)), false, descendants.join("\n"));
     processTreeChildren = descendants.map((line) => line
-      .replaceAll(probeRoot, "<probe-root>")
+      .replace(new RegExp(`${probeRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/node_modules/@takazudo/zfb-[^/\\s]+/zfb(?:\\.exe)?`, "g"), "<native-zfb>")
       .replaceAll(runtimeRoot, "<isolated-workspace>")
       .replace(/\s+/g, " ")
       .trim()
@@ -124,21 +128,27 @@ try {
     contentHmrMarker: hmrMarker,
     contentReloadEvent: reloadEvent,
     nodeSentinelInvocations: 0,
-    processTreeSampled: true,
+    processTreeSampled: process.platform !== "win32",
     processTreeChildren,
   }, null, 2));
 } finally {
   reloadController.abort();
   if (process.platform === "win32") child.kill();
-  else {
+  else if (child.pid) {
     try { process.kill(-child.pid, "SIGTERM"); } catch {}
   }
   const exited = await Promise.race([childExit.then(() => true), delay(5_000).then(() => false)]);
   if (!exited) {
     if (process.platform === "win32") child.kill("SIGKILL");
-    else {
+    else if (child.pid) {
       try { process.kill(-child.pid, "SIGKILL"); } catch {}
     }
     await childExit;
   }
+  await new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(4892, "127.0.0.1", () => server.close(resolve));
+  });
+  rmSync(stateDir, { recursive: true, force: true });
 }

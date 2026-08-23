@@ -8,6 +8,6 @@
   "nodeSentinelInvocations": 0,
   "processTreeSampled": true,
   "processTreeChildren": [
-    "<pid> <ppid> <probe-root>/node_modules/@takazudo/zfb-linux-x64-gnu/zfb dev --port 4892"
+    "<pid> <ppid> <native-zfb> dev --port 4892"
   ]
 }

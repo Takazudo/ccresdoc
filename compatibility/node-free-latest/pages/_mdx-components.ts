@@ -6,10 +6,12 @@ const EmptyNav = () => null;
 export const mdxComponents = createMdxComponents({
   settings: { base: "/", imageEnlarge: false },
   locale: "en",
+  currentSlug: "probe",
   navData: {
     CategoryNav: EmptyNav,
     CategoryTreeNav: EmptyNav,
     SiteTreeNav: EmptyNav,
+    NoteTrayIndex: EmptyNav,
   },
   extras: { ProbeCounter },
 });
