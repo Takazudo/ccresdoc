@@ -14,8 +14,23 @@ import {
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const stageRoot = join(repoRoot, "src-tauri", "runtime-workspace");
 const stageApp = join(stageRoot, "app");
+const packageFacts = JSON.parse(readFileSync(join(
+  repoRoot,
+  "compatibility",
+  "node-free-latest",
+  "evidence",
+  "package-facts.json",
+), "utf8"));
 const manifest = JSON.parse(readFileSync(join(stageRoot, "runtime-manifest.json"), "utf8"));
 const names = new Set(manifest.packages.map(({ name }) => name));
+const expectedPlatformPackages = {
+  "darwin-arm64": "@takazudo/zfb-darwin-arm64",
+  "darwin-x64": "@takazudo/zfb-darwin-x64",
+  "linux-arm64": "@takazudo/zfb-linux-arm64-gnu",
+  "linux-x64": "@takazudo/zfb-linux-x64-gnu",
+  "win32-x64": "@takazudo/zfb-win32-x64-msvc",
+};
+assert.deepEqual(manifest.platformPackages, expectedPlatformPackages, "five-platform native map drifted");
 
 for (const entry of ["package.json", "pnpm-lock.yaml", "zfb.config.ts", "pages", "src", "node_modules"]) {
   assert(existsSync(join(stageApp, entry)), `runtime entry missing: ${entry}`);
@@ -31,6 +46,12 @@ for (const name of [
 ]) {
   assert(!names.has(name), `excluded package was staged: ${name}`);
   assert(!existsSync(join(stageApp, "node_modules", ...name.split("/"))), `excluded package exists: ${name}`);
+}
+for (const forbidden of ["esbuild", "smol-toml"]) {
+  assert(
+    manifest.excluded.forbiddenRuntimePackages.includes(forbidden),
+    `Node-only package must be an explicit runtime exclusion: ${forbidden}`,
+  );
 }
 
 const runtimePackageJson = JSON.parse(readFileSync(join(stageApp, "package.json"), "utf8"));
@@ -55,6 +76,17 @@ const binary = join(stageRoot, manifest.nativeBinary);
 assert(existsSync(binary), `native binary missing: ${binary}`);
 if (process.platform !== "win32") assert((statSync(binary).mode & 0o111) !== 0, "native binary is not executable");
 assert(!manifest.nativeBinary.includes("node_modules/.bin"), "must resolve the platform binary directly");
+const hostFact = Object.values(packageFacts.nativeCarriers).find(
+  ({ package: packageId }) => packageId === `${manifest.hostPackage}@${runtimePackageJson.optionalDependencies[manifest.hostPackage]}`,
+);
+assert(hostFact, `canonical native fact missing for ${manifest.hostPackage}`);
+assert.equal(manifest.nativeBinary, join("app", hostFact.relativePath));
+assert.equal(statSync(binary).size, hostFact.sizeBytes, "native binary size differs from canonical facts");
+assert.equal(
+  createHash("sha256").update(readFileSync(binary)).digest("hex"),
+  hostFact.sha256,
+  "native binary digest differs from canonical facts",
+);
 
 const config = readFileSync(join(stageApp, "zfb.config.ts"), "utf8");
 assert.match(config, /plugins:\s*\[\s*\]/, "selected runtime config must force an empty plugin list");
@@ -76,11 +108,31 @@ const expectedToken = refreshTokenFromWorkspaceDigest(workspaceDigest);
 assert.equal(readFileSync(join(stageRoot, "version.txt"), "utf8").trim(), expectedToken);
 assert.equal(manifest.refreshToken, expectedToken);
 
-if (process.platform === "darwin" && process.arch === "arm64") {
-  assert.equal(manifest.hostPackage, "@takazudo/zfb-darwin-arm64");
-  assert.equal(statSync(binary).size, 173246016);
-  const digest = createHash("sha256").update(readFileSync(binary)).digest("hex");
-  assert.equal(digest, "35bfa2b2cf8ffc6b5ddefdf712155e02ad6aa5e947ffcf41ee57f8e48ff2d7a0");
-}
+const darwinArm64 = packageFacts.nativeCarriers["darwin-arm64"];
+assert.equal(
+  darwinArm64.package,
+  `@takazudo/zfb-darwin-arm64@${packageFacts.packages["@takazudo/zfb"].version}`,
+);
+assert.equal(darwinArm64.relativePath, "node_modules/@takazudo/zfb-darwin-arm64/zfb");
+assert.match(darwinArm64.sha256, /^[a-f0-9]{64}$/);
+assert(Number.isSafeInteger(darwinArm64.sizeBytes) && darwinArm64.sizeBytes > 0);
+const appLockfile = readFileSync(join(repoRoot, "app", "pnpm-lock.yaml"), "utf8");
+assert(
+  appLockfile.includes(
+    `  '${darwinArm64.package}':\n    resolution: {integrity: ${darwinArm64.integrity}}`,
+  ),
+  "Darwin-arm64 published carrier integrity must match the canonical facts",
+);
 
-console.log(JSON.stringify({ status: "passed", ...manifest }, null, 2));
+console.log(JSON.stringify({
+  status: "passed",
+  ...manifest,
+  darwinArm64PublishedCarrier: {
+    verification: "canonical-facts-and-lockfile-static-check",
+    package: darwinArm64.package,
+    integrity: darwinArm64.integrity,
+    sizeBytes: darwinArm64.sizeBytes,
+    sha256: darwinArm64.sha256,
+    macosAppWebViewHostGate: "not-run-by-this-static-check",
+  },
+}, null, 2));

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -27,8 +28,17 @@ function fixture() {
   const workspace = join(root, "workspace");
   const implementation = join(root, "stage-runtime-workspace.mjs");
   mkdirSync(join(workspace, "pages", "lib"), { recursive: true });
+  mkdirSync(join(workspace, "public", "theme-packs", "dark", "fonts"), { recursive: true });
   writeFileSync(join(workspace, "pages", "lib", "_chrome.ts"), "export const chrome = 1;\n");
   writeFileSync(join(workspace, "zfb.config.ts"), "export default { plugins: [] };\n");
+  writeFileSync(
+    join(workspace, "public", "theme-packs", "index.json"),
+    '{"packs":[{"slug":"dark","version":"1"}]}\n',
+  );
+  writeFileSync(
+    join(workspace, "public", "theme-packs", "dark", "pack.css"),
+    ':root { --theme-background: black; }\n',
+  );
   writeFileSync(implementation, "stage version one\n");
   return {
     workspace,
@@ -69,4 +79,24 @@ test("staging implementation changes also invalidate the workspace", () => {
   const before = runtimeWorkspaceDigest(data.workspace, data.options);
   writeFileSync(data.implementation, "stage version two\n");
   assert.notEqual(runtimeWorkspaceDigest(data.workspace, data.options), before);
+});
+
+test("theme-pack byte changes invalidate the workspace without a catalog version bump", () => {
+  const data = fixture();
+  const catalog = join(data.workspace, "public", "theme-packs", "index.json");
+  const beforeCatalog = readFileSync(catalog, "utf8");
+  const before = refreshTokenFromWorkspaceDigest(
+    runtimeWorkspaceDigest(data.workspace, data.options),
+  );
+
+  writeFileSync(
+    join(data.workspace, "public", "theme-packs", "dark", "pack.css"),
+    ':root { --theme-background: #010101; }\n',
+  );
+
+  assert.equal(readFileSync(catalog, "utf8"), beforeCatalog, "catalog versions stay unchanged");
+  assert.notEqual(
+    refreshTokenFromWorkspaceDigest(runtimeWorkspaceDigest(data.workspace, data.options)),
+    before,
+  );
 });

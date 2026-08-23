@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   cpSync,
@@ -28,16 +29,27 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appRoot = join(repoRoot, "app");
 const stageRoot = join(repoRoot, "src-tauri", "runtime-workspace");
 const stageApp = join(stageRoot, "app");
+const packageFactsPath = join(
+  repoRoot,
+  "compatibility",
+  "node-free-latest",
+  "evidence",
+  "package-facts.json",
+);
 
 const platformPackages = {
-  "darwin-arm64": "@takazudo/zfb-darwin-arm64",
-  "darwin-x64": "@takazudo/zfb-darwin-x64",
-  "linux-arm64": "@takazudo/zfb-linux-arm64-gnu",
-  "linux-x64": "@takazudo/zfb-linux-x64-gnu",
-  "win32-x64": "@takazudo/zfb-win32-x64-msvc",
+  "darwin-arm64": { package: "@takazudo/zfb-darwin-arm64", factKey: "darwin-arm64" },
+  "darwin-x64": { package: "@takazudo/zfb-darwin-x64", factKey: "darwin-x64" },
+  "linux-arm64": { package: "@takazudo/zfb-linux-arm64-gnu", factKey: "linux-arm64-gnu" },
+  "linux-x64": { package: "@takazudo/zfb-linux-x64-gnu", factKey: "linux-x64-gnu" },
+  "win32-x64": { package: "@takazudo/zfb-win32-x64-msvc", factKey: "win32-x64-msvc" },
 };
-const hostPackage = platformPackages[`${process.platform}-${process.arch}`];
-assert(hostPackage, `unsupported packaging host: ${process.platform}-${process.arch}`);
+const hostPlatform = platformPackages[`${process.platform}-${process.arch}`];
+assert(hostPlatform, `unsupported packaging host: ${process.platform}-${process.arch}`);
+const hostPackage = hostPlatform.package;
+const packageFacts = JSON.parse(readFileSync(packageFactsPath, "utf8"));
+const hostNativeFact = packageFacts.nativeCarriers[hostPlatform.factKey];
+assert(hostNativeFact, `canonical native fact missing: ${hostPlatform.factKey}`);
 
 const appFiles = [
   "package.json",
@@ -52,6 +64,11 @@ const appFiles = [
 ];
 
 const packageJson = JSON.parse(readFileSync(join(appRoot, "package.json"), "utf8"));
+assert.equal(
+  hostNativeFact.package,
+  `${hostPackage}@${packageJson.optionalDependencies?.[hostPackage] ?? ""}`,
+  `canonical native package drift: ${hostPackage}`,
+);
 const themeAssets = validateGeneratedThemePacks();
 const packageQueue = Object.keys(packageJson.dependencies ?? {});
 const packages = new Map();
@@ -120,6 +137,12 @@ if (process.platform !== "win32") {
   chmodSync(nativeBinary, statSync(nativeBinary).mode | 0o755);
   assert((statSync(nativeBinary).mode & 0o111) !== 0, "native zfb binary must remain executable");
 }
+assert.equal(statSync(nativeBinary).size, hostNativeFact.sizeBytes, "native zfb size must match canonical facts");
+assert.equal(
+  createHash("sha256").update(readFileSync(nativeBinary)).digest("hex"),
+  hostNativeFact.sha256,
+  "native zfb digest must match canonical facts",
+);
 
 const themeAssetsDigest = themePackInputDigest();
 
@@ -151,6 +174,9 @@ const manifest = {
   refreshToken: token,
   host: `${process.platform}-${process.arch}`,
   hostPackage,
+  platformPackages: Object.fromEntries(
+    Object.entries(platformPackages).map(([platform, detail]) => [platform, detail.package]),
+  ),
   nativeBinary: relative(stageRoot, nativeBinary),
   workspaceDigest: {
     algorithm: RUNTIME_WORKSPACE_DIGEST_ALGORITHM,
@@ -166,13 +192,17 @@ const manifest = {
   excluded: {
     appEntries: ["test", "vitest.config.ts", ".zfb", ".zfb-build", "node_modules/.bin"],
     developmentPackages: Object.keys(packageJson.devDependencies ?? {}).sort(),
-    nonHostPlatformPackages: Object.values(platformPackages).filter((name) => name !== hostPackage),
+    nonHostPlatformPackages: Object.values(platformPackages)
+      .map(({ package: name }) => name)
+      .filter((name) => name !== hostPackage),
     disabledZudoDocNodePackages: [...skippedZudoDocBuildOnly].sort(),
     forbiddenRuntimePackages: [
       "@takazudo/zfb-adapter-cloudflare",
       "@takazudo/zdtp",
       "@takazudo/zudo-doc-history-server",
       "diff",
+      "esbuild",
+      "smol-toml",
     ],
   },
 };
