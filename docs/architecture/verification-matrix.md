@@ -73,6 +73,37 @@ shell and browse-all loads the current catalog lazily.
   never `node_modules/.bin/zfb`, and excludes development tools, non-host
   binaries, and disabled plugin-host dependencies.
 
+## Settings and isolation
+
+The settings store resolves `CCRESDOC_CONFIG`, then
+`XDG_CONFIG_HOME/ccresdoc/config.toml`, then `HOME/.config/ccresdoc/config.toml`.
+Missing files use schema-version-1 defaults without creating TOML. Authored
+source/preferred-port values are reported separately from canonical effective
+source/active-port values; an occupied preferred loopback port uses a free
+fallback only when `fallback_to_free_port` is true. Strict mode, malformed TOML,
+semantic diagnostics, unsupported future versions, SHA-256 revision conflicts,
+appearance authority, and saved-not-active restart failures retain Settings
+recovery and never overwrite or signal foreign state.
+
+The bounded fixture gate is deterministic and isolated:
+
+```sh
+bash scripts/test-macos-settings.sh --fixtures-only
+CCRESDOC_SETTINGS_APP=/path/to/CCResDoc.app pnpm run test:macos-settings
+```
+
+Package mode passes a unique temporary `HOME`, `TMPDIR`, `XDG_CONFIG_HOME`, and
+`CCRESDOC_CONFIG` through LaunchServices, creates a temporary source tree and
+one exact foreign listener, and verifies docs readiness across relaunches,
+fallback/effective ports, strict and bad-source recovery, malformed-byte
+preservation, and app-owned child cleanup while the foreign listener remains
+alive. Production capabilities, generated permissions, bundle identity, native
+driver hooks, and
+fixture paths are statically guarded against test-only leakage. The manager's
+post-merge Computer Use pass still verifies Settings focus/close/reopen,
+picker/save/relaunch, appearance preview/cancel/persistence, external-edit
+Reload/Reapply, caller/navigation denial, and visual no-flash behavior.
+
 ## Automated gates
 
 Run the focused current-toolchain gates with:

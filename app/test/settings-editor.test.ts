@@ -58,6 +58,26 @@ describe("bundled Settings editor", () => {
     expect((document.querySelector("#save-settings") as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("keeps authored and effective ports distinct when the runtime falls back", async () => {
+    const fallback = setup(snapshot({
+      settings: {
+        ...snapshot().settings,
+        authored: { ...DEFAULT_DRAFT, preferredPort: 4892 },
+        effective: { ...snapshot().settings.effective, preferredPort: 4892, effectivePort: 4892 },
+      },
+      runtime: {
+        phase: "ready",
+        active: { ...DEFAULT_DRAFT, claudeDir: "/tmp/isolated-source", preferredPort: 4892, effectivePort: 53001 },
+        fallbackUsed: true,
+        diagnostic: null,
+      },
+    }));
+    await fallback.editor.load(); await flush();
+    expect(document.querySelector("#port-status")?.textContent).toBe("4892 / 53001");
+    expect(document.querySelector("#fallback-status")?.textContent).toBe("Yes");
+    expect(document.querySelector("#runtime-status")?.textContent).toBe("ready");
+  });
+
   it("tracks dirty validation, associates errors, and awaits save/apply without closing", async () => {
     const { editor, backend, close } = setup(); await editor.load(); await flush();
     const port = document.querySelector("#preferred-port") as HTMLInputElement; port.value = "0"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush();

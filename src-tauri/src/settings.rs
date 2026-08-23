@@ -1282,6 +1282,52 @@ mod tests {
     }
 
     #[test]
+    fn isolated_contract_reports_authored_source_and_preferred_port_without_writing_missing_config()
+    {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let source = root.path().join("isolated-source");
+        fs::create_dir_all(home.join(".claude")).unwrap();
+        fs::create_dir_all(&source).unwrap();
+        let path = root.path().join("override/config.toml");
+        let store = SettingsStore::new(path.clone(), home.clone());
+
+        let missing = store.load();
+        assert_eq!(missing.config_path, path);
+        assert_eq!(missing.status, LoadStatus::Missing);
+        assert!(!missing.file_exists);
+        assert_eq!(missing.effective.claude_dir, home.join(".claude"));
+        assert_eq!(missing.active.preferred_port, DEFAULT_PORT);
+        assert_eq!(missing.active.effective_port, DEFAULT_PORT);
+        assert!(
+            !path.exists(),
+            "path discovery must not create config bytes"
+        );
+
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            format!(
+                "schema_version = 1\n[source]\nclaude_dir = {:?}\n[server]\npreferred_port = 53001\nfallback_to_free_port = true\n",
+                source.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let authored = store.load();
+        assert_eq!(authored.status, LoadStatus::Valid);
+        assert!(authored.active.uses_authored_settings);
+        assert!(authored.active.source_is_authored);
+        assert_eq!(authored.authored.preferred_port, 53001);
+        assert_eq!(authored.effective.preferred_port, 53001);
+        assert_eq!(authored.effective.effective_port, 53001);
+        assert_eq!(
+            authored.effective.claude_dir,
+            fs::canonicalize(source).unwrap()
+        );
+        assert!(authored.effective.fallback_to_free_port);
+    }
+
+    #[test]
     fn valid_partial_and_round_trip() {
         let (root, store) = fixture();
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
