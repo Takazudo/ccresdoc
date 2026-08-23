@@ -581,6 +581,19 @@ mod tests {
     }
 
     #[test]
+    fn occupied_foreign_listener_survives_real_fallback_selection() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let preferred = listener.local_addr().unwrap().port();
+        let choice = choose_port(&mut SystemPortBoundary, preferred, true).unwrap();
+        assert_eq!(choice.preferred_port, preferred);
+        assert_ne!(choice.effective_port, preferred);
+        assert!(choice.fallback_used);
+        assert!(listener.local_addr().is_ok());
+        assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, preferred)).is_ok());
+        assert!(TcpListener::bind((Ipv4Addr::LOCALHOST, choice.effective_port)).is_ok());
+    }
+
+    #[test]
     fn retries_simulated_preflight_spawn_race_and_bounds_exhaustion() {
         let mut ports = FakePorts {
             available: true,

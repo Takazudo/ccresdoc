@@ -25,10 +25,11 @@ main() ──► setup()
               └─ spawn launch() thread:
                    1. resolve_workspace()  →  writable app-project root
                    2. resolve_zfb_binary() →  native zfb (NOT .bin/zfb wrapper)
-                   3. claude_dir()         →  absolute ~/.claude (NOT $HOME)
+                   3. settings snapshot   →  canonical configured source (default ~/.claude)
                    4. ccresdoc_claude_md::generate(&config)   one-shot MDX
                       ccresdoc_claude_md::watch(config, …)     live regenerate
-                   5. spawn `zfb dev --port 4892` (process group, cwd=workspace)
+                   5. choose preferred/fallback loopback port and spawn `zfb dev`
+                      (process group, cwd=workspace)
                    6. wait_for_ready(/docs/ + generated marker, 300s)
                    7. navigate WebView → http://localhost:4892/docs/
 on window Destroyed ──► drop WatchHandle + SIGTERM→SIGKILL sidecar group, exit
@@ -40,7 +41,7 @@ re-run `preBuild`, so generation + watch live in Rust, per Wave 2.)
 
 ## Key files
 
-- `src/main.rs` — host: workspace/binary/`~/.claude` resolution, generate+watch
+- `src/main.rs` — host: workspace/binary/settings resolution, generate+watch
   boot, sidecar spawn/teardown, readiness poll, menus, zoom, navigation filter
 - `frontend/index.html` — bundled loading page (spinner + slow hint + error
   panel with Retry); listens for the `launch-error` event, invokes `retry_launch`
@@ -102,19 +103,25 @@ require Node at runtime, defeating the node-free goal.
 | linux-x86_64 | `@takazudo/zfb-linux-x64-gnu` |
 | windows-x86_64 | `@takazudo/zfb-win32-x64-msvc` |
 
-## ~/.claude resolution
+## Settings source resolution
 
-`claude_dir()` returns the absolute `$HOME/.claude`. It is passed to the Wave 2
-generator as both `claude_dir` and `project_root` — **never `$HOME`**, since the
-generator rejects `project_root == $HOME` (`GenerateError::ProjectRootTooBroad`,
-scoped-walk safety, zudolab/zudo-doc#2115).
+`settings::resolve_config_path()` resolves a non-empty `CCRESDOC_CONFIG`
+override, then `XDG_CONFIG_HOME/ccresdoc/config.toml`, then
+`HOME/.config/ccresdoc/config.toml`. A missing file is read as safe defaults and
+is never created by discovery. The effective source is canonicalized from the
+authored `source.claude_dir`; the generator receives that source as both
+`claude_dir` and `project_root` — **never `$HOME`**, since it rejects
+`project_root == $HOME` (`GenerateError::ProjectRootTooBroad`, scoped-walk
+safety, zudolab/zudo-doc#2115). The default source is `$HOME/.claude`, but an
+explicit temporary source is used by package verification.
 
 ## Sidecar lifecycle & restart-race guard
 
 - `zfb dev` is spawned in its own **process group** (`process_group(0)`). On
   window close the host signals the **negative PID** (SIGTERM, then SIGKILL on
-  timeout) so the whole tree dies — no orphan holding 4892.
-- `kill_port(4892)` clears any stale holder before each spawn.
+  timeout) so the exact app-owned tree dies. No port-owner discovery or broad
+  kill is allowed; a foreign preferred-port listener remains alive while the
+  runtime selects a fallback.
 - `launch_gen` (AtomicU64) is bumped at the start of every launch (initial +
   each retry). A launch thread that finishes after a newer one began sees a
   mismatch and skips its terminal navigate/emit — so a Retry pressed mid-build
@@ -195,6 +202,80 @@ page) **explicitly** — NOT `WebviewUrl::default()`, which in dev resolves to
 `devUrl` (:4892) and would show connection-refused before `zfb dev` binds. The
 host owns `zfb dev` in both dev and prod, so the loading-page → readiness →
 navigate flow must run in both modes.
+
+## Settings system contract and verification
+
+`src/settings.rs` owns config-path discovery, the versioned TOML schema, lossless
+authored bytes, SHA-256 revisions, semantic validation, atomic replacement,
+malformed/future-version recovery, source canonicalization, and the authored
+versus effective snapshot. `src/runtime.rs` owns loopback port choice,
+preferred/effective/fallback state, semantic readiness, generation
+supersession, serialized apply, and saved-not-active transitions.
+`src/settings_commands.rs` is the narrow command boundary: Settings-only
+commands require the `settings` label, docs appearance mutation requires the
+active `/docs/` loopback origin, and the main window receives only its
+explicitly listed commands. `src/settings_window.rs` owns singleton
+create/show/focus and close-to-hide lifecycle; `src/appearance.rs` owns
+document-start appearance authority, origin-scoped legacy candidates, previews,
+and authoritative events.
+
+The config path is resolved as `CCRESDOC_CONFIG` (non-empty override), then
+`XDG_CONFIG_HOME/ccresdoc/config.toml`, then `HOME/.config/ccresdoc/config.toml`.
+The default document is schema version 1 with source `~/.claude`, system/default
+appearance, preferred port 4892, and `fallback_to_free_port = true`. A missing
+document is read as defaults and is never created by discovery. Authored source
+and preferred port are retained in the settings snapshot; effective source is
+canonicalized and the runtime's active port may be a loopback fallback.
+Strict mode reports an occupied preferred port without touching the foreign
+listener. No code path performs a broad port-owner sweep.
+
+A semantic-invalid document uses safe effective defaults and remains repairable.
+Malformed TOML is retained byte-for-byte and can only be replaced through the
+explicit replacement command. Unsupported future schema versions are
+read-only. Valid unavailable theme-pack names remain authored while the
+effective theme falls back to `default`. Save/rebase preserves comments,
+unknown keys, permissions, and newline style, and revision checks reject stale
+or racing writes. Appearance-only apply does not restart the sidecar; source,
+preferred-port, and fallback changes perform one serialized runtime transition.
+A failed transition is `saved_not_active`, with Settings left available for
+recovery.
+
+All privileged commands and settings fixtures are tested separately from the
+production capability files. `scripts/test-macos-settings.sh --fixtures-only`
+uses only a unique temporary directory, explicit `CCRESDOC_CONFIG`, and
+temporary source/listener paths. Its packaged mode receives the same overrides
+through LaunchServices, uses the fake `HOME` as the app-data/WebKit isolation
+root, and owns one exact foreign-listener PID. It never reads the developer's
+real `~/.claude` and does not use a test bundle identity: the isolated
+HOME/app-data root is the isolation boundary. It uses neither broad `pkill` nor
+`lsof | xargs kill`. Static guards assert that test identities, capabilities, permissions,
+native drivers, and fixture paths are absent from production manifests and
+bundle resources.
+
+Run the bounded gates from the repository root:
+
+```sh
+bash scripts/test-macos-settings.sh --fixtures-only
+pnpm run check:frontend
+pnpm run check:runtime-package
+cargo test --manifest-path src-tauri/Cargo.toml
+pnpm run b4push
+```
+
+The final macOS arm64 package command is:
+
+```sh
+CCRESDOC_SETTINGS_APP=/path/to/CCResDoc.app pnpm run test:macos-settings
+```
+
+That helper is a deterministic package smoke gate, not a replacement for the
+manager's native Computer Use walkthrough. The remaining native checks are
+Settings gear/menu/`Cmd+,` singleton focus, close/reopen without docs exit,
+directory-picker Save/relaunch, light/dark/system and theme preview/Cancel/Save,
+occupied-port fallback and strict recovery, malformed/future-version recovery,
+external-edit Reload/Reapply including a second racing edit, bad-source
+recovery, docs caller/navigation denial, no-flash visual confirmation, and
+quit with only app-owned children reaped.
 
 ## Build-time wiring
 
