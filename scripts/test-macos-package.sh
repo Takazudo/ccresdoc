@@ -15,6 +15,7 @@ PROCESS_LOG="$PROBE_DIR/process-samples.log"
 CARGO_TARGET_DIR="$PROBE_DIR/cargo-target"
 FIXTURE_LABEL="Package Readiness Probe $(basename "$PROBE_DIR")"
 FIXTURE_BODY="Generated package route $(basename "$PROBE_DIR")"
+FIXTURE_AUTOLINK="https://example.com/package-readiness-probe"
 FIXTURE_ROUTE="http://127.0.0.1:4892/docs/claude-skills/package-readiness-probe/"
 APP_PID=""
 PORT_LOCK="${TMPDIR:-/tmp}"
@@ -58,9 +59,6 @@ acquire_port_lock() {
   PORT_LOCK_HELD=1
 }
 
-acquire_port_lock
-test -z "$(lsof -ti :4892 2>/dev/null || true)"
-
 DARWIN_PACKAGE="$(node -e 'const f=require(process.argv[1]).nativeCarriers["darwin-arm64"]; process.stdout.write(f.package)' "$PACKAGE_FACTS")"
 DARWIN_RELATIVE_PATH="$(node -e 'const f=require(process.argv[1]).nativeCarriers["darwin-arm64"]; process.stdout.write(f.relativePath)' "$PACKAGE_FACTS")"
 DARWIN_SIZE="$(node -e 'const f=require(process.argv[1]).nativeCarriers["darwin-arm64"]; process.stdout.write(String(f.sizeBytes))' "$PACKAGE_FACTS")"
@@ -73,7 +71,13 @@ printf '%s\n' \
   'description: Proves packaged semantic readiness uses generated content.' \
   '---' \
   '' \
-  "$FIXTURE_BODY" > "$PROBE_HOME/.claude/skills/package-readiness-probe/SKILL.md"
+  "$FIXTURE_BODY" \
+  '' \
+  "Source: <$FIXTURE_AUTOLINK>" \
+  '' \
+  '| Result |' \
+  '| --- |' \
+  '| before<br>after |' > "$PROBE_HOME/.claude/skills/package-readiness-probe/SKILL.md"
 : > "$SENTINEL_LOG"
 cat > "$SENTINEL_DIR/node" <<EOF
 #!/bin/sh
@@ -88,6 +92,9 @@ pnpm --dir app install --frozen-lockfile
 pnpm --dir app exec zfb build
 pnpm run probe:runtime-package
 cargo tauri build --bundles app
+
+acquire_port_lock
+test -z "$(lsof -ti :4892 2>/dev/null || true)"
 
 APP_PATH="$CARGO_TARGET_DIR/release/bundle/macos/CCResDoc.app"
 RUNTIME_ROOT="$APP_PATH/Contents/Resources/runtime-workspace/app"
@@ -132,7 +139,10 @@ for RUN in 1 2; do
       && grep -Fq "$FIXTURE_LABEL" "$PROBE_DIR/docs.html" \
       && [[ "$(curl -s -o "$PROBE_DIR/fixture.html" -w '%{http_code}' "$FIXTURE_ROUTE" || true)" = "200" ]] \
       && grep -Fq "$FIXTURE_LABEL" "$PROBE_DIR/fixture.html" \
-      && grep -Fq "$FIXTURE_BODY" "$PROBE_DIR/fixture.html"; then
+      && grep -Fq "$FIXTURE_BODY" "$PROBE_DIR/fixture.html" \
+      && grep -Fq "href=\"$FIXTURE_AUTOLINK\"" "$PROBE_DIR/fixture.html" \
+      && grep -Fq 'before<br' "$PROBE_DIR/fixture.html" \
+      && grep -Fq '>after<' "$PROBE_DIR/fixture.html"; then
         READY=1
         break
     fi

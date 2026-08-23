@@ -36,7 +36,7 @@ changes and regenerates. This is the live engine: the Rust watcher writes MDX â†
   and passed by the Tauri host (Wave 3).
 - **`GenerateReport { claude_md, commands, skills, agents }`** â€” emitted counts.
 
-Internal modules: `escape` (faithful port of zudo-doc's `escape-for-mdx.ts`),
+Internal modules: `escape` (zudo-doc port plus CommonMark-to-MDX normalization),
 `walk` (the reborn `~/.claude` walker), `generate` (MDX emission per the Wave 1
 content contract in `app/CLAUDE.md`), `watch` (the debounced/serialized
 watcher), `error`.

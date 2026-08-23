@@ -1,9 +1,10 @@
-//! Faithful Rust port of zudo-doc's `escape-for-mdx.ts`.
+//! Rust port of zudo-doc's `escape-for-mdx.ts` with CCResDoc compatibility
+//! normalization.
 //!
 //! Escapes angle brackets and curly braces in prose so the content is valid
 //! MDX, while preserving fenced code blocks (3+ backticks) and inline code
-//! spans (1-3 backticks). The logic mirrors the upstream TypeScript
-//! implementation exactly so generated MDX renders identically under zudo-doc.
+//! spans (1-3 backticks). It also preserves CommonMark angle autolinks as
+//! Markdown links and self-closes HTML void tags that MDX mode would reject.
 
 use std::collections::HashSet;
 use std::sync::OnceLock;
@@ -286,8 +287,10 @@ fn escape_text_segment(part: &str) -> String {
     // Extract inline code spans first.
     let (with_inline, inline_codes) = extract_inline_code(part);
 
-    // Escape tags + curly braces on the remaining text.
-    let mut escaped = escape_tags_and_braces(&with_inline);
+    // MDX mode interprets CommonMark angle autolinks as JSX. Rewrite them to
+    // equivalent Markdown links before escaping JSX-like tags and braces.
+    let with_autolinks = rewrite_angle_autolinks(&with_inline);
+    let mut escaped = escape_tags_and_braces(&with_autolinks);
 
     // Restore inline code placeholders.
     for (idx, code) in inline_codes.iter().enumerate() {
@@ -295,6 +298,118 @@ fn escape_text_segment(part: &str) -> String {
         escaped = escaped.replace(&needle, code);
     }
     escaped
+}
+
+fn rewrite_angle_autolinks(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            if let Some(relative_end) = input[i + 1..].find('>') {
+                let end = i + 1 + relative_end;
+                let label = &input[i + 1..end];
+                let destination = if is_uri_autolink(label) {
+                    Some(label.to_owned())
+                } else if is_email_autolink(label) {
+                    Some(format!("mailto:{label}"))
+                } else {
+                    None
+                };
+
+                if let Some(destination) = destination {
+                    out.push('[');
+                    push_escaped_link_label(&mut out, label);
+                    out.push_str("](<");
+                    out.push_str(&destination);
+                    out.push_str(">)");
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+
+        let ch_start = i;
+        i += utf8_char_len(bytes[i]);
+        out.push_str(&input[ch_start..i]);
+    }
+
+    out
+}
+
+fn is_uri_autolink(value: &str) -> bool {
+    let Some((scheme, rest)) = value.split_once(':') else {
+        return false;
+    };
+
+    (2..=32).contains(&scheme.len())
+        && scheme.bytes().enumerate().all(|(idx, byte)| match idx {
+            0 => byte.is_ascii_alphabetic(),
+            _ => byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'),
+        })
+        && !rest.is_empty()
+        && rest
+            .chars()
+            .all(|ch| !ch.is_whitespace() && !ch.is_control() && !matches!(ch, '<' | '>'))
+}
+
+fn is_email_autolink(value: &str) -> bool {
+    let Some((local, domain)) = value.split_once('@') else {
+        return false;
+    };
+
+    !local.is_empty()
+        && !domain.is_empty()
+        && !domain.contains('@')
+        && local.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'.' | b'!'
+                        | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'/'
+                        | b'='
+                        | b'?'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'{'
+                        | b'|'
+                        | b'}'
+                        | b'~'
+                        | b'-'
+                )
+        })
+        && domain.split('.').all(|label| {
+            !label.is_empty()
+                && label
+                    .as_bytes()
+                    .first()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                && label
+                    .as_bytes()
+                    .last()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+}
+
+fn push_escaped_link_label(out: &mut String, label: &str) {
+    for ch in label.chars() {
+        if matches!(ch, '\\' | '[' | ']') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
 }
 
 /// Extract inline code spans, mirroring the JS regex
@@ -428,6 +543,13 @@ fn is_tag_name_char(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c == b'-'
 }
 
+fn is_void_html_tag(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "br" | "col" | "hr" | "img" | "input"
+    )
+}
+
 /// `/<([A-Za-z][A-Za-z0-9_-]*)(\s[^>]*)?>/g` — opening tags (also matches the
 /// spaced self-closing form `<Foo />`).
 ///
@@ -485,7 +607,13 @@ fn escape_open_tags(input: &str) -> String {
             if k < len && bytes[k] == b'>' {
                 let full = &input[i..=k];
                 if html_tags().contains(name.to_ascii_lowercase().as_str()) {
-                    out.push_str(full);
+                    let before_close = full[..full.len() - 1].trim_end();
+                    if is_void_html_tag(name) && !before_close.ends_with('/') {
+                        out.push_str(before_close);
+                        out.push_str(" />");
+                    } else {
+                        out.push_str(full);
+                    }
                 } else {
                     out.push_str(&full.replace('<', "&lt;").replace('>', "&gt;"));
                 }
@@ -644,6 +772,16 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_void_html_tags_for_mdx() {
+        assert_eq!(escape_for_mdx("a<br>b"), "a<br />b");
+        assert_eq!(
+            escape_for_mdx(r#"<img src="image.png" alt="Example">"#),
+            r#"<img src="image.png" alt="Example" />"#
+        );
+        assert_eq!(escape_for_mdx("<br />"), "<br />");
+    }
+
+    #[test]
     fn escapes_curly_braces() {
         assert_eq!(escape_for_mdx("use {x}"), "use &#123;x&#125;");
     }
@@ -656,6 +794,28 @@ mod tests {
     #[test]
     fn preserves_inline_code_with_braces() {
         assert_eq!(escape_for_mdx("`{a: 1}`"), "`{a: 1}`");
+    }
+
+    #[test]
+    fn rewrites_uri_angle_autolink() {
+        assert_eq!(
+            escape_for_mdx("Source: <https://example.com/a_(b)?x=1&y=2>."),
+            "Source: [https://example.com/a_(b)?x=1&y=2](<https://example.com/a_(b)?x=1&y=2>)."
+        );
+    }
+
+    #[test]
+    fn rewrites_email_angle_autolink() {
+        assert_eq!(
+            escape_for_mdx("Contact <docs+test@example.com>."),
+            "Contact [docs+test@example.com](<mailto:docs+test@example.com>)."
+        );
+    }
+
+    #[test]
+    fn leaves_angle_autolinks_inside_code_unchanged() {
+        let input = "`<https://inline.example>`\n\n```md\n<https://fenced.example>\n```";
+        assert_eq!(escape_for_mdx(input), input);
     }
 
     #[test]

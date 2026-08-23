@@ -25,9 +25,9 @@
 //!   claude-agents/<name>.mdx    one file per agent
 //! ```
 //!
-//! The MDX escaping (`escape_for_mdx`) and frontmatter shape are faithful ports
-//! of zudo-doc's `escape-for-mdx.ts` / `generate.ts`, so output renders
-//! identically under zudo-doc.
+//! The MDX escaping (`escape_for_mdx`) and frontmatter shape are based on
+//! zudo-doc's `escape-for-mdx.ts` / `generate.ts`. CCResDoc additionally
+//! normalizes CommonMark constructs that zudo-doc's MDX mode would reject.
 //!
 //! ## Public API
 //!

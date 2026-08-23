@@ -768,6 +768,29 @@ fn emitted_command_body_escapes_jsx_and_braces() {
     assert!(page.contains("<div>")); // known HTML tag preserved
 }
 
+#[test]
+fn emitted_skill_reference_normalizes_mdx_incompatible_markdown() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+    write(
+        &claude,
+        "skills/links/SKILL.md",
+        "---\nname: Links\ndescription: Link examples\n---\n\nSee the reference.",
+    );
+    write(
+        &claude,
+        "skills/links/references/autolinks.md",
+        "Source: <https://example.com/docs>. Contact <docs@example.com>.\n\n| Result |\n| --- |\n| first<br>second |",
+    );
+
+    generate(&config_for(&claude, &docs)).unwrap();
+    let page = read(&docs.join("claude-skills/links/ref-autolinks.mdx"));
+    assert!(page.contains("[https://example.com/docs](<https://example.com/docs>)"));
+    assert!(page.contains("[docs@example.com](<mailto:docs@example.com>)"));
+    assert!(page.contains("first<br />second"));
+}
+
 // ---------------------------------------------------------------------------
 // Resilience: non-UTF-8 file doesn't abort the whole run (#61 fix 1)
 // ---------------------------------------------------------------------------
