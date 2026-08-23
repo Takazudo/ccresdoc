@@ -9,8 +9,8 @@
 //!   CLAUDE.md=900, commands=901, skills=902, agents=903; the overview
 //!   `claude/index.mdx` is 899 and carries `category_no_page: true`.
 //!
-//! Everything else (escaping, skill sub-pages, frontmatter shape) is ported
-//! faithfully so output renders identically under zudo-doc.
+//! Skill sub-pages and frontmatter remain aligned with upstream. Escaping also
+//! normalizes CommonMark constructs that zudo-doc's MDX mode would reject.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;

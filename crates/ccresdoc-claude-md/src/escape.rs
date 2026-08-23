@@ -1,9 +1,10 @@
-//! Faithful Rust port of zudo-doc's `escape-for-mdx.ts`.
+//! Rust port of zudo-doc's `escape-for-mdx.ts` with CCResDoc compatibility
+//! normalization.
 //!
 //! Escapes angle brackets and curly braces in prose so the content is valid
 //! MDX, while preserving fenced code blocks (3+ backticks) and inline code
-//! spans (1-3 backticks). The logic mirrors the upstream TypeScript
-//! implementation exactly so generated MDX renders identically under zudo-doc.
+//! spans (1-3 backticks). It also preserves CommonMark angle autolinks as
+//! Markdown links and self-closes HTML void tags that MDX mode would reject.
 
 use std::collections::HashSet;
 use std::sync::OnceLock;
