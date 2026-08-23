@@ -1381,7 +1381,13 @@ fn main() {
                     {
                         api.prevent_close();
                         if let Some(window) = app_handle.get_webview_window(SETTINGS_WINDOW_LABEL) {
+                            let _ = window.eval(
+                                "window.dispatchEvent(new Event('ccresdoc-settings-native-close'))",
+                            );
                             let _ = window.hide();
+                        }
+                        if let Some(main) = app_handle.get_webview_window("main") {
+                            let _ = main.set_focus();
                         }
                     }
                 }

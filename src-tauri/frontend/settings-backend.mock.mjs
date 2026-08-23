@@ -3,9 +3,16 @@ import { BACKEND_METHODS, actionPolicy } from "./settings-backend.mjs";
 export function createMockBackend(overrides = {}) {
   const calls = [];
   const snapshot = overrides.snapshot ?? {
-    settings: { status: "missing", revision: null, configPath: "/mock/config.toml" },
+    settings: {
+      status: "missing", revision: null, configPath: "/mock/config.toml", fileExists: false,
+      authored: { schemaVersion: 1, claudeDir: "~/.claude", appearanceMode: "system", themePack: "default", preferredPort: 4892, fallbackToFreePort: true },
+      effective: { claudeDir: "/mock/.claude", appearanceMode: "system", themePack: "default", preferredPort: 4892, effectivePort: 4892, fallbackToFreePort: true },
+      validation: [],
+    },
     runtime: { phase: "idle", active: null },
     actions: { canSave: true, canRebase: false, canReplaceMalformed: false },
+    defaults: { schemaVersion: 1, claudeDir: "~/.claude", appearanceMode: "system", themePack: "default", preferredPort: 4892, fallbackToFreePort: true },
+    themePacks: ["default"],
   };
   const result = (method, value) => (...args) => {
     calls.push({ method, args });

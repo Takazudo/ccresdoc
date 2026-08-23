@@ -1,38 +1,56 @@
-:root {
-  color-scheme: dark light;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  background: Canvas;
-  color: CanvasText;
-  accent-color: #b66f35;
-}
-
+:root { color-scheme: dark light; font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; background: Canvas; color: CanvasText; accent-color: #b66f35; --border: color-mix(in srgb, CanvasText 18%, transparent); --muted: color-mix(in srgb, CanvasText 66%, transparent); --danger: #b3261e; --section-gap: 2rem; --field-gap: .5rem; }
+@media (prefers-color-scheme: dark) { :root { --danger: #ffb4ab; } }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
-.settings-shell { max-width: 46rem; margin-inline: auto; padding: 2rem; }
-.settings-header { border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent); }
-.settings-header h1 { margin: 0; font-size: 1.65rem; }
-.settings-header p, .settings-note { color: color-mix(in srgb, CanvasText 65%, transparent); }
-.settings-state { padding-block: 2rem; }
-.settings-state[hidden] { display: none; }
-.settings-summary { display: grid; gap: 0.75rem; }
-.settings-summary div { display: grid; grid-template-columns: 6rem minmax(0, 1fr); gap: 1rem; }
-.settings-summary dt { font-weight: 600; }
-.settings-summary dd { margin: 0; overflow-wrap: anywhere; }
-.settings-fatal { color: #b3261e; }
-.spinner {
-  width: 1.5rem; height: 1.5rem; border: 2px solid color-mix(in srgb, CanvasText 20%, transparent);
-  border-top-color: currentColor; border-radius: 50%; animation: spin 0.8s linear infinite;
-}
+button, input, select { font: inherit; }
+button, select, input[type="text"], input[type="number"] { min-height: 44px; }
+button { color: ButtonText; background: ButtonFace; border: 1px solid ButtonBorder; border-radius: .45rem; padding: .55rem .9rem; cursor: pointer; }
+button:focus-visible { outline: 3px solid Highlight; outline-offset: 2px; }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { cursor: not-allowed; opacity: .52; }
+button.primary { background: Highlight; color: HighlightText; border-color: Highlight; font-weight: 650; }
+button.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 55%, ButtonBorder); }
+input[type="text"], input[type="number"], select { width: 100%; color: FieldText; background: Field; border: 1px solid var(--border); border-radius: .4rem; padding: .55rem .65rem; }
+input:focus, select:focus { outline: 2px solid Highlight; outline-offset: 1px; border-color: Highlight; }
+input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--danger); }
+.settings-shell { max-width: 52rem; margin-inline: auto; padding: 1.5rem clamp(1rem, 4vw, 2rem) 0; }
+.settings-header { display: flex; justify-content: space-between; align-items: start; gap: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
+.settings-header h1, .settings-header p, .section-heading h2, .section-heading p, .description, .field-error, .check-row small { margin: 0; }
+.settings-header h1 { font-size: 1.55rem; }
+.settings-header p, .section-heading p, .description, .check-row small { color: var(--muted); }
+.settings-header p, .section-heading p { margin-top: .3rem; }
+.operation-status { min-height: 1.3em; color: var(--muted); text-align: end; }
+.settings-state { padding-block: 1.5rem; }
+.settings-state[hidden], [hidden] { display: none !important; }
+.centered { min-height: 16rem; display: grid; place-content: center; justify-items: center; text-align: center; }
+.settings-section { display: grid; gap: 1rem; padding-block: var(--section-gap); border-bottom: 1px solid var(--border); }
+.section-heading h2 { font-size: 1.12rem; }
+.field-group { display: grid; gap: var(--field-gap); border: 0; margin: 0; padding: 0; }
+.field-group > label, .field-group legend { font-weight: 650; padding: 0; }
+.choice-row { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; }
+.choice-row label, .check-row { min-height: 44px; display: flex; align-items: center; gap: .55rem; cursor: pointer; }
+.choice-row input, .check-row input { width: 1.25rem; height: 1.25rem; margin: 0; flex: none; }
+.check-row span { display: grid; gap: .2rem; }
+.check-row small { display: block; font-weight: 400; }
+.input-action { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; }
+.description { font-size: .86rem; line-height: 1.45; }
+.field-error { color: var(--danger); font-size: .86rem; }
+.message, .recovery { border: 1px solid var(--border); border-radius: .55rem; padding: 1rem; }
+.message.error, .fatal, .field-error { color: var(--danger); }
+.message:focus { outline: 2px solid Highlight; }
+.recovery { margin-top: 1.5rem; background: color-mix(in srgb, CanvasText 5%, Canvas); }
+.recovery h2 { margin: 0; font-size: 1rem; }
+.recovery p { margin: .5rem 0 1rem; }
+.recovery > div, .file-actions, .settings-footer > div { display: flex; flex-wrap: wrap; gap: .5rem; }
+.status-grid { display: grid; gap: .75rem; margin: 0; }
+.status-grid div { display: grid; grid-template-columns: minmax(9rem, 30%) minmax(0, 1fr); gap: 1rem; }
+.status-grid dt { font-weight: 650; }
+.status-grid dd { margin: 0; overflow-wrap: anywhere; }
+.diagnostics { margin: 0; padding-left: 1.4rem; }
+.diagnostics:empty { display: none; }
+.settings-footer { position: sticky; bottom: 0; display: flex; justify-content: space-between; gap: 1rem; margin-inline: calc(-1 * clamp(1rem, 4vw, 2rem)); padding: 1rem clamp(1rem, 4vw, 2rem); background: color-mix(in srgb, Canvas 94%, transparent); border-top: 1px solid var(--border); backdrop-filter: blur(10px); }
+.spinner { width: 1.5rem; height: 1.5rem; border: 2px solid var(--border); border-top-color: currentColor; border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-button {
-  font: inherit; color: ButtonText; background: ButtonFace; border: 1px solid ButtonBorder;
-  border-radius: 0.35rem; padding: 0.5rem 0.9rem; cursor: pointer;
-}
-button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
-button:active { transform: translateY(1px); }
-@media (hover: hover) and (pointer: fine) {
-  button:hover { filter: brightness(1.08); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .spinner { animation-duration: 1.5s; }
-}
+@media (hover: hover) and (pointer: fine) { button:hover:not(:disabled) { filter: brightness(1.08); } }
+@media (max-width: 560px) { .settings-header, .settings-footer { align-items: stretch; flex-direction: column; } .operation-status { text-align: start; } .status-grid div { grid-template-columns: 1fr; gap: .2rem; } .settings-footer > div:last-child { justify-content: flex-end; } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 1.5s; } }
