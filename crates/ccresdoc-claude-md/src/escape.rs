@@ -542,6 +542,13 @@ fn is_tag_name_char(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c == b'-'
 }
 
+fn is_void_html_tag(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "br" | "col" | "hr" | "img" | "input"
+    )
+}
+
 /// `/<([A-Za-z][A-Za-z0-9_-]*)(\s[^>]*)?>/g` — opening tags (also matches the
 /// spaced self-closing form `<Foo />`).
 ///
@@ -599,7 +606,13 @@ fn escape_open_tags(input: &str) -> String {
             if k < len && bytes[k] == b'>' {
                 let full = &input[i..=k];
                 if html_tags().contains(name.to_ascii_lowercase().as_str()) {
-                    out.push_str(full);
+                    let before_close = full[..full.len() - 1].trim_end();
+                    if is_void_html_tag(name) && !before_close.ends_with('/') {
+                        out.push_str(before_close);
+                        out.push_str(" />");
+                    } else {
+                        out.push_str(full);
+                    }
                 } else {
                     out.push_str(&full.replace('<', "&lt;").replace('>', "&gt;"));
                 }
@@ -755,6 +768,16 @@ mod tests {
     #[test]
     fn preserves_known_html_tag() {
         assert_eq!(escape_for_mdx("a <div> b"), "a <div> b");
+    }
+
+    #[test]
+    fn normalizes_void_html_tags_for_mdx() {
+        assert_eq!(escape_for_mdx("a<br>b"), "a<br />b");
+        assert_eq!(
+            escape_for_mdx(r#"<img src="image.png" alt="Example">"#),
+            r#"<img src="image.png" alt="Example" />"#
+        );
+        assert_eq!(escape_for_mdx("<br />"), "<br />");
     }
 
     #[test]

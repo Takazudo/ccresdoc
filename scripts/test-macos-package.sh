@@ -73,7 +73,11 @@ printf '%s\n' \
   '' \
   "$FIXTURE_BODY" \
   '' \
-  "Source: <$FIXTURE_AUTOLINK>" > "$PROBE_HOME/.claude/skills/package-readiness-probe/SKILL.md"
+  "Source: <$FIXTURE_AUTOLINK>" \
+  '' \
+  '| Result |' \
+  '| --- |' \
+  '| before<br>after |' > "$PROBE_HOME/.claude/skills/package-readiness-probe/SKILL.md"
 : > "$SENTINEL_LOG"
 cat > "$SENTINEL_DIR/node" <<EOF
 #!/bin/sh
@@ -136,7 +140,9 @@ for RUN in 1 2; do
       && [[ "$(curl -s -o "$PROBE_DIR/fixture.html" -w '%{http_code}' "$FIXTURE_ROUTE" || true)" = "200" ]] \
       && grep -Fq "$FIXTURE_LABEL" "$PROBE_DIR/fixture.html" \
       && grep -Fq "$FIXTURE_BODY" "$PROBE_DIR/fixture.html" \
-      && grep -Fq "href=\"$FIXTURE_AUTOLINK\"" "$PROBE_DIR/fixture.html"; then
+      && grep -Fq "href=\"$FIXTURE_AUTOLINK\"" "$PROBE_DIR/fixture.html" \
+      && grep -Fq 'before<br' "$PROBE_DIR/fixture.html" \
+      && grep -Fq '>after<' "$PROBE_DIR/fixture.html"; then
         READY=1
         break
     fi
