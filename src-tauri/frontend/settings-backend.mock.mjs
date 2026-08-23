@@ -11,6 +11,7 @@ export function createMockBackend(overrides = {}) {
     },
     runtime: { phase: "idle", active: null },
     actions: { canSave: true, canRebase: false, canReplaceMalformed: false },
+    defaults: { schemaVersion: 1, claudeDir: "~/.claude", appearanceMode: "system", themePack: "default", preferredPort: 4892, fallbackToFreePort: true },
     themePacks: ["default"],
   };
   const result = (method, value) => (...args) => {

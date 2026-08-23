@@ -19,7 +19,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
       active: { usesAuthoredSettings: true, sourceIsAuthored: true, preferredPort: 4892, effectivePort: 4892 }, validation: [],
     },
     runtime: { phase: "ready", active: { ...DEFAULT_DRAFT, claudeDir: "/Users/test/.claude", effectivePort: 4892 }, fallbackUsed: false, diagnostic: null },
-    actions: { canSave: true, canRebase: true, canReplaceMalformed: false }, themePacks: ["default", "paper"],
+    actions: { canSave: true, canRebase: true, canReplaceMalformed: false }, defaults: { ...DEFAULT_DRAFT }, themePacks: ["default", "paper"],
   };
   return { ...base, ...overrides } as any;
 }
@@ -50,7 +50,7 @@ describe("bundled Settings editor", () => {
     expect(document.activeElement).toBe(document.querySelector('[name="appearance-mode"]:checked'));
     expect(document.querySelector('label[for="claude-dir"]')).not.toBeNull();
     expect(document.querySelector("#claude-dir")?.getAttribute("aria-describedby")).toContain("claude-dir-description");
-    expect(document.querySelector("#effective-source")?.textContent).toBe("/Users/test/.claude");
+    expect(document.querySelector("#effective-source")?.textContent).toBe("/Users/test/.claude / /Users/test/.claude");
     expect(document.querySelector("#port-status")?.textContent).toBe("4892 / 4892");
     expect((document.querySelector("#save-settings") as HTMLButtonElement).disabled).toBe(true);
   });
@@ -63,6 +63,17 @@ describe("bundled Settings editor", () => {
     port.value = "5000"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush();
     expect((document.querySelector("#save-settings") as HTMLButtonElement).disabled).toBe(false);
     await editor.submit(); await flush(); expect(backend.saveAndApply).toHaveBeenCalledWith(expect.objectContaining({ preferredPort: 5000 }), "sha256:one"); expect(close).not.toHaveBeenCalled(); expect(document.querySelector("#operation-status")?.textContent).toBe("Saved and active");
+  });
+
+  it("keeps the editor visible and disables mutation throughout an async apply", async () => {
+    const { editor, backend, setSnapshot } = setup(); await editor.load();
+    const source = document.querySelector("#claude-dir") as HTMLInputElement; source.value = "/pending"; source.dispatchEvent(new Event("input", { bubbles: true })); await flush();
+    let finish!: (value: { status: string }) => void;
+    backend.saveAndApply.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const applying = editor.submit(); await flush();
+    expect(document.querySelector("#settings-form")?.hasAttribute("hidden")).toBe(false); expect(source.disabled).toBe(true); expect(document.querySelector("#operation-status")?.textContent).toBe("Applying…");
+    setSnapshot(snapshot({ settings: { ...snapshot().settings, authored: { ...DEFAULT_DRAFT, claudeDir: "/pending" }, revision: "sha256:two" } })); finish({ status: "active" }); await applying;
+    expect(source.disabled).toBe(false); expect(document.querySelector("#operation-status")?.textContent).toBe("Saved and active");
   });
 
   it("treats picker cancellation as a no-op, selected paths as drafts, Reset as unsaved, and Escape as Cancel", async () => {
@@ -93,7 +104,7 @@ describe("bundled Settings editor", () => {
 
     const unavailable = setup(snapshot({ settings: { ...snapshot().settings, authored: { ...DEFAULT_DRAFT, themePack: "gone" }, effective: { ...snapshot().settings.effective, themePack: "default" }, validation: [{ kind: "theme_pack_unavailable", field: "appearance.theme_pack", message: "gone unavailable", blocking: false }] } })); await unavailable.editor.load(); await flush(); expect((document.querySelector("#theme-pack") as HTMLSelectElement).value).toBe("gone"); expect(document.querySelector("#theme-status")?.textContent).toContain("gone / default");
 
-    const stale = setup(); await stale.editor.load(); await flush(); const port = document.querySelector("#preferred-port") as HTMLInputElement; port.value = "5001"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush(); stale.setSnapshot(snapshot({ settings: { ...snapshot().settings, revision: "sha256:external" } })); await stale.editor.load({ detectConflict: true }); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); stale.backend.rebaseStale.mockRejectedValueOnce({ code: "revision_conflict", message: "changed again" }); await stale.editor.reapply(); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); expect(stale.backend.rebaseStale).toHaveBeenCalledWith(expect.objectContaining({ preferredPort: 5001 }), new Set(["preferredPort"]), "sha256:one");
+    const stale = setup(); await stale.editor.load(); await flush(); const port = document.querySelector("#preferred-port") as HTMLInputElement; port.value = "5001"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush(); stale.setSnapshot(snapshot({ settings: { ...snapshot().settings, revision: "sha256:external" } })); await stale.editor.load({ detectConflict: true }); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); port.value = "5002"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush(); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); stale.backend.rebaseStale.mockRejectedValueOnce({ code: "revision_conflict", message: "changed again" }); await stale.editor.reapply(); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); expect(stale.backend.rebaseStale).toHaveBeenCalledWith(expect.objectContaining({ preferredPort: 5002 }), new Set(["preferredPort"]), "sha256:one");
   });
 });
 
