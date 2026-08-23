@@ -6,6 +6,8 @@
   "contentHmrMarker": "HMR reached the native route at 4892.",
   "contentReloadEvent": "page",
   "nodeSentinelInvocations": 0,
+  "fixedPortSerialized": true,
+  "portReleasedAfterTeardown": true,
   "processTreeSampled": true,
   "processTreeChildren": [
     "<pid> <ppid> <native-zfb> dev --port 4892"
