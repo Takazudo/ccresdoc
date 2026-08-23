@@ -5,7 +5,9 @@ zudo-doc consumer project built by zfb. Output in `dist/` is served by `zfb dev`
 ## Architecture
 
 - **Framework**: Preact + zfb SSG
-- **Package**: `@takazudo/zfb@2.7.1` (binary) + `@takazudo/zudo-doc@5.7.0` (components)
+- **Published toolchain**: `@takazudo/zfb@2.10.1` plus native carrier packages
+  (the host resolves the matching package-root `zfb` binary) and
+  `@takazudo/zudo-doc@5.12.0` (components)
 - **Port**: 4892 (pinned in `zfb.config.ts`)
 - **Node-free mode**: Zero `.mjs` plugins → no `plugin-host.mjs` spawned
 - **Collections**: single `"docs"` collection at `src/content/docs/`
@@ -18,9 +20,11 @@ zudo-doc consumer project built by zfb. Output in `dist/` is served by `zfb dev`
 cd app
 pnpm install --frozen-lockfile  # once — populates node_modules incl. native zfb binary
 pnpm run validate:dependencies  # manifest/lock/installed-tree contract
+pnpm run validate:theme-packs
 pnpm run typecheck
 pnpm run check:zfb
 pnpm run test:run
+pnpm run test:theme-packs
 pnpm exec zfb build   # setup/build check: wrapper spawns native binary
 ```
 
@@ -47,11 +51,16 @@ single-source mechanism in JSON; `scripts/check-zfb-pin.sh` is the enforcement g
 
 ### Published toolchain contract
 The first-party zfb packages and all five native platform packages are pinned to
-`2.7.1`; zudo-doc is pinned to `5.7.0`. Reachable runtime peers are pinned to
+`2.10.1`; zudo-doc is pinned to `5.12.0`. Reachable runtime peers are pinned to
 `preact@10.29.1`, `preact-render-to-string@6.6.7`, `zod@4.3.6`, and `katex@0.16.22`.
 The Cloudflare adapter and legacy local Markdown mirrors are intentionally absent:
 zudo-doc supplies the selected Markdown pipeline while CCResDoc's Rust generator
 owns content generation.
+
+The final zfb configuration has `plugins: []`, so route files under `pages/` are
+host-owned adapters built from public zudo-doc factories. Runtime resolution uses
+the direct package-root native carrier (`node_modules/@takazudo/zfb-<platform>/zfb`),
+not `node_modules/.bin/zfb`; Node is needed for install and build checks only.
 
 ## Structure
 

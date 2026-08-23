@@ -1,22 +1,27 @@
 # CCResDoc
 
-macOS documentation viewer for `$HOME/.claude/`. Thin Tauri host around a **node-free sidecar** architecture: at launch the host runs the in-process Rust generator/watcher (`ccresdoc-claude-md`) and spawns the native `zfb` binary (`zfb dev --port 4892`); the WebView navigates to `http://localhost:4892/` once the site is ready.
+macOS documentation viewer for `$HOME/.claude/`. Thin Tauri host around a **node-free sidecar** architecture: at launch the host runs the in-process Rust generator/watcher (`ccresdoc-claude-md`) and spawns the native `zfb` binary (`zfb dev --port 4892`); the WebView navigates to `http://localhost:4892/docs/` after semantic readiness.
 
-This repo uses zfb (Rust SSG orchestrator at `$HOME/repos/myoss/zfb`) for the frontend build. The hybrid architecture is documented in the epic issue (#41).
+This project consumes the published zfb toolchain through the app's frozen
+lockfile. The hybrid architecture is documented in the epic issue (#41).
 
 ## Key architecture facts (claim checklist)
 
 - `node_modules` is populated at **setup/build time only** via `pnpm install --frozen-lockfile` (Node at setup only — NOT at runtime).
-- The host resolves the **native** zfb binary at `<workspace>/node_modules/@takazudo/zfb-<platform>/zfb` — NOT the `.bin/zfb` Node-shebang wrapper.
+- The published toolchain is `@takazudo/zfb*` `2.10.1` plus `@takazudo/zudo-doc` `5.12.0`; the app and compatibility fixture are validated from their own frozen lockfiles.
+- The host resolves the **native** zfb binary at the package-root carrier `<workspace>/node_modules/@takazudo/zfb-<platform>/zfb` — NOT the `.bin/zfb` Node-shebang wrapper.
 - **Port 4892**: pinned in `app/zfb.config.ts` and `src-tauri/tauri.conf.json`.
-- **Node-free at runtime**: `zfb dev` with zero `.mjs` plugins spawns no Node host process.
-- **Writable workspace model**: bundled `.app` copies its `app/` tree to `<app_data_dir>/app-workspace/` on first launch, gated by a version token (the host's compiled `CARGO_PKG_VERSION`, with an optional `version.txt` override) + a `.ccresdoc-workspace-ready` sentinel.
+- **Node-free at runtime**: the zfb config ends with `plugins: []`; host-owned route adapters replace package route/plugin entrypoints, and `zfb dev` spawns no Node host process.
+- **Writable workspace model**: bundled `.app` copies `Resources/runtime-workspace/app/` to `<app_data_dir>/app-workspace/` on first launch. A SHA-256 tree digest covers the staged workspace plus the staging/digest implementation; its refresh token gates the `.ccresdoc-workspace-ready` sentinel.
 - **Rust `~/.claude`→MDX generator** (`crates/ccresdoc-claude-md`) is the live engine: `generate()` + `watch()` write MDX → `zfb dev` content-watch → HMR.
-- Readiness is polled on `GET /` (NOT `/___ready`).
+- Readiness is polled on semantic `GET /docs/` (NOT a generic `GET /` and NOT `/___ready`); the response must contain the generator-owned `Claude Resources` marker.
+- Canonical compatibility facts and drift-checked outputs live under `compatibility/node-free-latest/evidence/`; the staged Linux probe is not a macOS WebView launch.
 
 ## When working on this repo
 
-- For zfb-related work, **invoke `/refer-another-project zfb` first** so you pick up zfb's repo structure, crate layout, and CLAUDE.md context. zfb is a real-world test of this restructure — bugs found in zfb may be fixed upstream by PR + merge to zfb's main, per project authorisation.
+- For zfb-related work, consult the published package contract and this
+  repository's architecture notes first. Keep dependency behavior and product
+  guidance project-local; do not copy private provenance into this repository.
 - For Tauri work, consult `/tauri-wisdom` (esp. the `recipes/doc-viewer-app.mdx` recipe).
 
 ## Per-directory context files
