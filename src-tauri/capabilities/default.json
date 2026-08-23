@@ -8,6 +8,7 @@
   "permissions": [
     "core:default",
     "allow-retry-launch",
-    "allow-open-settings-window"
+    "allow-open-settings-window",
+    "allow-update-appearance"
   ]
 }

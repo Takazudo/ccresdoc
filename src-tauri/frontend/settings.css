@@ -1,4 +1,6 @@
-:root { color-scheme: dark light; font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; background: Canvas; color: CanvasText; accent-color: #b66f35; --border: color-mix(in srgb, CanvasText 18%, transparent); --muted: color-mix(in srgb, CanvasText 66%, transparent); --danger: #b3261e; --section-gap: 2rem; --field-gap: .5rem; }
+:root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; background: Canvas; color: CanvasText; accent-color: #b66f35; --border: color-mix(in srgb, CanvasText 18%, transparent); --muted: color-mix(in srgb, CanvasText 66%, transparent); --danger: #b3261e; --section-gap: 2rem; --field-gap: .5rem; }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 @media (prefers-color-scheme: dark) { :root { --danger: #ffb4ab; } }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }

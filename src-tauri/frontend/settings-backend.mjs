@@ -3,6 +3,9 @@ export const BACKEND_METHODS = Object.freeze([
   "openSettings",
   "getSnapshot",
   "validateDraft",
+  "previewAppearance",
+  "clearAppearancePreview",
+  "listenAppearance",
   "saveAndApply",
   "rebaseStale",
   "replaceMalformed",
@@ -53,7 +56,7 @@ const camelToSnakeKey = (key) => key.replace(/[A-Z]/g, (letter) => `_${letter.to
 const fromWire = (value) => mapKeys(value, snakeToCamelKey);
 const draftToWire = (draft) => mapKeys(draft, camelToSnakeKey);
 
-export function createBackendAdapter(invoke) {
+export function createBackendAdapter(invoke, listen) {
   if (typeof invoke !== "function") throw new TypeError("invoke must be a function");
   const call = (command, args) => Promise.resolve(invoke(command, args)).catch((error) => {
     throw decodeBackendError(error);
@@ -63,6 +66,11 @@ export function createBackendAdapter(invoke) {
     openSettings: () => call("open_settings_window"),
     getSnapshot: () => call("get_settings_snapshot").then(fromWire),
     validateDraft: (draft) => call("validate_settings_draft", { draft: draftToWire(draft) }).then(fromWire),
+    previewAppearance: (mode, themePack) => call("preview_appearance", { mode, themePack }).then(fromWire),
+    clearAppearancePreview: () => call("clear_appearance_preview").then(fromWire),
+    listenAppearance: (handler) => typeof listen === "function"
+      ? Promise.resolve(listen("ccresdoc://appearance", (event) => handler(fromWire(event.payload))))
+      : Promise.resolve(() => {}),
     saveAndApply: (draft, expectedRevision) => call("save_and_apply_settings", {
       draft: draftToWire(draft),
       expectedRevision: expectedRevision ?? null,
@@ -85,7 +93,7 @@ export function createBackendAdapter(invoke) {
 export function createTauriBackend(globalObject = globalThis) {
   const invoke = globalObject?.__TAURI__?.core?.invoke;
   if (typeof invoke !== "function") throw decodeBackendError("Tauri invoke API is unavailable");
-  return createBackendAdapter(invoke);
+  return createBackendAdapter(invoke, globalObject?.__TAURI__?.event?.listen);
 }
 
 export function actionPolicy(snapshot) {

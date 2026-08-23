@@ -8,11 +8,15 @@ test("adapter uses exact commands and camelCase arguments", async () => {
   const backend = createBackendAdapter((command, args) => { calls.push({ command, args }); return { ok: true }; });
   const draft = { schemaVersion: 1 };
   await backend.validateDraft(draft);
+  await backend.previewAppearance("dark", "default");
+  await backend.clearAppearancePreview();
   await backend.saveAndApply(draft, "sha256:one");
   await backend.rebaseStale(draft, new Set(["claudeDir"]), "sha256:stale");
   await backend.replaceMalformed(draft, "sha256:bad");
   assert.deepEqual(calls, [
     { command: "validate_settings_draft", args: { draft: { schema_version: 1 } } },
+    { command: "preview_appearance", args: { mode: "dark", themePack: "default" } },
+    { command: "clear_appearance_preview", args: undefined },
     { command: "save_and_apply_settings", args: { draft: { schema_version: 1 }, expectedRevision: "sha256:one" } },
     { command: "rebase_stale_settings", args: { draft: { schema_version: 1 }, dirtyFields: ["claude_dir"], staleRevision: "sha256:stale" } },
     { command: "replace_malformed_settings", args: { draft: { schema_version: 1 }, expectedRevision: "sha256:bad" } },

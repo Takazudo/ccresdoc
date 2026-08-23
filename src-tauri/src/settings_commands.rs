@@ -3,15 +3,16 @@ use std::fs;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
+use crate::appearance::{AppearanceEnvelope, AppearanceSource, AppearanceValue, APPEARANCE_EVENT};
 use crate::runtime::{ApplyStatus, RuntimeApplyResult, RuntimePhase, RuntimeSnapshot};
 use crate::settings::{
-    ApplyImpact, ContentRevision, EffectiveSettings, LoadStatus, SaveError, SaveResult,
-    SettingField, SettingsDiagnostic, SettingsDraft, SettingsSnapshot,
+    AppearanceMode, ApplyImpact, ContentRevision, EffectiveSettings, LoadStatus, SaveError,
+    SaveResult, SettingField, SettingsDiagnostic, SettingsDraft, SettingsSnapshot,
 };
 use crate::settings_window::{open_or_focus_settings, SETTINGS_WINDOW_LABEL};
 use crate::{launch, AppState};
@@ -117,7 +118,20 @@ pub struct CompleteSettingsSnapshot {
 }
 
 fn complete_snapshot(state: &AppState) -> CompleteSettingsSnapshot {
-    let settings = state.settings_store.load();
+    let mut settings = state.settings_store.load();
+    state
+        .runtime
+        .publish_authoritative_appearance(settings.clone());
+    // A valid legacy value is a first-save draft candidate only. It never
+    // changes file status/revision and disappears when the exact origin does.
+    if settings.status == LoadStatus::Missing {
+        if let Some(candidate) = state.appearance.candidate() {
+            settings.authored.appearance_mode = candidate.mode.as_str().into();
+            settings.authored.theme_pack = candidate.theme_pack.clone();
+            settings.effective.appearance_mode = candidate.mode;
+            settings.effective.theme_pack = candidate.theme_pack;
+        }
+    }
     let actions = action_availability(&settings.status, settings.revision.is_some());
     CompleteSettingsSnapshot {
         settings,
@@ -161,7 +175,12 @@ pub struct DraftValidation {
     pub valid: bool,
 }
 
-fn apply_saved(app: &AppHandle, state: &AppState, saved: SaveResult) -> RuntimeApplyResult {
+fn apply_saved(
+    app: &AppHandle,
+    state: &AppState,
+    saved: SaveResult,
+    clear_preview: bool,
+) -> RuntimeApplyResult {
     let impact = saved.impact.clone();
     let before = state.runtime.snapshot();
     let effective = saved.snapshot.effective.clone();
@@ -199,6 +218,12 @@ fn apply_saved(app: &AppHandle, state: &AppState, saved: SaveResult) -> RuntimeA
         ApplyStatus::SavedNotActive
     };
 
+    if clear_preview {
+        state.appearance.clear_preview();
+    }
+    let authoritative = state.settings_store.load();
+    let _ = app.emit(APPEARANCE_EVENT, state.appearance.envelope(&authoritative));
+
     RuntimeApplyResult {
         snapshot: state.runtime.snapshot(),
         impact,
@@ -213,7 +238,18 @@ fn save_operation(
 ) -> Result<RuntimeApplyResult, CommandError> {
     state
         .runtime
-        .with_serialized_apply(|| operation().map(|saved| apply_saved(app, state, saved)))
+        .with_serialized_apply(|| operation().map(|saved| apply_saved(app, state, saved, true)))
+        .map_err(CommandError::from)
+}
+
+fn appearance_save_operation(
+    app: &AppHandle,
+    state: &AppState,
+    operation: impl FnOnce() -> Result<SaveResult, SaveError>,
+) -> Result<RuntimeApplyResult, CommandError> {
+    state
+        .runtime
+        .with_serialized_apply(|| operation().map(|saved| apply_saved(app, state, saved, false)))
         .map_err(CommandError::from)
 }
 
@@ -230,10 +266,161 @@ pub(crate) fn open_settings_window(
 #[tauri::command]
 pub(crate) fn get_settings_snapshot(
     window: WebviewWindow,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<CompleteSettingsSnapshot, CommandError> {
     authorize_settings(&window)?;
-    Ok(complete_snapshot(&state))
+    let snapshot = state
+        .runtime
+        .with_serialized_apply(|| complete_snapshot(&state));
+    let _ = app.emit(
+        APPEARANCE_EVENT,
+        state.appearance.envelope(&snapshot.settings),
+    );
+    Ok(snapshot)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppearanceIntent {
+    LegacyCandidate,
+    Persist,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct AppearanceRequest {
+    pub mode: AppearanceMode,
+    pub theme_pack: String,
+    pub intent: AppearanceIntent,
+}
+
+fn authorize_docs_url(url: &tauri::Url, effective_port: u16) -> Result<String, CommandError> {
+    let host_ok = matches!(url.host_str(), Some("localhost" | "127.0.0.1"));
+    if url.scheme() != "http"
+        || !host_ok
+        || url.port_or_known_default() != Some(effective_port)
+        || !url.path().starts_with("/docs/")
+    {
+        return Err(CommandError::new(
+            "forbidden_origin",
+            "appearance mutation requires the active docs origin",
+        ));
+    }
+    Ok(format!(
+        "{}://{}:{}",
+        url.scheme(),
+        url.host_str().unwrap(),
+        effective_port
+    ))
+}
+
+fn docs_origin(window: &WebviewWindow, effective_port: u16) -> Result<String, CommandError> {
+    let url = window
+        .url()
+        .map_err(|error| CommandError::new("caller_url", error.to_string()))?;
+    authorize_docs_url(&url, effective_port)
+}
+
+fn validate_appearance(
+    state: &AppState,
+    mode: AppearanceMode,
+    theme_pack: String,
+) -> Result<AppearanceValue, CommandError> {
+    if !state.settings_store.supports_theme_pack(&theme_pack) {
+        return Err(CommandError::with_details(
+            "invalid_theme_pack",
+            "theme pack is not available",
+            json!({ "themePack": theme_pack }),
+        ));
+    }
+    Ok(AppearanceValue { mode, theme_pack })
+}
+
+#[tauri::command]
+pub(crate) async fn update_appearance(
+    window: WebviewWindow,
+    app: AppHandle,
+    request: AppearanceRequest,
+) -> Result<AppearanceEnvelope, CommandError> {
+    authorize(window.label(), &[MAIN_WINDOW_LABEL])?;
+    let state = app.state::<AppState>();
+    let origin = docs_origin(
+        &window,
+        state
+            .effective_port
+            .load(std::sync::atomic::Ordering::SeqCst),
+    )?;
+    let appearance = validate_appearance(&state, request.mode, request.theme_pack)?;
+    if request.intent == AppearanceIntent::LegacyCandidate {
+        let latest = state.settings_store.load();
+        if latest.status == LoadStatus::Missing {
+            state
+                .appearance
+                .report_candidate(origin, appearance.clone());
+            let authoritative = crate::appearance::value_from_snapshot(&latest);
+            return Ok(AppearanceEnvelope {
+                appearance,
+                authoritative,
+                revision: None,
+                source: AppearanceSource::LegacyCandidate,
+                authoritative_source: AppearanceSource::Default,
+            });
+        }
+        let envelope = state.appearance.envelope(&latest);
+        let _ = app.emit(APPEARANCE_EVENT, &envelope);
+        return Ok(envelope);
+    }
+
+    let task_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = task_app.state::<AppState>();
+        appearance_save_operation(&task_app, &state, || {
+            state
+                .settings_store
+                .update_appearance(appearance.mode, &appearance.theme_pack)
+        })?;
+        state.appearance.clear_candidate();
+        Ok(state.appearance.envelope(&state.settings_store.load()))
+    })
+    .await
+    .map_err(|error| CommandError::new("task", format!("appearance task failed: {error}")))?
+}
+
+#[tauri::command]
+pub(crate) fn preview_appearance(
+    window: WebviewWindow,
+    app: AppHandle,
+    mode: AppearanceMode,
+    theme_pack: String,
+) -> Result<AppearanceEnvelope, CommandError> {
+    authorize_settings(&window)?;
+    let state = app.state::<AppState>();
+    let appearance = validate_appearance(&state, mode, theme_pack)?;
+    let envelope = state.runtime.with_serialized_apply(|| {
+        state.appearance.set_preview(appearance);
+        state.appearance.envelope(&state.settings_store.load())
+    });
+    app.emit(APPEARANCE_EVENT, &envelope)
+        .map_err(|error| CommandError::new("event", error.to_string()))?;
+    Ok(envelope)
+}
+
+#[tauri::command]
+pub(crate) fn clear_appearance_preview(
+    window: WebviewWindow,
+    app: AppHandle,
+) -> Result<AppearanceEnvelope, CommandError> {
+    authorize_settings(&window)?;
+    let state = app.state::<AppState>();
+    let envelope = state.runtime.with_serialized_apply(|| {
+        state.appearance.clear_preview();
+        state.appearance.envelope(&state.settings_store.load())
+    });
+    app.emit(APPEARANCE_EVENT, &envelope)
+        .map_err(|error| CommandError::new("event", error.to_string()))?;
+    Ok(envelope)
 }
 
 #[tauri::command]
@@ -410,5 +597,42 @@ mod tests {
         assert!(!malformed.can_save && !malformed.can_rebase && malformed.can_replace_malformed);
         let invalid = action_availability(&LoadStatus::Invalid, true);
         assert!(invalid.can_save && !invalid.can_rebase && !invalid.can_replace_malformed);
+    }
+
+    #[test]
+    fn appearance_command_requires_the_exact_active_docs_origin() {
+        assert_eq!(
+            authorize_docs_url(&"http://localhost:6000/docs/".parse().unwrap(), 6000).unwrap(),
+            "http://localhost:6000"
+        );
+        for url in [
+            "http://localhost:6001/docs/",
+            "http://localhost:6000/",
+            "https://localhost:6000/docs/",
+            "http://example.com:6000/docs/",
+        ] {
+            assert_eq!(
+                authorize_docs_url(&url.parse().unwrap(), 6000)
+                    .unwrap_err()
+                    .code,
+                "forbidden_origin"
+            );
+        }
+    }
+
+    #[test]
+    fn appearance_request_rejects_extra_fields_invalid_modes_and_nonappearance_shape() {
+        let valid: AppearanceRequest = serde_json::from_value(json!({
+            "mode": "dark", "themePack": "default", "intent": "persist"
+        }))
+        .unwrap();
+        assert_eq!(valid.mode, AppearanceMode::Dark);
+        for invalid in [
+            json!({ "mode": "sepia", "themePack": "default", "intent": "persist" }),
+            json!({ "mode": "dark", "themePack": "default", "intent": "persist", "preferredPort": 1 }),
+            json!({ "claudeDir": "/tmp", "intent": "persist" }),
+        ] {
+            assert!(serde_json::from_value::<AppearanceRequest>(invalid).is_err());
+        }
     }
 }

@@ -418,6 +418,19 @@ impl ApplyCoordinator {
         operation()
     }
 
+    /// Publish a freshly reloaded TOML appearance without restarting the docs
+    /// server or changing its active source/port contract.
+    pub fn publish_authoritative_appearance(&self, snapshot: SettingsSnapshot) {
+        let mut state = lock_unpoisoned(&self.state);
+        let mode = snapshot.effective.appearance_mode.clone();
+        let pack = snapshot.effective.theme_pack.clone();
+        state.authored = snapshot;
+        if let Some(active) = state.active.as_mut() {
+            active.appearance_mode = mode;
+            active.theme_pack = pack;
+        }
+    }
+
     /// Validate and persist a draft through the versioned store, then run at
     /// most one runtime transition. Appearance-only saves publish authored
     /// state without invoking `restart`. A failed restart keeps the last
@@ -745,6 +758,32 @@ mod tests {
         assert!(!impact_requires_restart(&ApplyImpact::None));
         assert!(!impact_requires_restart(&ApplyImpact::AppearanceOnly));
         assert!(impact_requires_restart(&ApplyImpact::RestartRuntime));
+    }
+
+    #[test]
+    fn external_appearance_reload_updates_display_without_source_or_port_restart() {
+        let coordinator = ApplyCoordinator::new(settings("/old", 4892));
+        let generation = coordinator.claim_generation();
+        coordinator.publish_starting(settings("/old", 4892), generation);
+        coordinator.publish_ready(
+            settings("/old", 4892).effective,
+            PortChoice {
+                preferred_port: 4892,
+                effective_port: 51000,
+                fallback_used: true,
+            },
+            generation,
+        );
+        let mut edited = settings("/new-authored-but-not-active", 6000);
+        edited.effective.appearance_mode = AppearanceMode::Dark;
+        edited.effective.theme_pack = "paper".into();
+        coordinator.publish_authoritative_appearance(edited);
+        let current = coordinator.snapshot();
+        let active = current.active.unwrap();
+        assert_eq!(active.claude_dir, PathBuf::from("/old"));
+        assert_eq!(active.effective_port, 51000);
+        assert_eq!(active.appearance_mode, AppearanceMode::Dark);
+        assert_eq!(active.theme_pack, "paper");
     }
 
     #[test]

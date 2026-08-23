@@ -18,6 +18,7 @@
 //! On main-window close the sidecar process group is SIGTERM→SIGKILL'd so
 //! nothing is left holding its effective port. Closing Settings only hides it.
 
+pub mod appearance;
 pub mod runtime;
 pub mod settings;
 pub mod settings_commands;
@@ -100,6 +101,7 @@ struct AppState {
     log_path: Mutex<String>,
     runtime: Arc<runtime::ApplyCoordinator>,
     settings_store: SettingsStore,
+    appearance: appearance::AppearanceState,
     /// Read by the navigation callback without consulting Tauri state.
     effective_port: Arc<AtomicU16>,
     /// Set before exit teardown. Publication handshakes with this flag so a
@@ -132,12 +134,18 @@ fn log_path(app_handle: &AppHandle) -> String {
 /// launch-success path, the dev retry path, and the Refresh menu item.
 fn navigate_to_docs(app_handle: &AppHandle) {
     if let Some(w) = app_handle.get_webview_window("main") {
-        let port = app_handle
-            .state::<AppState>()
-            .effective_port
-            .load(Ordering::SeqCst);
+        let state = app_handle.state::<AppState>();
+        let port = state.effective_port.load(Ordering::SeqCst);
         if let Ok(url) = runtime::docs_url(port).parse::<tauri::Url>() {
-            let _ = w.navigate(url);
+            // One WebKit task updates the appearance-only navigation seed and
+            // starts navigation. The installed initialization script consumes
+            // it at DocumentStart on the exact destination origin.
+            state.appearance.clear_candidate();
+            let snapshot = state.settings_store.load();
+            let seed =
+                appearance::bootstrap_seed(&snapshot, state.settings_store.available_theme_packs());
+            let script = appearance::window_name_script(&seed, url.as_str());
+            let _ = w.eval(script);
         }
     }
 }
@@ -1169,10 +1177,12 @@ fn allow_navigation(url: &tauri::Url, effective_port: u16) -> bool {
 fn create_main_window(
     app: &AppHandle,
     navigation_port: Arc<AtomicU16>,
+    appearance_seed: appearance::BootstrapSeed,
 ) -> Result<(), tauri::Error> {
     WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("CCResDoc")
         .inner_size(1200.0, 800.0)
+        .initialization_script(appearance::initialization_script(&appearance_seed))
         .on_navigation(move |url| allow_navigation(url, navigation_port.load(Ordering::SeqCst)))
         .on_page_load(|window, payload| {
             if let tauri::webview::PageLoadEvent::Finished = payload.event() {
@@ -1192,8 +1202,11 @@ fn main() {
     };
     let config_path = settings::resolve_config_path()
         .unwrap_or_else(|_| home.join(".config/ccresdoc/config.toml"));
-    let settings_store = SettingsStore::new(config_path, home);
+    let settings_store =
+        SettingsStore::with_theme_packs(config_path, home, settings::bundled_theme_pack_slugs());
     let settings_snapshot = settings_store.load();
+    let appearance_seed =
+        appearance::bootstrap_seed(&settings_snapshot, settings_store.available_theme_packs());
     let runtime = Arc::new(runtime::ApplyCoordinator::new(settings_snapshot));
     let effective_port = Arc::new(AtomicU16::new(0));
     let app_state = AppState {
@@ -1203,6 +1216,7 @@ fn main() {
         log_path: Mutex::new(String::new()),
         runtime,
         settings_store,
+        appearance: appearance::AppearanceState::default(),
         effective_port: effective_port.clone(),
         shutting_down: AtomicBool::new(false),
     };
@@ -1218,6 +1232,9 @@ fn main() {
             settings_commands::retry_launch,
             settings_commands::open_settings_window,
             settings_commands::get_settings_snapshot,
+            settings_commands::update_appearance,
+            settings_commands::preview_appearance,
+            settings_commands::clear_appearance_preview,
             settings_commands::validate_settings_draft,
             settings_commands::save_and_apply_settings,
             settings_commands::rebase_stale_settings,
@@ -1344,7 +1361,11 @@ fn main() {
             // (:4892) and would show connection-refused before zfb dev binds.
             // The host owns `zfb dev` in BOTH dev and prod, so the loading page
             // + readiness-navigate flow must run in both modes.
-            create_main_window(app.handle(), navigation_port.clone())?;
+            create_main_window(
+                app.handle(),
+                navigation_port.clone(),
+                appearance_seed.clone(),
+            )?;
 
             start_launch(app.handle());
 
@@ -1408,7 +1429,12 @@ fn main() {
                         }
                         let _ = main.set_focus();
                     } else {
-                        match create_main_window(app_handle, reopen_navigation_port.clone()) {
+                        let state = app_handle.state::<AppState>();
+                        let seed = appearance::bootstrap_seed(
+                            &state.settings_store.load(),
+                            state.settings_store.available_theme_packs(),
+                        );
+                        match create_main_window(app_handle, reopen_navigation_port.clone(), seed) {
                             Ok(()) => {
                                 if app_handle.state::<AppState>().runtime.snapshot().phase
                                     == RuntimePhase::Ready
@@ -1811,6 +1837,9 @@ mod tests {
             "retry_launch",
             "open_settings_window",
             "get_settings_snapshot",
+            "update_appearance",
+            "preview_appearance",
+            "clear_appearance_preview",
             "validate_settings_draft",
             "save_and_apply_settings",
             "rebase_stale_settings",
@@ -1843,8 +1872,11 @@ mod tests {
         let settings_permissions = settings["permissions"].as_array().unwrap();
         assert!(main_permissions.contains(&serde_json::json!("allow-open-settings-window")));
         assert!(main_permissions.contains(&serde_json::json!("allow-retry-launch")));
+        assert!(main_permissions.contains(&serde_json::json!("allow-update-appearance")));
         for privileged in [
             "allow-get-settings-snapshot",
+            "allow-preview-appearance",
+            "allow-clear-appearance-preview",
             "allow-save-and-apply-settings",
             "allow-rebase-stale-settings",
             "allow-replace-malformed-settings",
@@ -1855,6 +1887,7 @@ mod tests {
             assert!(!main_permissions.contains(&serde_json::json!(privileged)));
             assert!(settings_permissions.contains(&serde_json::json!(privileged)));
         }
+        assert!(!settings_permissions.contains(&serde_json::json!("allow-update-appearance")));
         assert!(!settings.to_string().contains('*'));
         assert!(!settings.to_string().to_ascii_lowercase().contains("test"));
     }
