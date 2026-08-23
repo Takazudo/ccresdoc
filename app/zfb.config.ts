@@ -1,8 +1,4 @@
 import { zudoDoc } from "@takazudo/zudo-doc/config";
-import { defaultColorSchemes } from "@takazudo/zudo-doc/color-schemes-defaults";
-import { defaultDirectiveVocabulary } from "@takazudo/zudo-doc/directive-vocabulary-defaults";
-import { buildDocsSchema } from "@takazudo/zudo-doc/docs-schema";
-import { defaultTranslations } from "@takazudo/zudo-doc/i18n-defaults";
 import { defineConfig } from "zfb/config";
 import { settings } from "./src/config/settings";
 
@@ -14,10 +10,6 @@ export const config = defineConfig({
     ...settings,
     port: 4892,
     onBrokenMarkdownLinks: "warn",
-    buildDocsSchema,
-    directives: defaultDirectiveVocabulary,
-    translations: defaultTranslations,
-    colorSchemes: defaultColorSchemes,
   }),
   plugins: [],
 });
