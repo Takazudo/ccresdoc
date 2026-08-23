@@ -18,6 +18,8 @@
 //! On window close the sidecar process group is SIGTERM→SIGKILL'd so nothing
 //! is left holding port 4892.
 
+pub mod settings;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
