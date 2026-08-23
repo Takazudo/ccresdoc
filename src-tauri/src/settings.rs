@@ -535,36 +535,42 @@ impl SettingsStore {
 
         let mut authored = SettingsDraft::defaults();
         let mut diagnostics = Vec::new();
-        read_string(
-            doc,
-            &["source", "claude_dir"],
-            &mut authored.claude_dir,
-            &mut diagnostics,
-        );
-        read_string(
-            doc,
-            &["appearance", "mode"],
-            &mut authored.appearance_mode,
-            &mut diagnostics,
-        );
-        read_string(
-            doc,
-            &["appearance", "theme_pack"],
-            &mut authored.theme_pack,
-            &mut diagnostics,
-        );
-        read_integer(
-            doc,
-            &["server", "preferred_port"],
-            &mut authored.preferred_port,
-            &mut diagnostics,
-        );
-        read_bool(
-            doc,
-            &["server", "fallback_to_free_port"],
-            &mut authored.fallback_to_free_port,
-            &mut diagnostics,
-        );
+        if validate_section(doc, "source", &mut diagnostics) {
+            read_string(
+                doc,
+                &["source", "claude_dir"],
+                &mut authored.claude_dir,
+                &mut diagnostics,
+            );
+        }
+        if validate_section(doc, "appearance", &mut diagnostics) {
+            read_string(
+                doc,
+                &["appearance", "mode"],
+                &mut authored.appearance_mode,
+                &mut diagnostics,
+            );
+            read_string(
+                doc,
+                &["appearance", "theme_pack"],
+                &mut authored.theme_pack,
+                &mut diagnostics,
+            );
+        }
+        if validate_section(doc, "server", &mut diagnostics) {
+            read_integer(
+                doc,
+                &["server", "preferred_port"],
+                &mut authored.preferred_port,
+                &mut diagnostics,
+            );
+            read_bool(
+                doc,
+                &["server", "fallback_to_free_port"],
+                &mut authored.fallback_to_free_port,
+                &mut diagnostics,
+            );
+        }
 
         let (effective, mut semantic) = self.validate_and_project(&authored);
         diagnostics.append(&mut semantic);
@@ -848,6 +854,21 @@ fn integer_at(doc: &DocumentMut, path: &[&str]) -> Option<i64> {
     item_at(doc, path)?.as_integer()
 }
 
+fn validate_section(
+    doc: &DocumentMut,
+    section: &str,
+    diagnostics: &mut Vec<SettingsDiagnostic>,
+) -> bool {
+    match doc.get(section) {
+        None => true,
+        Some(item) if item.is_table() || item.as_inline_table().is_some() => true,
+        Some(_) => {
+            diagnostics.push(invalid_type(section, "a table"));
+            false
+        }
+    }
+}
+
 fn read_string(
     doc: &DocumentMut,
     path: &[&str],
@@ -931,40 +952,52 @@ fn byte_location(bytes: &[u8], offset: usize) -> SourceLocation {
 
 fn ensure_table<'a>(doc: &'a mut DocumentMut, name: &str) -> &'a mut Table {
     if !doc.get(name).is_some_and(Item::is_table) {
-        doc[name] = Item::Table(Table::new());
+        let decor = doc
+            .get(name)
+            .and_then(Item::as_value)
+            .map(|value| value.decor().clone());
+        let mut table = Table::new();
+        if let Some(decor) = decor {
+            *table.decor_mut() = decor;
+        }
+        doc[name] = Item::Table(table);
     }
     doc[name].as_table_mut().expect("table inserted above")
+}
+
+fn set_section_value(doc: &mut DocumentMut, section: &str, key: &str, replacement: Item) {
+    if let Some(inline) = doc.get_mut(section).and_then(Item::as_inline_table_mut) {
+        let Item::Value(mut replacement) = replacement else {
+            unreachable!("settings fields are TOML values")
+        };
+        if let Some(existing) = inline.get(key) {
+            *replacement.decor_mut() = existing.decor().clone();
+        }
+        inline.insert(key, replacement);
+    } else {
+        set_value_preserving_decor(&mut ensure_table(doc, section)[key], replacement);
+    }
 }
 
 fn merge_fields(doc: &mut DocumentMut, draft: &SettingsDraft, fields: &BTreeSet<SettingField>) {
     set_value_preserving_decor(&mut doc["schema_version"], value(CURRENT_SCHEMA_VERSION));
     if fields.contains(&SettingField::ClaudeDir) {
-        set_value_preserving_decor(
-            &mut ensure_table(doc, "source")["claude_dir"],
-            value(&draft.claude_dir),
-        );
+        set_section_value(doc, "source", "claude_dir", value(&draft.claude_dir));
     }
     if fields.contains(&SettingField::AppearanceMode) {
-        set_value_preserving_decor(
-            &mut ensure_table(doc, "appearance")["mode"],
-            value(&draft.appearance_mode),
-        );
+        set_section_value(doc, "appearance", "mode", value(&draft.appearance_mode));
     }
     if fields.contains(&SettingField::ThemePack) {
-        set_value_preserving_decor(
-            &mut ensure_table(doc, "appearance")["theme_pack"],
-            value(&draft.theme_pack),
-        );
+        set_section_value(doc, "appearance", "theme_pack", value(&draft.theme_pack));
     }
     if fields.contains(&SettingField::PreferredPort) {
-        set_value_preserving_decor(
-            &mut ensure_table(doc, "server")["preferred_port"],
-            value(draft.preferred_port),
-        );
+        set_section_value(doc, "server", "preferred_port", value(draft.preferred_port));
     }
     if fields.contains(&SettingField::FallbackToFreePort) {
-        set_value_preserving_decor(
-            &mut ensure_table(doc, "server")["fallback_to_free_port"],
+        set_section_value(
+            doc,
+            "server",
+            "fallback_to_free_port",
             value(draft.fallback_to_free_port),
         );
     }
@@ -1270,6 +1303,68 @@ mod tests {
     }
 
     #[test]
+    fn invalid_section_type_is_diagnostic_and_repairable() {
+        let (_root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(
+            store.path(),
+            "schema_version = 1\nsource = \"not a table\" # keep note\n",
+        )
+        .unwrap();
+        let loaded = store.load();
+        assert_eq!(loaded.status, LoadStatus::Invalid);
+        assert!(loaded.validation.iter().any(|diagnostic| {
+            diagnostic.kind == DiagnosticKind::InvalidType
+                && diagnostic.field.as_deref() == Some("source")
+        }));
+        store
+            .save(&loaded.authored, loaded.revision.as_ref())
+            .unwrap();
+        assert!(fs::read_to_string(store.path())
+            .unwrap()
+            .contains("# keep note"));
+    }
+
+    #[test]
+    fn inline_tables_retain_unknown_keys_and_comments_on_save() {
+        let (_root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(
+            store.path(),
+            "schema_version = 1\nsource = { claude_dir = \"~/.claude\", future = \"keep\" } # source note\nappearance = { mode = \"system\", theme_pack = \"default\" }\nserver = { preferred_port = 4892, fallback_to_free_port = true }\n",
+        )
+        .unwrap();
+        let loaded = store.load();
+        assert_eq!(loaded.status, LoadStatus::Valid);
+        let mut draft = loaded.authored;
+        draft.appearance_mode = "dark".into();
+        store.save(&draft, loaded.revision.as_ref()).unwrap();
+        let raw = fs::read_to_string(store.path()).unwrap();
+        assert!(raw.contains("future = \"keep\""));
+        assert!(raw.contains("# source note"));
+        assert!(raw.contains("mode = \"dark\""));
+    }
+
+    #[test]
+    fn unknown_theme_is_valid_authored_data_with_effective_fallback() {
+        let (_root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(
+            store.path(),
+            "schema_version = 1\n[appearance]\ntheme_pack = \"uninstalled-pack\"\n",
+        )
+        .unwrap();
+        let loaded = store.load();
+        assert_eq!(loaded.status, LoadStatus::Valid);
+        assert!(loaded.active.uses_authored_settings);
+        assert_eq!(loaded.authored.theme_pack, "uninstalled-pack");
+        assert_eq!(loaded.effective.theme_pack, DEFAULT_THEME_PACK);
+        assert!(loaded.validation.iter().any(|diagnostic| {
+            diagnostic.kind == DiagnosticKind::ThemePackUnavailable && !diagnostic.blocking
+        }));
+    }
+
+    #[test]
     fn tilde_and_symlink_are_normalized() {
         let (root, store) = fixture();
         #[cfg(unix)]
@@ -1378,6 +1473,26 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn save_atomically_replaces_instead_of_truncating_in_place() {
+        use std::io::Read;
+        let (_root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(store.path(), "schema_version = 1\n# old inode\n").unwrap();
+        let loaded = store.load();
+        let mut old_handle = File::open(store.path()).unwrap();
+        let mut draft = loaded.authored;
+        draft.appearance_mode = "dark".into();
+        store.save(&draft, loaded.revision.as_ref()).unwrap();
+        let mut old_bytes = String::new();
+        old_handle.read_to_string(&mut old_bytes).unwrap();
+        assert_eq!(old_bytes, "schema_version = 1\n# old inode\n");
+        assert!(fs::read_to_string(store.path())
+            .unwrap()
+            .contains("mode = \"dark\""));
+    }
+
     #[test]
     fn temporary_file_names_are_unique() {
         let root = tempfile::tempdir().unwrap();
@@ -1459,6 +1574,35 @@ mod tests {
         ));
         assert!(fs::read_to_string(&path).unwrap().contains("7000"));
         assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn rebase_requires_staleness_and_a_latest_valid_supported_document() {
+        let (root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(store.path(), valid_toml(root.path().join("home").as_path())).unwrap();
+        let current = store.load();
+        let dirty = [SettingField::AppearanceMode].into_iter().collect();
+        assert!(matches!(
+            store.rebase_dirty(
+                &current.authored,
+                &dirty,
+                current.revision.as_ref().unwrap()
+            ),
+            Err(SaveError::NotStale)
+        ));
+
+        let stale_revision = current.revision.unwrap();
+        fs::write(store.path(), "schema_version = 1\n[broken\n").unwrap();
+        assert!(matches!(
+            store.rebase_dirty(&current.authored, &dirty, &stale_revision),
+            Err(SaveError::LatestNotValid)
+        ));
+        fs::write(store.path(), "schema_version = 2\n").unwrap();
+        assert!(matches!(
+            store.rebase_dirty(&current.authored, &dirty, &stale_revision),
+            Err(SaveError::LatestNotValid)
+        ));
     }
 
     #[test]
