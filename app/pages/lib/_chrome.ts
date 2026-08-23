@@ -15,6 +15,7 @@ import {
   type SidebarToggleProps,
 } from "@takazudo/zudo-doc/sidebar-toggle-island";
 import { routeContext } from "./_route-context";
+import { AppearanceBridge } from "@/appearance/bridge";
 
 type TauriGlobal = typeof globalThis & {
   __TAURI__?: { core?: { invoke?: (command: string) => Promise<unknown> } };
@@ -97,6 +98,10 @@ function DocsLandingHeader(props: HeaderWithDefaultsProps): VNode {
   return cloneElement(header, { sidebarToggle });
 }
 
+function AppearanceBodyEnd() {
+  return Island({ when: "load", children: h(AppearanceBridge, {}) });
+}
+
 export const {
   BodyEndIslands,
   FooterWithDefaults,
@@ -107,5 +112,6 @@ export const {
   renderDocPage,
 } = createChrome(routeContext, {
   Header: DocsLandingHeader,
+  BodyEndIslands: AppearanceBodyEnd,
   headerRightComponents: { "ccresdoc-settings": SettingsHeaderButton },
 });

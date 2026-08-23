@@ -1,3 +1,4 @@
+use crate::{appearance, AppState};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const SETTINGS_WINDOW_LABEL: &str = "settings";
@@ -65,12 +66,15 @@ impl WindowBoundary for TauriWindowBoundary<'_> {
     }
 
     fn create(&mut self) -> Result<(), Self::Error> {
+        let state = self.app.state::<AppState>();
+        let appearance = appearance::value_from_snapshot(&state.settings_store.load());
         WebviewWindowBuilder::new(
             self.app,
             SETTINGS_WINDOW_LABEL,
             WebviewUrl::App("settings.html".into()),
         )
         .title("CCResDoc Settings")
+        .initialization_script(appearance::bundled_initialization_script(&appearance))
         .inner_size(720.0, 560.0)
         .min_inner_size(520.0, 420.0)
         .on_navigation(|url| {

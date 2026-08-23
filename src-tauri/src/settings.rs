@@ -19,6 +19,11 @@ pub const CURRENT_SCHEMA_VERSION: i64 = 1;
 pub const DEFAULT_PORT: u16 = 4892;
 pub const DEFAULT_THEME_PACK: &str = "default";
 
+pub fn bundled_theme_pack_slugs() -> Vec<String> {
+    serde_json::from_str(include_str!("../../app/src/config/theme-pack-slugs.json"))
+        .expect("bundled theme-pack slug catalog must be valid JSON")
+}
+
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,12 +87,20 @@ pub enum AppearanceMode {
 }
 
 impl AppearanceMode {
-    fn parse(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "system" => Some(Self::System),
             "light" => Some(Self::Light),
             "dark" => Some(Self::Dark),
             _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
         }
     }
 }
@@ -311,6 +324,10 @@ impl SettingsStore {
         self.available_theme_packs.iter().cloned().collect()
     }
 
+    pub fn supports_theme_pack(&self, slug: &str) -> bool {
+        self.available_theme_packs.contains(slug)
+    }
+
     pub fn load(&self) -> SettingsSnapshot {
         match self.read_state() {
             ReadState::Missing => {
@@ -352,6 +369,63 @@ impl SettingsStore {
                 doc: Ok(doc),
             } => self.snapshot_from_doc(bytes, &doc),
         }
+    }
+
+    /// Merge only appearance fields into the freshest readable document.
+    /// The caller serializes this with Settings Save; the bounded retry also
+    /// protects against an editor replacing the file between read and rename.
+    pub fn update_appearance(
+        &self,
+        mode: Option<AppearanceMode>,
+        theme_pack: Option<&str>,
+    ) -> Result<SaveResult, SaveError> {
+        if mode.is_none() && theme_pack.is_none() {
+            return Err(SaveError::Validation(vec![diagnostic(
+                DiagnosticKind::InvalidAppearanceMode,
+                Some("appearance"),
+                "an appearance field is required".into(),
+                true,
+            )]));
+        }
+        if theme_pack.is_some_and(|slug| !self.supports_theme_pack(slug)) {
+            let slug = theme_pack.expect("checked as some");
+            return Err(SaveError::Validation(vec![diagnostic(
+                DiagnosticKind::ThemePackUnavailable,
+                Some("appearance.theme_pack"),
+                format!("theme pack '{slug}' is unavailable"),
+                true,
+            )]));
+        }
+        let mut last_conflict = None;
+        for _ in 0..4 {
+            let latest = self.load();
+            match latest.status {
+                LoadStatus::Missing | LoadStatus::Valid => {}
+                LoadStatus::Malformed => return Err(SaveError::Malformed),
+                LoadStatus::UnsupportedVersion => {
+                    return Err(SaveError::UnsupportedVersion(
+                        latest.authored.schema_version,
+                    ))
+                }
+                LoadStatus::Unreadable => {
+                    return Err(SaveError::Unreadable("config cannot be read".into()))
+                }
+                LoadStatus::Invalid => return Err(SaveError::LatestNotValid),
+            }
+            let mut draft = latest.authored.clone();
+            if let Some(mode) = &mode {
+                draft.appearance_mode = mode.as_str().into();
+            }
+            if let Some(theme_pack) = theme_pack {
+                draft.theme_pack = theme_pack.into();
+            }
+            match self.save(&draft, latest.revision.as_ref()) {
+                Ok(result) => return Ok(result),
+                Err(error @ SaveError::RevisionConflict { .. }) => last_conflict = Some(error),
+                Err(error) => return Err(error),
+            }
+        }
+        Err(last_conflict.expect("a retry exits only after revision conflicts"))
     }
 
     /// Validate and normalize a draft without touching the settings file.
@@ -1190,6 +1264,14 @@ mod tests {
     }
 
     #[test]
+    fn bundled_theme_catalog_exposes_supported_nondefault_packs() {
+        let packs = bundled_theme_pack_slugs();
+        assert_eq!(packs.first().map(String::as_str), Some(DEFAULT_THEME_PACK));
+        assert!(packs.len() > 1);
+        assert!(packs.contains(&"eink".to_string()));
+    }
+
+    #[test]
     fn missing_load_does_not_create_any_paths() {
         let (_root, store) = fixture();
         let snapshot = store.load();
@@ -1597,6 +1679,73 @@ mod tests {
         ));
         assert!(fs::read_to_string(&path).unwrap().contains("7000"));
         assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn appearance_update_first_write_and_retry_preserve_latest_nonappearance_data() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("home/.claude")).unwrap();
+        let path = root.path().join("config/config.toml");
+        let store = SettingsStore::with_theme_packs(
+            path.clone(),
+            root.path().join("home"),
+            ["default", "paper"],
+        );
+        let first = store
+            .update_appearance(Some(AppearanceMode::Dark), Some("paper"))
+            .unwrap();
+        assert_eq!(first.impact, ApplyImpact::AppearanceOnly);
+        assert_eq!(first.snapshot.authored.appearance_mode, "dark");
+        assert_eq!(first.snapshot.authored.theme_pack, "paper");
+
+        let mut raw = fs::read_to_string(&path).unwrap();
+        raw.push_str("\n# external edit\nfuture_key = \"keep\"\n");
+        fs::write(&path, raw).unwrap();
+        let hook_path = path.clone();
+        let fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let fired_hook = fired.clone();
+        let racing = SettingsStore::with_theme_packs(
+            path.clone(),
+            root.path().join("home"),
+            ["default", "paper"],
+        )
+        .with_before_replace(move |_| {
+            if !fired_hook.swap(true, Ordering::SeqCst) {
+                let latest = fs::read_to_string(&hook_path).unwrap();
+                fs::write(
+                    &hook_path,
+                    latest.replace("preferred_port = 4892", "preferred_port = 6001"),
+                )
+                .unwrap();
+            }
+        });
+        let saved = racing
+            .update_appearance(Some(AppearanceMode::Light), Some("default"))
+            .unwrap();
+        assert_eq!(saved.snapshot.authored.preferred_port, 6001);
+        let final_raw = fs::read_to_string(&path).unwrap();
+        assert!(final_raw.contains("future_key = \"keep\""));
+        assert!(final_raw.contains("mode = \"light\""));
+    }
+
+    #[test]
+    fn mode_only_quick_update_preserves_unavailable_authored_theme() {
+        let (root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(
+            store.path(),
+            format!(
+                "schema_version = 1\n[source]\nclaude_dir = {:?}\n[appearance]\nmode = \"system\"\ntheme_pack = \"not-installed\"\n[server]\npreferred_port = 4892\nfallback_to_free_port = true\n",
+                root.path().join("home/.claude").to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let result = store
+            .update_appearance(Some(AppearanceMode::Dark), None)
+            .unwrap();
+        assert_eq!(result.snapshot.authored.appearance_mode, "dark");
+        assert_eq!(result.snapshot.authored.theme_pack, "not-installed");
+        assert_eq!(result.snapshot.effective.theme_pack, DEFAULT_THEME_PACK);
     }
 
     #[test]

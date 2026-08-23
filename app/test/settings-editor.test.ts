@@ -31,6 +31,9 @@ function setup(initial = snapshot()) {
   const backend = {
     getSnapshot: vi.fn(async () => current),
     validateDraft: vi.fn(async (draft) => ({ valid: Number(draft.preferredPort) >= 1 && Number(draft.preferredPort) <= 65535, effective: draft, diagnostics: Number(draft.preferredPort) >= 1 && Number(draft.preferredPort) <= 65535 ? [] : [{ kind: "invalid_port", field: "server.preferred_port", message: "port must be in 1..=65535", blocking: true }] })),
+    previewAppearance: vi.fn(async (mode, themePack) => ({ appearance: { mode, themePack } })),
+    clearAppearancePreview: vi.fn(async () => ({ appearance: { mode: current.settings.effective.appearanceMode, themePack: current.settings.effective.themePack } })),
+    listenAppearance: vi.fn(async () => () => {}),
     saveAndApply: vi.fn(async (draft, revision) => { calls.push(["save", draft, revision]); current = snapshot({ settings: { ...current.settings, authored: { ...draft }, revision: "sha256:two" } }); return { status: "active" }; }),
     rebaseStale: vi.fn(async (...args) => { calls.push(["rebase", ...args]); return { status: "active" }; }),
     replaceMalformed: vi.fn(async (...args) => { calls.push(["replace", ...args]); current = snapshot(); return { status: "saved_not_active" }; }),
@@ -89,11 +92,24 @@ describe("bundled Settings editor", () => {
     const failed = setup(); await failed.editor.load(); await flush();
     failed.backend.saveAndApply.mockRejectedValueOnce({ code: "io", message: "disk full" });
     const source = document.querySelector("#claude-dir") as HTMLInputElement; source.value = "/changed"; source.dispatchEvent(new Event("input", { bubbles: true })); await flush(); await failed.editor.submit();
-    expect(document.querySelector("#global-message")?.textContent).toBe("disk full"); expect(failed.close).not.toHaveBeenCalled(); expect(source.value).toBe("/changed");
+    expect(document.querySelector("#global-message")?.textContent).toContain("disk full"); expect(document.querySelector("#global-message")?.textContent).toContain("rolled back"); expect(failed.backend.clearAppearancePreview).toHaveBeenCalled(); expect(failed.close).not.toHaveBeenCalled(); expect(source.value).toBe("/changed");
 
     const saved = setup(); await saved.editor.load(); await flush(); saved.backend.saveAndApply.mockImplementationOnce(async (draft) => { saved.setSnapshot(snapshot({ runtime: { phase: "saved_not_active", active: null, fallbackUsed: false, diagnostic: { kind: "spawn_failed", message: "could not restart" } }, settings: { ...snapshot().settings, authored: draft } })); return { status: "saved_not_active" }; });
     const changed = document.querySelector("#claude-dir") as HTMLInputElement; changed.value = "/new"; changed.dispatchEvent(new Event("input", { bubbles: true })); await flush(); await saved.editor.submit();
     expect(document.querySelector("#operation-status")?.textContent).toBe("Saved, not active"); expect(document.querySelector("#global-message")?.textContent).toContain("could not activate");
+  });
+
+  it("previews appearance live and Cancel resolves the backend's latest authority", async () => {
+    const current = setup(); await current.editor.load(); await flush();
+    const dark = document.querySelector('[name="appearance-mode"][value="dark"]') as HTMLInputElement;
+    dark.checked = true; dark.dispatchEvent(new Event("change", { bubbles: true })); await flush();
+    expect(current.backend.previewAppearance).toHaveBeenCalledWith("dark", "default");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    current.backend.clearAppearancePreview.mockResolvedValueOnce({ appearance: { mode: "light", themePack: "default" } });
+    current.editor.cancel(); await flush();
+    expect(current.backend.clearAppearancePreview).toHaveBeenCalled();
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(current.close).toHaveBeenCalled();
   });
 
   it("enforces malformed replacement, future read-only, unavailable theme, and stale rebase recovery", async () => {
@@ -102,7 +118,7 @@ describe("bundled Settings editor", () => {
 
     const future = setup(snapshot({ settings: { ...snapshot().settings, status: "unsupported_version" }, actions: { canSave: false, canRebase: false, canReplaceMalformed: false } })); await future.editor.load(); await flush(); expect((document.querySelector("#claude-dir") as HTMLInputElement).disabled).toBe(true); expect((document.querySelector("#replace-malformed") as HTMLButtonElement).disabled).toBe(true);
 
-    const unavailable = setup(snapshot({ settings: { ...snapshot().settings, authored: { ...DEFAULT_DRAFT, themePack: "gone" }, effective: { ...snapshot().settings.effective, themePack: "default" }, validation: [{ kind: "theme_pack_unavailable", field: "appearance.theme_pack", message: "gone unavailable", blocking: false }] } })); await unavailable.editor.load(); await flush(); expect((document.querySelector("#theme-pack") as HTMLSelectElement).value).toBe("gone"); expect(document.querySelector("#theme-status")?.textContent).toContain("gone / default");
+    const unavailable = setup(snapshot({ settings: { ...snapshot().settings, authored: { ...DEFAULT_DRAFT, themePack: "gone" }, effective: { ...snapshot().settings.effective, themePack: "default" }, validation: [{ kind: "theme_pack_unavailable", field: "appearance.theme_pack", message: "gone unavailable", blocking: false }] } })); await unavailable.editor.load(); await flush(); expect((document.querySelector("#theme-pack") as HTMLSelectElement).value).toBe("gone"); expect(document.querySelector("#theme-status")?.textContent).toContain("gone / default"); const dark = document.querySelector('[name="appearance-mode"][value="dark"]') as HTMLInputElement; dark.checked = true; dark.dispatchEvent(new Event("change", { bubbles: true })); await flush(); expect(unavailable.backend.previewAppearance).toHaveBeenCalledWith("dark", "default");
 
     const stale = setup(); await stale.editor.load(); await flush(); const port = document.querySelector("#preferred-port") as HTMLInputElement; port.value = "5001"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush(); stale.setSnapshot(snapshot({ settings: { ...snapshot().settings, revision: "sha256:external" } })); await stale.editor.load({ detectConflict: true }); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); port.value = "5002"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush(); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); stale.backend.rebaseStale.mockRejectedValueOnce({ code: "revision_conflict", message: "changed again" }); await stale.editor.reapply(); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); expect(stale.backend.rebaseStale).toHaveBeenCalledWith(expect.objectContaining({ preferredPort: 5002 }), new Set(["preferredPort"]), "sha256:one");
   });
