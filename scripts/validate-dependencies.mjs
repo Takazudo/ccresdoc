@@ -12,21 +12,21 @@ const checkInstalled = process.argv.includes("--installed");
 
 const required = {
   dependencies: {
-    "@takazudo/zfb": "2.7.1",
-    "@takazudo/zfb-md-wasm": "2.7.1",
-    "@takazudo/zfb-runtime": "2.7.1",
-    "@takazudo/zudo-doc": "5.7.0",
+    "@takazudo/zfb": "2.10.1",
+    "@takazudo/zfb-md-wasm": "2.10.1",
+    "@takazudo/zfb-runtime": "2.10.1",
+    "@takazudo/zudo-doc": "5.12.0",
     katex: "0.16.22",
     preact: "10.29.1",
     "preact-render-to-string": "6.6.7",
     zod: "4.3.6",
   },
   optionalDependencies: {
-    "@takazudo/zfb-darwin-arm64": "2.7.1",
-    "@takazudo/zfb-darwin-x64": "2.7.1",
-    "@takazudo/zfb-linux-arm64-gnu": "2.7.1",
-    "@takazudo/zfb-linux-x64-gnu": "2.7.1",
-    "@takazudo/zfb-win32-x64-msvc": "2.7.1",
+    "@takazudo/zfb-darwin-arm64": "2.10.1",
+    "@takazudo/zfb-darwin-x64": "2.10.1",
+    "@takazudo/zfb-linux-arm64-gnu": "2.10.1",
+    "@takazudo/zfb-linux-x64-gnu": "2.10.1",
+    "@takazudo/zfb-win32-x64-msvc": "2.10.1",
   },
   devDependencies: {
     "@tailwindcss/vite": "4.2.0",
@@ -136,9 +136,9 @@ const importerVersion = (name) => {
     ?.match(/^        version: (.+)$/m)?.[1];
 };
 const runtimeImporter = importerVersion("@takazudo/zfb-runtime");
-if (!runtimeImporter?.includes("@takazudo/zfb@2.7.1")) fail(`zfb-runtime peer must resolve zfb@2.7.1: ${runtimeImporter ?? "missing"}`);
+if (!runtimeImporter?.includes("@takazudo/zfb@2.10.1")) fail(`zfb-runtime peer must resolve zfb@2.10.1: ${runtimeImporter ?? "missing"}`);
 const zudoImporter = importerVersion("@takazudo/zudo-doc");
-for (const peer of ["@takazudo/zfb-md-wasm@2.7.1", "@takazudo/zfb-runtime@2.7.1", "@takazudo/zfb@2.7.1", "katex@0.16.22", "preact@10.29.1", "zod@4.3.6"]) {
+for (const peer of ["@takazudo/zfb-md-wasm@2.10.1", "@takazudo/zfb-runtime@2.10.1", "@takazudo/zfb@2.10.1", "katex@0.16.22", "preact@10.29.1", "zod@4.3.6"]) {
   if (!zudoImporter?.includes(peer)) fail(`zudo-doc peer must resolve ${peer}: ${zudoImporter ?? "missing"}`);
 }
 
