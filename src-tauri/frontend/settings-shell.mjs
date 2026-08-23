@@ -1,27 +1,49 @@
-import { createTauriBackend, decodeBackendError } from "./settings-backend.mjs";
+import { actionPolicy, createTauriBackend, decodeBackendError } from "./settings-backend.mjs";
 
-const loading = document.getElementById("settings-loading");
-const content = document.getElementById("settings-content");
-const fatal = document.getElementById("settings-fatal");
-const fatalMessage = document.getElementById("fatal-message");
+export const DEFAULT_DRAFT = Object.freeze({ schemaVersion: 1, claudeDir: "~/.claude", appearanceMode: "system", themePack: "default", preferredPort: 4892, fallbackToFreePort: true });
+const FIELDS = ["claudeDir", "appearanceMode", "themePack", "preferredPort", "fallbackToFreePort"];
+const FIELD_IDS = { claudeDir: "claude-dir", appearanceMode: "appearance-mode-group", themePack: "theme-pack", preferredPort: "preferred-port", fallbackToFreePort: "fallback-port" };
+const DIAGNOSTIC_FIELDS = { "source.claude_dir": "claudeDir", "appearance.mode": "appearanceMode", "appearance.theme_pack": "themePack", "server.preferred_port": "preferredPort", "server.fallback_to_free_port": "fallbackToFreePort" };
+const cloneDraft = (draft) => ({ ...DEFAULT_DRAFT, ...(draft ?? {}) });
+const titleCase = (value) => String(value ?? "unknown").replaceAll("_", " ");
 
-function show(target) {
-  for (const section of [loading, content, fatal]) section.hidden = section !== target;
+export function createSettingsEditor({ document, window, backend }) {
+  const el = (id) => document.getElementById(id);
+  const state = { snapshot: null, baseline: null, draft: cloneDraft(DEFAULT_DRAFT), dirty: new Set(), validation: null, validationToken: 0, busy: false, conflict: false, conflictCanRebase: null, phase: "loading" };
+  const draftControls = [...document.querySelectorAll('input[name="appearance-mode"], #theme-pack, #claude-dir, #preferred-port, #fallback-port')];
+  const actionControls = [el("pick-source"), el("reset-defaults"), el("reload-draft"), el("open-config"), el("reveal-config")];
+
+  function setVisible(target) { for (const section of [el("settings-loading"), el("settings-form"), el("settings-fatal")]) section.hidden = section !== target; }
+  function announce(text, { error = false, focus = false } = {}) { const message = el("global-message"); message.textContent = text; message.hidden = !text; message.classList.toggle("error", error); if (focus && text) message.focus(); }
+  function setPhase(phase) { state.phase = phase; el("operation-status").textContent = ({ loading: "Loading…", validating: "Validating…", saving: "Saving…", applying: "Applying…", active: "Saved and active", saved_not_active: "Saved, not active" })[phase] ?? ""; }
+  function readDraft() { const selectedMode = document.querySelector('input[name="appearance-mode"]:checked'); return { schemaVersion: state.baseline?.schemaVersion ?? 1, claudeDir: el("claude-dir").value, appearanceMode: selectedMode?.value ?? "", themePack: el("theme-pack").value, preferredPort: Number(el("preferred-port").value), fallbackToFreePort: el("fallback-port").checked }; }
+  function renderThemeOptions() { const select = el("theme-pack"); const supported = state.snapshot?.themePacks ?? ["default"]; const authored = state.draft.themePack; select.replaceChildren(); if (!supported.includes(authored)) { const unavailable = document.createElement("option"); unavailable.value = authored; unavailable.textContent = `${authored} (unavailable)`; select.append(unavailable); } for (const slug of supported) { const option = document.createElement("option"); option.value = slug; option.textContent = slug === "default" ? "Default" : slug; select.append(option); } select.value = authored; }
+  function writeDraft(draft) { state.draft = cloneDraft(draft); for (const radio of document.querySelectorAll('input[name="appearance-mode"]')) radio.checked = radio.value === state.draft.appearanceMode; el("claude-dir").value = state.draft.claudeDir; el("preferred-port").value = String(state.draft.preferredPort); el("fallback-port").checked = state.draft.fallbackToFreePort; renderThemeOptions(); }
+  function recomputeDirty() { state.draft = readDraft(); state.dirty = new Set(FIELDS.filter((field) => state.baseline?.[field] !== state.draft[field])); }
+  function diagnostics() { return state.validation?.diagnostics ?? state.snapshot?.settings?.validation ?? []; }
+  function renderErrors() { for (const [field, id] of Object.entries(FIELD_IDS)) { const control = el(id); const messages = diagnostics().filter((d) => DIAGNOSTIC_FIELDS[d.field] === field && d.blocking).map((d) => d.message); const error = el(`${field === "appearanceMode" ? "appearance-mode" : id}-error`); if (error) { error.textContent = messages.join(" "); error.hidden = messages.length === 0; } control?.setAttribute("aria-invalid", messages.length ? "true" : "false"); if (messages.length) control?.setAttribute("aria-errormessage", error?.id ?? ""); else control?.removeAttribute("aria-errormessage"); } }
+  function renderStatus() { const settings = state.snapshot.settings; const runtime = state.snapshot.runtime; const active = runtime.active; el("config-path").textContent = settings.configPath; el("config-status").textContent = `${titleCase(settings.status)} · ${settings.fileExists ? "exists" : "not created"}`; el("config-revision").textContent = settings.revision ?? "None"; el("effective-source").textContent = String(settings.effective?.claudeDir ?? "—"); el("theme-status").textContent = `${settings.authored.themePack} / ${active?.themePack ?? "not active"}`; el("port-status").textContent = `${settings.authored.preferredPort} / ${active?.effectivePort ?? "not active"}`; el("runtime-status").textContent = titleCase(runtime.phase); el("fallback-status").textContent = runtime.fallbackUsed ? "Yes" : "No"; const list = el("diagnostics"); list.replaceChildren(); const all = [...settings.validation, ...(runtime.diagnostic ? [runtime.diagnostic] : [])]; for (const diagnostic of all) { const item = document.createElement("li"); const location = diagnostic.location ? ` (line ${diagnostic.location.line}, column ${diagnostic.location.column})` : ""; item.textContent = `${diagnostic.message}${location}`; list.append(item); } }
+  function renderActions() { if (!state.snapshot) return; const policy = actionPolicy(state.snapshot); const readOnly = state.snapshot.settings.status === "unsupported_version"; for (const control of draftControls) control.disabled = state.busy || readOnly; for (const control of actionControls) control.disabled = state.busy; el("pick-source").disabled ||= readOnly; el("reset-defaults").disabled ||= readOnly; el("save-settings").disabled = state.busy || state.phase === "validating" || state.dirty.size === 0 || state.validation?.valid !== true || !policy.canSave || state.conflict; el("cancel-settings").disabled = state.busy; el("reapply").disabled = state.busy || !policy.canRebase || state.conflictCanRebase === false; el("replace-malformed").disabled = state.busy || !policy.canReplaceMalformed; el("conflict-recovery").hidden = !state.conflict; el("malformed-recovery").hidden = state.snapshot.settings.status !== "malformed"; el("future-recovery").hidden = state.snapshot.settings.status !== "unsupported_version"; }
+  function render() { renderStatus(); renderErrors(); renderActions(); }
+
+  async function validate() { const token = ++state.validationToken; setPhase("validating"); renderActions(); try { const validation = await backend.validateDraft(state.draft); if (token !== state.validationToken) return; state.validation = validation; setPhase(""); render(); } catch (error) { if (token !== state.validationToken) return; setPhase(""); announce(decodeBackendError(error).message, { error: true }); renderActions(); } }
+  async function acceptSnapshot(snapshot, { focus = false } = {}) { state.snapshot = snapshot; state.baseline = cloneDraft(snapshot.settings.authored); state.conflict = false; state.conflictCanRebase = null; state.dirty.clear(); state.validation = null; writeDraft(state.baseline); setVisible(el("settings-form")); setPhase(""); announce(""); render(); await validate(); if (focus) document.querySelector('input[name="appearance-mode"]:checked')?.focus(); }
+  async function load({ focus = false, detectConflict = false } = {}) { if (!detectConflict) { setVisible(el("settings-loading")); setPhase("loading"); } try { const snapshot = await backend.getSnapshot(); if (detectConflict && state.dirty.size && (snapshot.settings.revision ?? null) !== (state.snapshot?.settings?.revision ?? null)) { state.conflict = true; state.conflictCanRebase = snapshot.actions?.canRebase === true; announce("The config changed on disk while this draft was open.", { error: true, focus: true }); render(); return; } if (!detectConflict || state.dirty.size === 0) await acceptSnapshot(snapshot, { focus }); } catch (error) { if (detectConflict) { announce(`Could not refresh settings: ${decodeBackendError(error).message}`, { error: true }); return; } el("fatal-message").textContent = decodeBackendError(error).message; setVisible(el("settings-fatal")); setPhase(""); } }
+  async function changed() { recomputeDirty(); state.conflict = false; state.conflictCanRebase = null; announce(""); renderActions(); await validate(); }
+  async function performApply(operation) { state.busy = true; setPhase("saving"); announce(""); renderActions(); await Promise.resolve(); setPhase("applying"); try { const result = await operation(); await load(); setPhase(result.status === "saved_not_active" ? "saved_not_active" : "active"); if (result.status === "saved_not_active") announce("Settings were saved, but the runtime could not activate them. Review diagnostics and try again.", { error: true, focus: true }); } catch (error) { const decoded = decodeBackendError(error); if (decoded.code === "revision_conflict") state.conflict = true; announce(decoded.code === "revision_conflict" ? "The config changed before Save completed. Reload or safely reapply your changed fields." : decoded.message, { error: true, focus: true }); setPhase(""); } finally { state.busy = false; render(); } }
+  async function submit(event) { event?.preventDefault(); recomputeDirty(); if (el("save-settings").disabled) return; await performApply(() => backend.saveAndApply(state.draft, state.snapshot.settings.revision)); }
+  async function reapply() { if (!window.confirm("Reapply only your changed fields onto the latest valid config? Comments and unknown keys will be preserved.")) return; await performApply(() => backend.rebaseStale(state.draft, state.dirty, state.snapshot.settings.revision)); }
+  async function replaceMalformed() { if (!window.confirm("Replace the malformed config file with defaults? The current file contents will be overwritten.")) return; await performApply(() => backend.replaceMalformed(cloneDraft(DEFAULT_DRAFT), state.snapshot.settings.revision)); }
+  async function reloadDraft() { if (state.dirty.size && !window.confirm("Reload settings from disk and discard this draft?")) return; await load({ focus: true }); }
+  async function backendAction(action) { try { await action(); } catch (error) { announce(decodeBackendError(error).message, { error: true, focus: true }); } }
+  function cancel() { if (state.busy) return; writeDraft(state.baseline); state.dirty.clear(); window.close(); }
+
+  document.querySelectorAll('input[name="appearance-mode"], #theme-pack, #claude-dir, #preferred-port, #fallback-port').forEach((control) => control.addEventListener("change", changed)); el("claude-dir").addEventListener("input", changed); el("preferred-port").addEventListener("input", changed);
+  el("settings-form").addEventListener("submit", submit);
+  el("pick-source").addEventListener("click", async () => { try { const selected = await backend.pickSourceDirectory(); if (selected === null) return; el("claude-dir").value = selected; await changed(); el("claude-dir").focus(); } catch (error) { announce(decodeBackendError(error).message, { error: true, focus: true }); } });
+  el("reset-defaults").addEventListener("click", async () => { writeDraft(DEFAULT_DRAFT); await changed(); }); el("reload-draft").addEventListener("click", reloadDraft); el("reload-conflict").addEventListener("click", () => load({ focus: true })); el("reapply").addEventListener("click", reapply); el("replace-malformed").addEventListener("click", replaceMalformed); el("open-config").addEventListener("click", () => backendAction(() => backend.openConfigFile())); el("reveal-config").addEventListener("click", () => backendAction(() => backend.revealConfigFile())); el("cancel-settings").addEventListener("click", cancel); el("reload-settings").addEventListener("click", () => load({ focus: true }));
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !state.busy) { event.preventDefault(); cancel(); } }); window.addEventListener("focus", () => { if (state.snapshot && !state.busy) load({ detectConflict: true }); });
+  return Object.freeze({ state, load, submit, reapply, replaceMalformed, cancel });
 }
 
-async function load() {
-  show(loading);
-  try {
-    const snapshot = await createTauriBackend().getSnapshot();
-    document.getElementById("config-path").textContent = snapshot.settings.configPath;
-    document.getElementById("config-status").textContent = snapshot.settings.status;
-    document.getElementById("runtime-status").textContent = snapshot.runtime.phase;
-    show(content);
-  } catch (error) {
-    fatalMessage.textContent = decodeBackendError(error).message;
-    show(fatal);
-  }
-}
-
-document.getElementById("reload-settings").addEventListener("click", load);
-load();
+if (typeof document !== "undefined" && document.getElementById("settings-form")) { const editor = createSettingsEditor({ document, window, backend: createTauriBackend() }); editor.load({ focus: true }); }

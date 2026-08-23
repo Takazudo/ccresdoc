@@ -66,6 +66,7 @@ export const settings = {
   // primary navigation entry and points directly at the canonical doc shell.
   headerNav: [],
   headerRightItems: [
+    { type: "component", component: "ccresdoc-settings" },
     { type: "component", component: "theme-toggle" },
   ] as HeaderRightItem[],
   // No default-locale-only paths (no i18n)

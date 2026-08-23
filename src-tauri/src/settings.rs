@@ -307,6 +307,10 @@ impl SettingsStore {
         &self.path
     }
 
+    pub fn available_theme_packs(&self) -> Vec<String> {
+        self.available_theme_packs.iter().cloned().collect()
+    }
+
     pub fn load(&self) -> SettingsSnapshot {
         match self.read_state() {
             ReadState::Missing => {

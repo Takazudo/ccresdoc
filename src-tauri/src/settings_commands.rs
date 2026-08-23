@@ -112,6 +112,7 @@ pub struct CompleteSettingsSnapshot {
     pub settings: SettingsSnapshot,
     pub runtime: RuntimeSnapshot,
     pub actions: ActionAvailability,
+    pub theme_packs: Vec<String>,
 }
 
 fn complete_snapshot(state: &AppState) -> CompleteSettingsSnapshot {
@@ -121,6 +122,7 @@ fn complete_snapshot(state: &AppState) -> CompleteSettingsSnapshot {
         settings,
         runtime: state.runtime.snapshot(),
         actions,
+        theme_packs: state.settings_store.available_theme_packs(),
     }
 }
 

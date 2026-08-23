@@ -1,36 +1,36 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CCResDoc Settings</title>
-  <link rel="stylesheet" href="settings.css">
-</head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CCResDoc Settings</title><link rel="stylesheet" href="settings.css"></head>
 <body>
-  <main class="settings-shell" aria-labelledby="settings-title">
-    <header class="settings-header">
-      <h1 id="settings-title">Settings</h1>
-      <p>Configure the local documentation source and runtime.</p>
-    </header>
-    <section id="settings-loading" class="settings-state" aria-live="polite">
-      <div class="spinner" aria-hidden="true"></div>
-      <p>Loading settings…</p>
+<main class="settings-shell" aria-labelledby="settings-title">
+  <header class="settings-header"><div><h1 id="settings-title">Settings</h1><p>Changes stay in this draft until you save them.</p></div><output id="operation-status" class="operation-status" aria-live="polite"></output></header>
+  <section id="settings-loading" class="settings-state centered" aria-live="polite"><div class="spinner" aria-hidden="true"></div><p>Loading settings…</p></section>
+  <form id="settings-form" class="settings-state" hidden novalidate>
+    <div id="global-message" class="message" role="status" tabindex="-1" hidden></div>
+    <section class="settings-section" aria-labelledby="appearance-heading">
+      <div class="section-heading"><h2 id="appearance-heading">Appearance</h2><p>Choose how documentation looks.</p></div>
+      <fieldset class="field-group" id="appearance-mode-group"><legend>Color mode</legend><div class="choice-row"><label><input type="radio" name="appearance-mode" value="system"> System</label><label><input type="radio" name="appearance-mode" value="light"> Light</label><label><input type="radio" name="appearance-mode" value="dark"> Dark</label></div><p id="appearance-mode-description" class="description">System follows the macOS appearance.</p><p id="appearance-mode-error" class="field-error" role="alert" hidden></p></fieldset>
+      <div class="field-group"><label for="theme-pack">Theme pack</label><select id="theme-pack" aria-describedby="theme-pack-description theme-pack-error"></select><p id="theme-pack-description" class="description">An unavailable authored theme is preserved; the safe effective fallback is shown below.</p><p id="theme-pack-error" class="field-error" role="alert" hidden></p></div>
     </section>
-    <section id="settings-content" class="settings-state" hidden>
-      <h2>Configuration loaded</h2>
-      <dl class="settings-summary">
-        <div><dt>Config</dt><dd id="config-path"></dd></div>
-        <div><dt>Status</dt><dd id="config-status"></dd></div>
-        <div><dt>Runtime</dt><dd id="runtime-status"></dd></div>
-      </dl>
-      <p class="settings-note">The complete editor will appear here in the next implementation wave.</p>
+    <section class="settings-section" aria-labelledby="source-heading">
+      <div class="section-heading"><h2 id="source-heading">Source</h2><p>Changing the source regenerates documentation and restarts the server.</p></div>
+      <div class="field-group"><label for="claude-dir">Claude resources directory</label><div class="input-action"><input id="claude-dir" type="text" spellcheck="false" autocomplete="off" aria-describedby="claude-dir-description claude-dir-error"><button id="pick-source" type="button">Choose…</button></div><p id="claude-dir-description" class="description">Use an absolute path or a path beginning with <code>~/</code>.</p><p id="claude-dir-error" class="field-error" role="alert" hidden></p></div>
     </section>
-    <section id="settings-fatal" class="settings-state settings-fatal" role="alert" hidden>
-      <h2>Settings could not be loaded</h2>
-      <p id="fatal-message"></p>
-      <button id="reload-settings" type="button">Try again</button>
+    <section class="settings-section" aria-labelledby="server-heading">
+      <div class="section-heading"><h2 id="server-heading">Advanced / Server</h2><p>Server changes restart documentation on a loopback-only port.</p></div>
+      <div class="field-group"><label for="preferred-port">Preferred port</label><input id="preferred-port" type="number" min="1" max="65535" step="1" inputmode="numeric" aria-describedby="preferred-port-description preferred-port-error"><p id="preferred-port-description" class="description">The active effective port may differ when fallback is enabled.</p><p id="preferred-port-error" class="field-error" role="alert" hidden></p></div>
+      <label class="check-row"><input id="fallback-port" type="checkbox"><span><strong>Fall back to a free port</strong><small>Keep the app usable when the preferred port is occupied.</small></span></label>
     </section>
-  </main>
-  <script type="module" src="settings-shell.mjs"></script>
-</body>
-</html>
+    <section class="settings-section" aria-labelledby="status-heading">
+      <div class="section-heading"><h2 id="status-heading">Status / Diagnostics</h2><p>Authored settings and the currently active runtime are reported separately.</p></div>
+      <dl class="status-grid"><div><dt>Config file</dt><dd id="config-path"></dd></div><div><dt>Document</dt><dd id="config-status"></dd></div><div><dt>Revision</dt><dd id="config-revision"></dd></div><div><dt>Effective source</dt><dd id="effective-source"></dd></div><div><dt>Authored / active theme</dt><dd id="theme-status"></dd></div><div><dt>Preferred / effective port</dt><dd id="port-status"></dd></div><div><dt>Runtime</dt><dd id="runtime-status"></dd></div><div><dt>Fallback used</dt><dd id="fallback-status"></dd></div></dl>
+      <ul id="diagnostics" class="diagnostics" aria-label="Diagnostics"></ul><div class="file-actions"><button id="open-config" type="button">Open Config File</button><button id="reveal-config" type="button">Reveal in Finder</button></div>
+    </section>
+    <section id="conflict-recovery" class="recovery" aria-labelledby="conflict-heading" hidden><h2 id="conflict-heading">The config file changed</h2><p>Reload to use the file on disk, or reapply only your changed known fields onto the latest valid document.</p><div><button id="reload-conflict" type="button">Reload</button><button id="reapply" class="danger" type="button">Reapply My Changes…</button></div></section>
+    <section id="malformed-recovery" class="recovery" aria-labelledby="malformed-heading" hidden><h2 id="malformed-heading">The config file is malformed</h2><p>Ordinary Save is disabled. Repair it externally or explicitly replace it with defaults.</p><button id="replace-malformed" class="danger" type="button">Replace with Defaults…</button></section>
+    <section id="future-recovery" class="recovery" aria-labelledby="future-heading" hidden><h2 id="future-heading">This config uses a newer schema</h2><p>This version of CCResDoc will not overwrite or replace it. Open or reveal the file to inspect it.</p></section>
+    <footer class="settings-footer"><div><button id="reset-defaults" type="button">Reset to Defaults</button><button id="reload-draft" type="button">Reload</button></div><div><button id="cancel-settings" type="button">Cancel</button><button id="save-settings" class="primary" type="submit" disabled>Save</button></div></footer>
+  </form>
+  <section id="settings-fatal" class="settings-state centered fatal" role="alert" hidden><h2>Settings could not be loaded</h2><p id="fatal-message"></p><button id="reload-settings" type="button">Try Again</button></section>
+</main><script type="module" src="settings-shell.mjs"></script>
+</body></html>
