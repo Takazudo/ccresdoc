@@ -1,9 +1,40 @@
 # Node-free latest-toolchain compatibility decision
 
-Status: implemented for the zfb 2.7.1 / zudo-doc 5.7.0 migration. This document
-preserves the issue #93 architecture decision and its reproducible evidence;
-the current acceptance commands and explicit host-only gaps are in
+Status: the integrated application contract is implemented and verified for zfb
+2.10.1 / zudo-doc 5.12.0. This document preserves the historical issue #93
+architecture decision and its reproducible evidence; the current acceptance
+commands and explicit host-only gaps are in
 [`verification-matrix.md`](verification-matrix.md).
+
+## Current integrated contract
+
+- The published `@takazudo/zfb`, `@takazudo/zfb-runtime`,
+  `@takazudo/zfb-md-wasm`, and five native carrier packages are pinned to
+  `2.10.1`; `@takazudo/zudo-doc` is pinned to `5.12.0`. The app and the
+  compatibility fixture each use a frozen lockfile and independently validate
+  the installed tree.
+- The host resolves the native package-root carrier at
+  `node_modules/@takazudo/zfb-<platform>/zfb`, never the Node-shebang
+  `node_modules/.bin/zfb` wrapper. The selected zfb config ends with
+  `plugins: []`, so CCResDoc keeps its route adapters host-owned and does not
+  start the package Node plugin host.
+- Readiness is semantic: the Tauri host accepts `GET /docs/` only when it is
+  successful and contains the generator-owned `Claude Resources` marker. `/`
+  is the exact server-rendered alias, not a separate marketing home.
+- The build stages a pruned, lockfile-faithful workspace at
+  `src-tauri/runtime-workspace/app/`. Its refresh token is derived from a
+  `sha256-tree-v1` digest covering staged bytes, generated theme assets, and the
+  staging/digest implementation; the writable app-data copy is refreshed only
+  when that token changes or its ready sentinel is absent.
+- Runtime pruning excludes development tools, non-host carriers, disabled
+  plugin/CLI dependencies, and audited Node-only edges including `esbuild` and
+  `smol-toml`; the staged verifier asserts those exclusions before launch.
+- `compatibility/node-free-latest/evidence/` is canonical: package facts,
+  resolved configs, the four-way config matrix, and native-runtime observations
+  are checked for drift before the complete frozen fixture check. The Linux
+  staged probe proves HMR, zero plugin descriptors, zero Node-sentinel calls,
+  process-group shutdown, and two serialized launches; it is not a macOS
+  packaged WebView launch.
 
 ## Decision
 
@@ -30,6 +61,8 @@ export default defineConfig({
     dynamicPageTransition: true,
     findInPage: true,
     claudeResources: false,
+    codexResources: false,
+    siteTreeNavIgnore: [],
     docHistory: false,
     llmsTxt: false,
     changelogs: false,
@@ -50,6 +83,7 @@ The reproducible fixture is in `compatibility/node-free-latest/`. Its lockfile i
 
 ```sh
 pnpm --dir compatibility/node-free-latest install --frozen-lockfile
+pnpm --dir compatibility/node-free-latest run evidence:check
 pnpm --dir compatibility/node-free-latest run assert:packages
 pnpm --dir compatibility/node-free-latest run assert:configs
 pnpm --dir compatibility/node-free-latest run probe:matrix
@@ -60,12 +94,15 @@ pnpm --dir compatibility/node-free-latest run probe:runtime
 
 Committed evidence:
 
-- `evidence/package-facts.json`: official tags, tag commits, npm integrity values, platform packages, and native binary facts.
+- `evidence/package-facts.json`: published package versions, npm integrity values, platform packages, and native binary facts.
 - `evidence/resolved-configs.json`: resolved collections, Markdown configuration, and full plugin descriptors for all four candidates.
 - `evidence/config-matrix.json`: native `zfb check` and build results plus Node-invocation evidence.
 - `evidence/native-runtime.json`: port 4892 route serving, island marker, live content update, process sample, and silent failing sentinel.
 
-Official immutable source anchors are zfb tag `v2.7.1` at `0d59f4d5273c13ed9769f965eb3d299714119747`; zudo-doc `5.7.0` is pinned in `app/pnpm-lock.yaml`. The exact npm tarball integrity values are recorded in the lockfile.
+The current canonical npm integrity values and native-carrier facts are in
+`evidence/package-facts.json`; the app lockfile records the exact published
+tarball resolutions. The immutable source anchors from issue #93 are retained
+below as historical evidence rather than being treated as the current pin.
 
 ## Candidate results
 
@@ -80,17 +117,17 @@ The selected native Linux probe served `/` and `/docs/probe/`, emitted the `Prob
 
 ## Dependency contract
 
-Pin first-party packages exactly:
+Pin first-party packages exactly for the current integrated contract:
 
-- `@takazudo/zfb`, `@takazudo/zfb-runtime`, and `@takazudo/zfb-md-wasm`: `2.7.1`.
-- `@takazudo/zudo-doc`: `5.7.0`.
-- Direct optional platform packages retained at `2.7.1`: `zfb-darwin-arm64`, `zfb-darwin-x64`, `zfb-linux-arm64-gnu`, `zfb-linux-x64-gnu`, `zfb-win32-x64-msvc`. pnpm installs only the matching host package, but explicit declarations keep the Tauri resolver and cross-platform package map stable.
+- `@takazudo/zfb`, `@takazudo/zfb-runtime`, and `@takazudo/zfb-md-wasm`: `2.10.1`.
+- `@takazudo/zudo-doc`: `5.12.0`.
+- Direct optional platform packages retained at `2.10.1`: `zfb-darwin-arm64`, `zfb-darwin-x64`, `zfb-linux-arm64-gnu`, `zfb-linux-x64-gnu`, `zfb-win32-x64-msvc`. pnpm installs only the matching host package, but explicit declarations keep the Tauri resolver and cross-platform package map stable.
 - Reachable peers: `preact@10.29.1`, `preact-render-to-string@6.6.7`, `zod@4.3.6`, and `katex@0.16.22`. KaTeX is reachable even with `math:false` because `createMdxComponents()` imports the package `MathBlock` implementation.
 - Build-only foundation: `tailwindcss@4.2.0`, `@tailwindcss/vite@4.2.0`, `typescript@5.9.2`. The downstream test harness uses `vitest@4.0.17` with `happy-dom@20.7.0`.
 
 Remove the Cloudflare adapter. After the owning migrations remove local mirrors, remove direct `clsx`, `gray-matter`, `mermaid`, `remark-cjk-friendly`, `remark-directive`, and `@types/react`: the selected graph either no longer reaches them directly or provides the behavior in zfb/zudo-doc. Do not add optional peers `diff`, `@takazudo/zdtp`, or `@takazudo/zudo-doc-history-server`; those belong to disabled features/plugin routes. `@takazudo/zfb-md-wasm` remains pinned for zudo-doc family parity and browser-side Markdown facilities even though the minimal compatibility route does not execute it.
 
-Use Node `>=22`, pnpm `>=10`, an exact `packageManager`, `nodeLinker: hoisted`, a frozen install, and `minimumReleaseAgeExclude` entries for every just-released first-party/platform pin. Hoisting remains required by the current Tauri copy/dereference staging design until issue #99 proves a replacement layout.
+Use Node `>=22`, pnpm `>=10`, an exact `packageManager`, `nodeLinker: hoisted`, a frozen install, and `minimumReleaseAgeExclude` entries for every just-released first-party/platform pin. Hoisting remains required by the current Tauri copy/dereference staging design: the bundled workspace is copied with symlinks dereferenced, so pnpm's isolated `.pnpm` layout is not a valid runtime shape.
 
 ## Entrypoint contract
 
@@ -130,9 +167,25 @@ Schema delta: use zudo-doc's standard passthrough schema. Existing `title`, `des
 
 ## Native/Tauri facts and remaining verification
 
-`@takazudo/zfb-darwin-arm64@2.7.1` contains a 173,246,016-byte executable `zfb` at archive mode `0755`; it is a Mach-O 64-bit arm64 binary with SHA-256 `35bfa2b2cf8ffc6b5ddefdf712155e02ad6aa5e947ffcf41ee57f8e48ff2d7a0`. The runtime path is `app/node_modules/@takazudo/zfb-darwin-arm64/zfb`. The npm JS wrapper is Node-based and forbidden at runtime.
+The current canonical fact for `@takazudo/zfb-darwin-arm64@2.10.1` is a
+173,196,448-byte executable `zfb` at archive mode `0755`, with SHA-256
+`795efa2f456fe6314925189e4bcd3b08b7603447a5c9adfa3695023b406cc2bc`. Its
+runtime path is `app/node_modules/@takazudo/zfb-darwin-arm64/zfb`; the npm JS
+wrapper is Node-based and forbidden at runtime. The package facts file records
+the corresponding integrity values for all five published carriers. The
+Mach-O, package extraction, staged-bundle, and real WebView launch assertions
+run in the separate macOS-arm64 host gate; Linux must not claim that launch.
 
-Issue #93 ran the native lifecycle on Linux x64 because this worker is Linux x64. macOS arm64 package extraction and hashing are proven, but actual Tauri packaging/launch, executable preservation after staging, WebView hydration, light/dark visuals, mobile navigation, process-group shutdown, and packaged runtime pruning remain mandatory in issues #95, #97, #99, and #100.
+Historical issue #93 ran the native lifecycle on Linux x64. Its earlier package
+facts and decision-gate outputs remain below as history; the integrated staged
+probe and the separate macOS-arm64 host gate are the current evidence.
+
+## Historical decision-gate records
+
+The issue-numbered outputs below preserve the decisions and version facts that
+led to the current architecture. They are historical records, not current
+dependency instructions; use the current integrated contract and verification
+matrix above for present-day work.
 
 ## Exact downstream `Decision gate output` replacements
 

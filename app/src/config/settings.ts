@@ -17,6 +17,11 @@ export const settings = {
   base: "/",
   trailingSlash: true,
   docsDir: "src/content/docs",
+  // The package generators stay off: the native host writes these resources.
+  claudeResources: false,
+  codexResources: false,
+  // Every generated top-level category belongs in the site tree.
+  siteTreeNavIgnore: [],
   defaultLocale: "en" as const,
   // No i18n: empty locales object (no locale-aware routes)
   locales: {} as Record<string, never>,

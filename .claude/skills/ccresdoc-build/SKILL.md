@@ -21,15 +21,18 @@ None. Always builds the single Tauri target defined in `src-tauri/tauri.conf.jso
 ## Architecture recap
 
 `CCResDoc.app` is a thin Tauri host with **node-free runtime**:
-- The bundled `app/` tree (under `Contents/Resources/_up_/app/`) carries a pre-installed
-  `node_modules` that includes the native `@takazudo/zfb-<platform>/zfb` binary.
+- The bundled pruned runtime tree lives at `Contents/Resources/runtime-workspace/app/`.
+  Its `node_modules` includes the direct package-root native
+  `@takazudo/zfb-<platform>/zfb` carrier.
 - At launch the Tauri host resolves a **writable workspace**: dev = the repo `app/`
   (already has `node_modules`); bundled = a versioned copy placed at
   `<app_data_dir>/app-workspace/`.
 - The host spawns the in-process Rust watcher (`ccresdoc-claude-md`: walks `~/.claude/`
   → writes MDX), then spawns `node_modules/@takazudo/zfb-<platform>/zfb dev --port 4892`
-  (the native binary, NOT the `.bin/zfb` Node-shebang wrapper), polls `GET /` on
-  `http://localhost:4892/`, and navigates the WebView once ready.
+  (the native binary, NOT the `.bin/zfb` Node-shebang wrapper), polls semantic
+  `GET /docs/` on `http://localhost:4892/` for the generated `Claude Resources`
+  marker, and navigates the WebView once ready. The zfb config has `plugins: []`,
+  so route adapters remain host-owned and the package Node plugin host is not run.
 
 ## Workflow
 
@@ -39,7 +42,7 @@ None. Always builds the single Tauri target defined in `src-tauri/tauri.conf.jso
 pre-check speeds up debugging if `node_modules` is stale:
 
 ```bash
-cd app && pnpm install
+pnpm --dir app install --frozen-lockfile
 ```
 
 This populates `node_modules` including the native `@takazudo/zfb-darwin-arm64/zfb` binary.
@@ -55,7 +58,8 @@ cargo clean -p ccresdoc
 
 ### Step 3: Build app/ (zfb static shell) + .app bundle
 
-`cargo tauri build` runs `cd app && pnpm install && pnpm exec zfb build` automatically
+`cargo tauri build` runs `pnpm --dir app install --frozen-lockfile`,
+`pnpm --dir app exec zfb build`, and `node scripts/stage-runtime-workspace.mjs` automatically
 (via `beforeBuildCommand` in `src-tauri/tauri.conf.json`; Tauri runs build hooks from the
 project root, so the path is `app`, not `../app`). This invokes the native zfb
 binary through pnpm — no global `zfb` on PATH required. Produces both `.app` and `.dmg`
@@ -69,22 +73,27 @@ Build time on a warm cache: ~1.5 min Rust + ~10 s bundling. Cold cache: ~3-5 min
 
 ### Step 4: Verify bundle freshness
 
-Check that the bundled `app/dist/` exists and `node_modules` includes the native binary:
+Check that the bundled runtime workspace `dist/` exists and `node_modules`
+includes the native binary:
 
 ```bash
-BUNDLE=target/release/bundle/macos/CCResDoc.app/Contents/Resources/_up_/app
-[ -d "$BUNDLE/dist" ] || { echo "FAIL: bundled dist/ missing"; exit 1; }
-# Verify any @takazudo/zfb-* native binary exists in the bundled node_modules.
+BUNDLE=target/release/bundle/macos/CCResDoc.app
+RUNTIME_ROOT="$BUNDLE/Contents/Resources/runtime-workspace/app"
+[ -d "$RUNTIME_ROOT/dist" ] || { echo "FAIL: bundled dist/ missing"; exit 1; }
+[ -f "$BUNDLE/Contents/Resources/runtime-workspace/version.txt" ] || \
+  { echo "FAIL: runtime refresh token missing"; exit 1; }
+# Verify any direct @takazudo/zfb-* native carrier exists in the bundled node_modules.
 # On the primary build host (macOS arm64) this is @takazudo/zfb-darwin-arm64.
-ls "$BUNDLE/node_modules/@takazudo"/zfb-*/zfb 2>/dev/null | grep -q . || \
+ls "$RUNTIME_ROOT/node_modules/@takazudo"/zfb-*/zfb 2>/dev/null | grep -q . || \
   { echo "FAIL: no native zfb binary found in bundled node_modules/@takazudo/"; exit 1; }
-echo "Bundle looks good: $(du -sh $BUNDLE/dist | cut -f1) dist"
+test ! -e "$RUNTIME_ROOT/node_modules/.bin/zfb"
+echo "Bundle looks good: $(du -sh "$RUNTIME_ROOT/dist" | cut -f1) dist"
 ```
 
 If verification fails, the build is stale or `pnpm install` did not run. Inspect:
 
 ```bash
-cd app && pnpm install && pnpm exec zfb build   # re-run manually
+pnpm --dir app install --frozen-lockfile && pnpm --dir app exec zfb build   # re-run manually
 ```
 
 Then go back to Step 2.
@@ -124,16 +133,33 @@ Timestamp must be from just now. If older, the copy failed — surface it loudly
 open /Applications/CCResDoc.app
 ```
 
-Poll `GET /` to confirm `zfb dev` bound and the doc site is up:
+Poll semantic `/docs/` readiness to confirm `zfb dev` bound and the generated doc
+site is up:
 
 ```bash
 sleep 5
-curl -s -o /dev/null -w "ready: HTTP %{http_code}\n" http://localhost:4892/
+curl -s -o /tmp/ccresdoc-docs.html -w "ready: HTTP %{http_code}\n" http://localhost:4892/docs/
+grep -F "Claude Resources" /tmp/ccresdoc-docs.html
 ```
 
 Report:
 
 - Bundle size (`du -sh /Applications/CCResDoc.app`)
 - Binary timestamp
-- `GET /` HTTP response (expect 200)
+- `GET /docs/` HTTP response plus the `Claude Resources` marker
 - Anything unexpected
+
+### Step 9: Mandatory macOS-arm64 packaged WebView gate
+
+Run this separately on a macOS arm64 host after the static/runtime checks:
+
+```bash
+scripts/test-macos-package.sh
+```
+
+The script builds and inspects a fresh bundle, then launches the packaged app
+and real WebView twice with generated fixture content, HMR, a recording/failing
+Node sentinel, and port-4892 cleanup. It is the mandatory
+`macos-arm64-packaged-app-webview` gate. On Linux it reports a host-gate skip;
+Linux staged probes and static artifact checks must not be reported as a
+packaged app/WebView launch.

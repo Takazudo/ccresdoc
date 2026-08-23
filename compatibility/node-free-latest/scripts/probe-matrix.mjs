@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -62,6 +62,7 @@ for (const variant of variants) {
     checkTail: `${check.stdout}${check.stderr}`.trim().split("\n").slice(-8).map(normalize),
     buildTail: `${build.stdout}${build.stderr}`.trim().split("\n").slice(-12).map(normalize),
   };
+  rmSync(stateDir, { recursive: true, force: true });
 }
 
 console.log(JSON.stringify(results, null, 2));

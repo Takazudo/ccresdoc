@@ -1,7 +1,7 @@
 # CCResDoc architecture and verification contract
 
 This is the consolidated integration record for the current `@takazudo/zfb`
-2.7.1 / `@takazudo/zudo-doc` 5.7.0 application. CCResDoc is a native viewer
+2.10.1 / `@takazudo/zudo-doc` 5.12.0 application. CCResDoc is a native viewer
 for Claude Code Resources. The generated `/docs/` document is the sole product
 landing surface; `/` is its exact server-rendered alias. The product does not
 have a marketing home or a `Claude` header-navigation item.
@@ -68,20 +68,31 @@ shell and browse-all loads the current catalog lazily.
   replaced by a Node plugin. The zfb config ends with `plugins: []`; the host
   owns the three route adapters because package route plugins require virtual
   modules and start Node.
-- Node and pnpm are setup/build tools only. The staged runtime resolves
-  `node_modules/@takazudo/zfb-<platform>/zfb` directly, never
-  `node_modules/.bin/zfb`, and excludes development tools, non-host binaries,
-  and disabled plugin-host dependencies.
+- Node and pnpm are setup/build tools only. The staged runtime resolves the
+  package-root carrier `node_modules/@takazudo/zfb-<platform>/zfb` directly,
+  never `node_modules/.bin/zfb`, and excludes development tools, non-host
+  binaries, and disabled plugin-host dependencies.
 
 ## Automated gates
 
-Run the local cross-layer gate with:
+Run the focused current-toolchain gates with:
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm run check:frontend
-pnpm -C app exec zfb build
-pnpm run b4push
+pnpm --dir app install --frozen-lockfile
+pnpm --dir app run validate:dependencies
+pnpm --dir app run validate:theme-packs
+pnpm --dir app run typecheck
+pnpm --dir app run check:zfb
+pnpm --dir app run test:run
+pnpm --dir app run test:theme-packs
+pnpm --dir app exec zfb build
+pnpm run test:runtime-digest
+pnpm run probe:runtime-package
+pnpm --dir compatibility/node-free-latest install --frozen-lockfile
+pnpm --dir compatibility/node-free-latest run evidence:check
+pnpm --dir compatibility/node-free-latest run probe:matrix
+bash scripts/check-node-free-compatibility.sh --check
+pnpm b4push
 ```
 
 The frontend suite covers route aliases/chrome, generated fixture semantics,
@@ -92,6 +103,14 @@ generation/watch/live smoke, no-home scoping, readiness classification,
 boot-lazy neutralization, refresh/retry generations, workspace refresh tokens,
 native binary resolution, and process-group teardown.
 
+`pnpm b4push` is the repository's real nine-step sequence: zfb pin check; frozen
+app install and installed-tree validation; app typecheck/zfb check/Vitest; Rust
+fmt; Linux-boundary clippy and tests with `--exclude ccresdoc`; native zfb build;
+the staged runtime digest/verification and serialized two-launch probe; and the
+frozen compatibility evidence/package/config/check/build fixture. Theme-pack
+validation and its standalone Node test are explicit focused gates above and
+are not silently implied by b4push's Vitest step.
+
 The staged runtime gate is:
 
 ```sh
@@ -99,20 +118,26 @@ pnpm run probe:runtime-package
 ```
 
 It stages a lockfile-faithful workspace, checks the dynamic theme catalog and
-served assets, asserts the exact root/docs shell and semantic readiness,
+served assets, asserts the exact root/docs shell and semantic `/docs/` readiness,
 exercises content HMR, samples the process group with a recording/failing Node
-sentinel, rejects `plugin-host.mjs`, and proves two clean launches.
+sentinel, rejects `plugin-host.mjs`, and proves two clean launches with port 4892
+released between attempts. Its static checks also recompute the SHA-256 tree
+`sha256-tree-v1` digest and refresh token, verify the direct package-root native
+carrier against canonical package facts, and reject forbidden runtime packages.
 
-The packaged macOS arm64 gate uses an explicit fresh target directory and exact
-bundle shape. The script prints both paths on success:
+The packaged macOS arm64 gate is a separate mandatory host-only check. It uses an
+explicit fresh target directory and exact bundle shape, then launches the real
+app/WebView twice with generated fixture content, HMR, a failing Node sentinel,
+and port cleanup. The script prints both paths on success:
 
 ```sh
 scripts/test-macos-package.sh
 # $CARGO_TARGET_DIR/release/bundle/macos/CCResDoc.app
 ```
 
-It must be run on macOS arm64 and must not be pointed at an installed app.
-Linux can run the staged native probe but cannot claim the Tauri/WebView gate.
+It must be run on macOS arm64 and must not be pointed at an installed app. On
+Linux the script reports the host-gate skip; Linux can run the staged native
+probe and static package assertions but cannot claim the Tauri/WebView launch.
 
 ## Residual visual handoff
 

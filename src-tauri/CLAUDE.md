@@ -8,7 +8,7 @@ Node.js is required at the user's launch time.
 ## Quick start
 
 ```
-# Dev mode (uses the repo app/ directly; needs `pnpm install` in app/ once)
+# Dev mode (uses the repo app/ directly; needs a frozen install in app/ once)
 cargo tauri dev
 
 # Production build (Wave 4's build skill wraps this with the build-time install)
@@ -205,8 +205,11 @@ navigate flow must run in both modes.
 - **Bundling** includes only `runtime-workspace/**/*`; that directory is
   ignored by Git and recreated for every package build.
 - **Verification**: `pnpm run probe:runtime-package` exercises the pruned copy
-  on the CI Linux host. `scripts/test-macos-package.sh` builds, inspects, and
-  launches the `.app` counterpart on macOS arm64.
+  on the Linux host, including serialized two-launch/HMR/sentinel checks.
+  `scripts/test-macos-package.sh` is a separately mandatory host gate: it builds,
+  inspects, and launches the packaged `.app` WebView twice on macOS arm64. Linux
+  can validate staged static inputs and the native probe but cannot claim that
+  packaged app/WebView launch passed.
 
 ## Platform support claim
 
