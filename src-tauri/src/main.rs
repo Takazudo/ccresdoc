@@ -15,11 +15,13 @@
 //!      of ~135 skills) and navigates the WebView there only after generated
 //!      resource navigation is present.
 //!
-//! On window close the sidecar process group is SIGTERM→SIGKILL'd so nothing
-//! is left holding its effective port.
+//! On main-window close the sidecar process group is SIGTERM→SIGKILL'd so
+//! nothing is left holding its effective port. Closing Settings only hides it.
 
 pub mod runtime;
 pub mod settings;
+pub mod settings_commands;
+pub mod settings_window;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -38,6 +40,10 @@ use runtime::{
     RuntimeDiagnosticKind, RuntimePhase, SystemPortBoundary,
 };
 use settings::{EffectiveSettings, SettingsStore};
+use settings_window::{
+    lifecycle_action, open_or_focus_settings, LifecycleAction, SETTINGS_ACCELERATOR,
+    SETTINGS_MENU_ID, SETTINGS_WINDOW_LABEL,
+};
 const LOADING_URL: &str = "tauri://localhost/index.html";
 const IS_DEV: bool = cfg!(debug_assertions);
 
@@ -93,6 +99,7 @@ struct AppState {
     /// Filled in during setup() (app_data_dir/ccresdoc.log).
     log_path: Mutex<String>,
     runtime: Arc<runtime::ApplyCoordinator>,
+    settings_store: SettingsStore,
     /// Read by the navigation callback without consulting Tauri state.
     effective_port: Arc<AtomicU16>,
     /// Set before exit teardown. Publication handshakes with this flag so a
@@ -602,9 +609,16 @@ fn spawn_zfb_dev(
 /// `Mutex<Option<Sidecar>>`) and the watcher (`Option::take()` on the
 /// `WatchHandle`) are taken out of shared state, so whichever exit event fires
 /// first does the work and any later call is a no-op.
-fn teardown(app_handle: &AppHandle, sidecar: &Arc<Mutex<Option<Sidecar>>>, log_path: &str) {
+fn teardown(
+    app_handle: &AppHandle,
+    sidecar: &Arc<Mutex<Option<Sidecar>>>,
+    log_path: &str,
+    shutting_down: bool,
+) {
     let state = app_handle.state::<AppState>();
-    state.shutting_down.store(true, Ordering::SeqCst);
+    if shutting_down {
+        state.shutting_down.store(true, Ordering::SeqCst);
+    }
     let stopped_generation = state.runtime.claim_generation();
     state.runtime.publish_stopped(stopped_generation);
     state.effective_port.store(0, Ordering::SeqCst);
@@ -1133,19 +1147,6 @@ fn reapply_zoom(app_handle: &AppHandle) {
     }
 }
 
-/// Frontend-callable retry for the loading page's error panel. Spawned on a
-/// thread so the IPC call returns immediately. Re-runs the full `launch()`
-/// (which claims a new generation, tears down the old sidecar/watcher, and
-/// re-spawns) in both dev and prod — the host owns `zfb dev` in both modes.
-#[tauri::command]
-fn retry_launch(app_handle: AppHandle) {
-    log_to(
-        &log_path(&app_handle),
-        "retry_launch: invoked from frontend",
-    );
-    start_launch(&app_handle);
-}
-
 // ── Navigation filter ─────────────────────────────
 
 /// Allow in-window navigation only for the pinned doc-site origin
@@ -1165,6 +1166,23 @@ fn allow_navigation(url: &tauri::Url, effective_port: u16) -> bool {
     }
 }
 
+fn create_main_window(
+    app: &AppHandle,
+    navigation_port: Arc<AtomicU16>,
+) -> Result<(), tauri::Error> {
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("CCResDoc")
+        .inner_size(1200.0, 800.0)
+        .on_navigation(move |url| allow_navigation(url, navigation_port.load(Ordering::SeqCst)))
+        .on_page_load(|window, payload| {
+            if let tauri::webview::PageLoadEvent::Finished = payload.event() {
+                reapply_zoom(window.app_handle());
+            }
+        })
+        .build()?;
+    Ok(())
+}
+
 // ── Main ──────────────────────────────────────────
 
 fn main() {
@@ -1174,7 +1192,8 @@ fn main() {
     };
     let config_path = settings::resolve_config_path()
         .unwrap_or_else(|_| home.join(".config/ccresdoc/config.toml"));
-    let settings_snapshot = SettingsStore::new(config_path, home).load();
+    let settings_store = SettingsStore::new(config_path, home);
+    let settings_snapshot = settings_store.load();
     let runtime = Arc::new(runtime::ApplyCoordinator::new(settings_snapshot));
     let effective_port = Arc::new(AtomicU16::new(0));
     let app_state = AppState {
@@ -1183,15 +1202,30 @@ fn main() {
         zoom: Mutex::new(1.0),
         log_path: Mutex::new(String::new()),
         runtime,
+        settings_store,
         effective_port: effective_port.clone(),
         shutting_down: AtomicBool::new(false),
     };
     let sidecar_for_exit = app_state.sidecar.clone();
     let navigation_port = effective_port.clone();
+    #[cfg(target_os = "macos")]
+    let reopen_navigation_port = navigation_port.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
-        .invoke_handler(tauri::generate_handler![retry_launch])
+        .invoke_handler(tauri::generate_handler![
+            settings_commands::retry_launch,
+            settings_commands::open_settings_window,
+            settings_commands::get_settings_snapshot,
+            settings_commands::validate_settings_draft,
+            settings_commands::save_and_apply_settings,
+            settings_commands::rebase_stale_settings,
+            settings_commands::replace_malformed_settings,
+            settings_commands::pick_source_directory,
+            settings_commands::open_config_file,
+            settings_commands::reveal_config_file,
+        ])
         .setup(move |app| {
             // Resolve the log path under the app-data dir (always writable).
             let app_data = app
@@ -1209,6 +1243,12 @@ fn main() {
             // ── Menu ──
             let app_menu = SubmenuBuilder::new(app, "CCResDoc")
                 .about(None)
+                .separator()
+                .item(
+                    &MenuItemBuilder::with_id(SETTINGS_MENU_ID, "Settings…")
+                        .accelerator(SETTINGS_ACCELERATOR)
+                        .build(app)?,
+                )
                 .separator()
                 .quit()
                 .build()?;
@@ -1261,6 +1301,14 @@ fn main() {
             app.set_menu(menu)?;
 
             app.on_menu_event(|app_handle, event| match event.id().as_ref() {
+                SETTINGS_MENU_ID => {
+                    if let Err(error) = open_or_focus_settings(app_handle) {
+                        log_to(
+                            &self::log_path(app_handle),
+                            &format!("open Settings failed: {error}"),
+                        );
+                    }
+                }
                 "refresh" => {
                     navigate_to_loading(app_handle);
                     start_launch(app_handle);
@@ -1296,21 +1344,7 @@ fn main() {
             // (:4892) and would show connection-refused before zfb dev binds.
             // The host owns `zfb dev` in BOTH dev and prod, so the loading page
             // + readiness-navigate flow must run in both modes.
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("CCResDoc")
-                .inner_size(1200.0, 800.0)
-                .on_navigation(move |url| {
-                    allow_navigation(url, navigation_port.load(Ordering::SeqCst))
-                })
-                // Re-apply the stored zoom once each page finishes loading:
-                // `document.body.style.zoom` is page-scoped, so navigating
-                // (Refresh / launch / retry) would otherwise reset it to 1.0.
-                .on_page_load(|window, payload| {
-                    if let tauri::webview::PageLoadEvent::Finished = payload.event() {
-                        reapply_zoom(window.app_handle());
-                    }
-                })
-                .build()?;
+            create_main_window(app.handle(), navigation_port.clone())?;
 
             start_launch(app.handle());
 
@@ -1319,33 +1353,73 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |app_handle, event| {
-            // Tear down on EVERY exit path. Window close fires
-            // `WindowEvent::Destroyed`; an app-level Quit (Cmd+Q, Dock → Quit,
-            // `osascript` quit) fires `ExitRequested` (before exit) then `Exit`
-            // (last) but NOT necessarily `Destroyed` — handling all three (and
-            // relying on `teardown`'s take-once idempotency) guarantees the
-            // sidecar process group is killed exactly once regardless of which
-            // event the platform delivers, so nothing is orphaned on 4892.
-            let is_window_destroyed = matches!(
-                &event,
-                tauri::RunEvent::WindowEvent {
-                    event: tauri::WindowEvent::Destroyed,
-                    ..
+            // Main-window destruction stops owned runtime resources but leaves
+            // the macOS app available for Dock reopen. Settings close is
+            // intercepted and hidden. App-level Quit still tears down through
+            // ExitRequested/Exit; take-once cleanup makes repeated events safe.
+            let action = match &event {
+                tauri::RunEvent::WindowEvent { label, event, .. } => {
+                    let kind = match event {
+                        tauri::WindowEvent::CloseRequested { .. } => "close_requested",
+                        tauri::WindowEvent::Destroyed => "destroyed",
+                        _ => "other",
+                    };
+                    lifecycle_action(kind, Some(label))
                 }
-            );
-            let is_app_exit = matches!(
-                &event,
-                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
-            );
-            if is_window_destroyed || is_app_exit {
-                let log_path = log_path(app_handle);
-                teardown(app_handle, &sidecar_for_exit, &log_path);
-                // Closing the last window keeps the event loop alive on macOS,
-                // so the window-close path explicitly exits; the app-quit paths
-                // (ExitRequested/Exit) are already exiting and must not re-enter.
-                if is_window_destroyed {
-                    app_handle.exit(0);
+                tauri::RunEvent::ExitRequested { .. } => lifecycle_action("exit_requested", None),
+                tauri::RunEvent::Exit => lifecycle_action("exit", None),
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => lifecycle_action("reopen", None),
+                _ => LifecycleAction::Ignore,
+            };
+            match action {
+                LifecycleAction::HideSettings => {
+                    if let tauri::RunEvent::WindowEvent {
+                        event: tauri::WindowEvent::CloseRequested { api, .. },
+                        ..
+                    } = &event
+                    {
+                        api.prevent_close();
+                        if let Some(window) = app_handle.get_webview_window(SETTINGS_WINDOW_LABEL) {
+                            let _ = window.hide();
+                        }
+                    }
                 }
+                LifecycleAction::StopForMainClose => {
+                    let log_path = log_path(app_handle);
+                    teardown(app_handle, &sidecar_for_exit, &log_path, false);
+                }
+                LifecycleAction::Shutdown => {
+                    let log_path = log_path(app_handle);
+                    teardown(app_handle, &sidecar_for_exit, &log_path, true);
+                }
+                LifecycleAction::ReopenMain => {
+                    #[cfg(target_os = "macos")]
+                    if let Some(main) = app_handle.get_webview_window("main") {
+                        let _ = main.show();
+                        if main.is_minimized().unwrap_or(false) {
+                            let _ = main.unminimize();
+                        }
+                        let _ = main.set_focus();
+                    } else {
+                        match create_main_window(app_handle, reopen_navigation_port.clone()) {
+                            Ok(()) => {
+                                if app_handle.state::<AppState>().runtime.snapshot().phase
+                                    == RuntimePhase::Ready
+                                {
+                                    navigate_to_docs(app_handle);
+                                } else {
+                                    start_launch(app_handle);
+                                }
+                            }
+                            Err(error) => log_to(
+                                &log_path(app_handle),
+                                &format!("reopen main window failed: {error}"),
+                            ),
+                        }
+                    }
+                }
+                LifecycleAction::Ignore => {}
             }
         });
 }
@@ -1685,13 +1759,141 @@ mod tests {
             .join("frontend")
             .join("index.html");
         let html = std::fs::read_to_string(&html_path).expect("Failed to read frontend/index.html");
+        let adapter = std::fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("frontend")
+                .join("settings-backend.mjs"),
+        )
+        .expect("Failed to read settings backend adapter");
         assert!(
             html.contains("\"launch-error\""),
             "frontend/index.html should listen for the launch-error event"
         );
         assert!(
-            html.contains("\"retry_launch\""),
-            "frontend/index.html should invoke the retry_launch command"
+            adapter.contains("\"retry_launch\""),
+            "the centralized adapter should invoke retry_launch"
         );
+        assert!(
+            html.contains("openSettings") && html.matches("Settings…").count() >= 2,
+            "loading and error states should expose the Settings recovery action"
+        );
+        assert!(
+            html.contains("settings-backend.mjs"),
+            "bundled pages must use the centralized backend adapter"
+        );
+    }
+
+    #[test]
+    fn settings_menu_contract_is_native_and_stable() {
+        assert_eq!(settings_window::SETTINGS_MENU_ID, "open_settings");
+        assert_eq!(settings_window::SETTINGS_ACCELERATOR, "CmdOrCtrl+,");
+    }
+
+    #[test]
+    fn every_custom_command_has_generated_acl_and_per_window_grants() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let build = std::fs::read_to_string(root.join("build.rs")).unwrap();
+        let main: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("capabilities/default.json")).unwrap(),
+        )
+        .unwrap();
+        let settings: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("capabilities/settings.json")).unwrap(),
+        )
+        .unwrap();
+        let commands = [
+            "retry_launch",
+            "open_settings_window",
+            "get_settings_snapshot",
+            "validate_settings_draft",
+            "save_and_apply_settings",
+            "rebase_stale_settings",
+            "replace_malformed_settings",
+            "pick_source_directory",
+            "open_config_file",
+            "reveal_config_file",
+        ];
+        for command in commands {
+            assert!(
+                build.contains(&format!("\"{command}\"")),
+                "missing {command}"
+            );
+            let permission = std::fs::read_to_string(
+                root.join("permissions")
+                    .join("autogenerated")
+                    .join(format!("{command}.toml")),
+            )
+            .unwrap_or_else(|_| panic!("generated permission missing for {command}"));
+            let dashed = command.replace('_', "-");
+            assert!(permission.contains(&format!("allow-{dashed}")));
+            assert!(permission.contains(&format!("deny-{dashed}")));
+            assert!(permission.contains(&format!("commands.allow = [\"{command}\"]")));
+        }
+        assert!(build.contains("AppManifest::new().commands(COMMANDS)"));
+
+        assert_eq!(main["windows"], serde_json::json!(["main"]));
+        assert_eq!(settings["windows"], serde_json::json!(["settings"]));
+        let main_permissions = main["permissions"].as_array().unwrap();
+        let settings_permissions = settings["permissions"].as_array().unwrap();
+        assert!(main_permissions.contains(&serde_json::json!("allow-open-settings-window")));
+        assert!(main_permissions.contains(&serde_json::json!("allow-retry-launch")));
+        for privileged in [
+            "allow-get-settings-snapshot",
+            "allow-save-and-apply-settings",
+            "allow-rebase-stale-settings",
+            "allow-replace-malformed-settings",
+            "allow-pick-source-directory",
+            "allow-open-config-file",
+            "allow-reveal-config-file",
+        ] {
+            assert!(!main_permissions.contains(&serde_json::json!(privileged)));
+            assert!(settings_permissions.contains(&serde_json::json!(privileged)));
+        }
+        assert!(!settings.to_string().contains('*'));
+        assert!(!settings.to_string().to_ascii_lowercase().contains("test"));
+    }
+
+    #[test]
+    fn csp_and_remote_capability_are_dynamic_loopback_only() {
+        let conf = read_tauri_conf();
+        let csp = conf["app"]["security"]["csp"]
+            .as_str()
+            .expect("CSP must be non-null");
+        assert!(csp.contains("http://localhost:*"));
+        assert!(csp.contains("http://127.0.0.1:*"));
+        assert!(csp.contains("ws://localhost:*"));
+        assert!(!csp.contains("0.0.0.0") && !csp.contains("*://"));
+
+        let capability: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("capabilities/default.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        for pattern in capability["remote"]["urls"].as_array().unwrap() {
+            let pattern = pattern.as_str().unwrap();
+            assert!(
+                pattern.starts_with("http://localhost:")
+                    || pattern.starts_with("http://127.0.0.1:")
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_settings_shell_has_loading_and_fatal_states() {
+        let frontend = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("frontend");
+        let html = std::fs::read_to_string(frontend.join("settings.html")).unwrap();
+        let css = std::fs::read_to_string(frontend.join("settings.css")).unwrap();
+        assert!(html.contains("settings-loading") && html.contains("settings-fatal"));
+        assert!(html.contains("role=\"alert\"") && html.contains("aria-live=\"polite\""));
+        assert!(css.contains("button:focus-visible"));
+        assert!(css.contains("@media (hover: hover)"));
+
+        let index = std::fs::read_to_string(frontend.join("index.html")).unwrap();
+        let shell = std::fs::read_to_string(frontend.join("settings-shell.mjs")).unwrap();
+        let adapter = std::fs::read_to_string(frontend.join("settings-backend.mjs")).unwrap();
+        assert!(!index.contains("core.invoke") && !shell.contains("core.invoke"));
+        assert_eq!(adapter.matches("invoke(command, args)").count(), 1);
     }
 }

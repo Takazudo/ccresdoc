@@ -350,6 +350,25 @@ impl SettingsStore {
         }
     }
 
+    /// Validate and normalize a draft without touching the settings file.
+    /// The native command boundary uses this so Rust remains authoritative for
+    /// source-path, port, appearance, and theme-pack validation.
+    pub fn validate(&self, draft: &SettingsDraft) -> (EffectiveSettings, Vec<SettingsDiagnostic>) {
+        let (effective, mut diagnostics) = self.validate_and_project(draft);
+        if draft.schema_version != CURRENT_SCHEMA_VERSION {
+            diagnostics.insert(
+                0,
+                diagnostic(
+                    DiagnosticKind::UnsupportedSchemaVersion,
+                    Some("schema_version"),
+                    format!("schema version {} is unsupported", draft.schema_version),
+                    true,
+                ),
+            );
+        }
+        (effective, diagnostics)
+    }
+
     pub fn save(
         &self,
         draft: &SettingsDraft,

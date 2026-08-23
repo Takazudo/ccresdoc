@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-validate-settings-draft"
+description = "Enables the validate_settings_draft command without any pre-configured scope."
+commands.allow = ["validate_settings_draft"]
+
+[[permission]]
+identifier = "deny-validate-settings-draft"
+description = "Denies the validate_settings_draft command without any pre-configured scope."
+commands.deny = ["validate_settings_draft"]

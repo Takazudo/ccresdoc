@@ -55,7 +55,10 @@
     border-radius: 4px; cursor: pointer;
     font-family: inherit; font-size: 0.9rem;
   }
-  button:hover { background: #353535; border-color: #4a4a4a; }
+  button:focus-visible { outline: 2px solid #d69a66; outline-offset: 2px; }
+  @media (hover: hover) and (pointer: fine) {
+    button:hover { background: #353535; border-color: #4a4a4a; }
+  }
   button:active { background: #252525; }
   button.secondary { color: #a9a9a9; }
 </style>
@@ -68,6 +71,7 @@
     <div class="slow-hint" id="slow-hint">
       Taking longer than usual &mdash; still building the doc site.
     </div>
+    <button id="loading-settings-btn" class="secondary">Settings…</button>
   </div>
 
   <div id="error">
@@ -78,10 +82,12 @@
     <div class="btn-row">
       <button id="retry-btn">Retry</button>
       <button id="copy-btn" class="secondary">Copy log path</button>
+      <button id="error-settings-btn" class="secondary">Settings…</button>
     </div>
   </div>
 
-<script>
+<script type="module">
+  import { createTauriBackend } from "./settings-backend.mjs";
   // Inline-only script: no bundler, no imports. Uses the Tauri v2 global
   // API exposed via `withGlobalTauri: true` in tauri.conf.json.
   (function () {
@@ -94,6 +100,8 @@
     var retryBtn = document.getElementById("retry-btn");
     var copyBtn = document.getElementById("copy-btn");
     var slowHintEl = document.getElementById("slow-hint");
+    var loadingSettingsBtn = document.getElementById("loading-settings-btn");
+    var errorSettingsBtn = document.getElementById("error-settings-btn");
 
     var currentLogPath = "";
     var slowHintTimer = null;
@@ -148,21 +156,24 @@
     }
 
     retryBtn.addEventListener("click", function () {
-      var t = tauri();
-      if (!t || !t.core || typeof t.core.invoke !== "function") {
-        // eslint-disable-next-line no-console
-        console.error("Tauri invoke API not available");
-        return;
-      }
       // Flip back to the spinner immediately so the user sees feedback.
       // If retry also fails, launch-error will fire again and re-show
       // the error panel.
       showLoading();
-      t.core.invoke("retry_launch").catch(function (e) {
+      createTauriBackend().retryLaunch().catch(function (e) {
         // eslint-disable-next-line no-console
         console.error("retry_launch invoke failed:", e);
       });
     });
+
+    function openSettings() {
+      createTauriBackend().openSettings().catch(function (e) {
+        // eslint-disable-next-line no-console
+        console.error("open_settings_window invoke failed:", e);
+      });
+    }
+    loadingSettingsBtn.addEventListener("click", openSettings);
+    errorSettingsBtn.addEventListener("click", openSettings);
 
     copyBtn.addEventListener("click", function () {
       if (!currentLogPath) return;
