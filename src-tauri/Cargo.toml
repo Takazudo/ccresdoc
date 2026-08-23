@@ -15,7 +15,15 @@ ccresdoc-claude-md = { path = "../crates/ccresdoc-claude-md" }
 libc = "0.2"
 # issue #58: open external http(s) links in the OS browser from on_navigation
 open = "5"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
+thiserror = "1"
+toml_edit = "0.22"
+
+[dev-dependencies]
+filetime = "0.2"
+tempfile = "3"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
