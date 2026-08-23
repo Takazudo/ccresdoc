@@ -538,7 +538,7 @@ fn resolve_zfb_binary(workspace: &Path) -> Result<PathBuf, String> {
 /// serve staged `dist/` before the freshly generated resource tree is ready.
 fn zfb_dev_command(zfb_bin: &Path, workspace: &Path, port: u16) -> Command {
     let mut cmd = Command::new(zfb_bin);
-    cmd.args(["dev", "--port", &port.to_string()])
+    cmd.args(["dev", "--host", "127.0.0.1", "--port", &port.to_string()])
         .current_dir(workspace)
         .env_remove("ZFB_DEV_BOOT_LAZY");
     cmd
@@ -1385,7 +1385,11 @@ mod tests {
     #[test]
     fn zfb_command_removes_inherited_boot_lazy() {
         let command = zfb_dev_command(Path::new("/tmp/native-zfb"), Path::new("/tmp/app"), 53003);
-        assert!(command.get_args().any(|arg| arg == "53003"));
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args, ["dev", "--host", "127.0.0.1", "--port", "53003"]);
         let boot_lazy = command
             .get_envs()
             .find(|(key, _)| *key == "ZFB_DEV_BOOT_LAZY");

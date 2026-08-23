@@ -218,8 +218,7 @@ pub fn navigation_decision(url: &url::Url, effective_port: Option<u16>) -> Navig
         "http" => {
             let loopback = match url.host() {
                 Some(url::Host::Domain("localhost")) => true,
-                Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-                Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+                Some(url::Host::Ipv4(ip)) => ip == Ipv4Addr::LOCALHOST,
                 _ => false,
             };
             if loopback && url.port_or_known_default() == effective_port {
@@ -604,7 +603,6 @@ mod tests {
         for raw in [
             "http://localhost:53002/docs/",
             "http://127.0.0.1:53002/docs/",
-            "http://[::1]:53002/docs/",
         ] {
             assert_eq!(
                 navigation_decision(&url::Url::parse(raw).unwrap(), Some(53002)),
@@ -613,6 +611,8 @@ mod tests {
         }
         for raw in [
             "http://localhost:4892/docs/",
+            "http://127.0.0.2:53002/",
+            "http://[::1]:53002/docs/",
             "http://192.168.1.2:53002/",
             "https://localhost:53002/",
         ] {
