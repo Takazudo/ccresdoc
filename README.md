@@ -66,7 +66,7 @@ To rebuild the frontend shell manually (e.g. after changing `app/pages/`):
 cd app && pnpm exec zfb build
 ```
 
-(or just run `bash scripts/run-b4push.sh`.)
+(or just run `pnpm b4push`.)
 
 ## Build the .app
 
@@ -113,7 +113,7 @@ webkit2gtk is not available on ubuntu-latest.
 ## Before pushing
 
 ```bash
-bash scripts/run-b4push.sh
+pnpm b4push
 ```
 
 Runs all reliable cross-platform checks locally: frozen dependency install and

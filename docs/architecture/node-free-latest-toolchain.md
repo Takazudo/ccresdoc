@@ -127,7 +127,7 @@ Pin first-party packages exactly for the current integrated contract:
 
 Remove the Cloudflare adapter. After the owning migrations remove local mirrors, remove direct `clsx`, `gray-matter`, `mermaid`, `remark-cjk-friendly`, `remark-directive`, and `@types/react`: the selected graph either no longer reaches them directly or provides the behavior in zfb/zudo-doc. Do not add optional peers `diff`, `@takazudo/zdtp`, or `@takazudo/zudo-doc-history-server`; those belong to disabled features/plugin routes. `@takazudo/zfb-md-wasm` remains pinned for zudo-doc family parity and browser-side Markdown facilities even though the minimal compatibility route does not execute it.
 
-Use Node `>=22`, pnpm `>=10`, an exact `packageManager`, `nodeLinker: hoisted`, a frozen install, and `minimumReleaseAgeExclude` entries for every just-released first-party/platform pin. Hoisting remains required by the current Tauri copy/dereference staging design until issue #99 proves a replacement layout.
+Use Node `>=22`, pnpm `>=10`, an exact `packageManager`, `nodeLinker: hoisted`, a frozen install, and `minimumReleaseAgeExclude` entries for every just-released first-party/platform pin. Hoisting remains required by the current Tauri copy/dereference staging design: the bundled workspace is copied with symlinks dereferenced, so pnpm's isolated `.pnpm` layout is not a valid runtime shape.
 
 ## Entrypoint contract
 
