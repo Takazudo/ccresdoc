@@ -10,6 +10,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -28,7 +29,17 @@ const sentinelLog = join(probeRoot, "node-invocations.log");
 const processSamples = [];
 let processSampleFailure;
 const port = 4892;
+const portLock = join(tmpdir(), `ccresdoc-runtime-port-${port}.lock`);
+let portLockHeld = false;
 const fontUrlPattern = /url\(\s*(["']?)([^"')]+)\1\s*\)/g;
+
+// Covers setup failures that happen before the launch lifecycle enters its
+// async try/finally. Normal cleanup removes these paths first; force makes the
+// exit hook idempotent.
+process.once("exit", () => {
+  rmSync(probeRoot, { recursive: true, force: true });
+  releasePortLock();
+});
 
 cpSync(join(stagedRoot, "app"), workspace, { recursive: true, dereference: true });
 mkdirSync(sentinelDir);
@@ -43,6 +54,62 @@ if (process.platform === "win32") {
 
 const binary = join(workspace, "node_modules", ...manifest.hostPackage.split("/"), process.platform === "win32" ? "zfb.exe" : "zfb");
 let activeChild;
+
+function processIsAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+function acquirePortLock() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      mkdirSync(portLock);
+      writeFileSync(join(portLock, "owner.json"), `${JSON.stringify({ pid: process.pid, port })}\n`);
+      portLockHeld = true;
+      return;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      let owner;
+      try {
+        owner = JSON.parse(readFileSync(join(portLock, "owner.json"), "utf8"));
+      } catch {}
+      if (!Number.isSafeInteger(owner?.pid) || owner.pid <= 0) {
+        throw new Error(`runtime probe lock for fixed port ${port} is initializing or invalid`);
+      }
+      if (processIsAlive(owner?.pid)) {
+        throw new Error(`runtime probe for fixed port ${port} is already running (pid ${owner.pid})`);
+      }
+      rmSync(portLock, { recursive: true, force: true });
+    }
+  }
+  throw new Error(`could not serialize runtime probe for fixed port ${port}`);
+}
+
+function releasePortLock() {
+  if (!portLockHeld) return;
+  rmSync(portLock, { recursive: true, force: true });
+  portLockHeld = false;
+}
+
+async function assertPortReleased(context) {
+  await new Promise((resolveCheck, rejectCheck) => {
+    const server = createServer();
+    server.once("error", (error) => {
+      rejectCheck(new Error(`fixed port ${port} is unavailable ${context}: ${error.message}`));
+    });
+    server.listen({ host: "127.0.0.1", port, exclusive: true }, () => {
+      server.close((error) => {
+        if (error) rejectCheck(error);
+        else resolveCheck();
+      });
+    });
+  });
+}
 
 function sampleProcesses(child) {
   if (process.platform === "win32") return [];
@@ -128,6 +195,24 @@ async function stop(child) {
     const tree = spawnSync("ps", ["-eo", "pid=,ppid=,pgid=,args="], { encoding: "utf8" }).stdout;
     assert.equal(tree.includes(workspace), false, `workspace process survived shutdown:\n${tree}`);
   }
+  await assertPortReleased("after process-group teardown");
+}
+
+let signalShutdownStarted = false;
+for (const [signal, exitCode] of [["SIGINT", 130], ["SIGTERM", 143]]) {
+  process.once(signal, () => {
+    if (signalShutdownStarted) return;
+    signalShutdownStarted = true;
+    void (async () => {
+      try {
+        if (activeChild) await stop(activeChild);
+      } finally {
+        rmSync(probeRoot, { recursive: true, force: true });
+        releasePortLock();
+        process.exit(exitCode);
+      }
+    })();
+  });
 }
 
 function launch() {
@@ -242,6 +327,8 @@ async function runOnce({ hmr }) {
 }
 
 try {
+  acquirePortLock();
+  await assertPortReleased("before first launch");
   await runOnce({ hmr: true });
   // A second full start proves the retry/relaunch path can reclaim :4892 after
   // process-group teardown instead of inheriting a stale listener.
@@ -258,10 +345,16 @@ try {
     nodeSentinelInvocations: 0,
     processSamples: processSamples.length,
     processGroupShutdown: true,
+    fixedPortSerialized: true,
+    portReleasedAfterEachLaunch: true,
     host: manifest.host,
-    macosArm64PackageContract: process.platform === "darwin" && process.arch === "arm64" ? "tested" : "not-run-on-this-host",
+    macosArm64AppWebViewHostGate: "not-run-by-runtime-probe",
   }, null, 2));
 } finally {
-  if (activeChild) await stop(activeChild);
-  rmSync(probeRoot, { recursive: true, force: true });
+  try {
+    if (activeChild) await stop(activeChild);
+  } finally {
+    rmSync(probeRoot, { recursive: true, force: true });
+    releasePortLock();
+  }
 }
