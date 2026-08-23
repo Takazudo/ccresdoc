@@ -49,6 +49,14 @@ struct TauriWindowBoundary<'a> {
     app: &'a AppHandle,
 }
 
+impl TauriWindowBoundary<'_> {
+    fn window(&self) -> Result<tauri::WebviewWindow, tauri::Error> {
+        self.app
+            .get_webview_window(SETTINGS_WINDOW_LABEL)
+            .ok_or(tauri::Error::WindowNotFound)
+    }
+}
+
 impl WindowBoundary for TauriWindowBoundary<'_> {
     type Error = tauri::Error;
 
@@ -73,31 +81,19 @@ impl WindowBoundary for TauriWindowBoundary<'_> {
     }
 
     fn show(&mut self) -> Result<(), Self::Error> {
-        self.app
-            .get_webview_window(SETTINGS_WINDOW_LABEL)
-            .expect("settings window must exist after create")
-            .show()
+        self.window()?.show()
     }
 
     fn is_minimized(&self) -> Result<bool, Self::Error> {
-        self.app
-            .get_webview_window(SETTINGS_WINDOW_LABEL)
-            .expect("settings window must exist after create")
-            .is_minimized()
+        self.window()?.is_minimized()
     }
 
     fn unminimize(&mut self) -> Result<(), Self::Error> {
-        self.app
-            .get_webview_window(SETTINGS_WINDOW_LABEL)
-            .expect("settings window must exist after create")
-            .unminimize()
+        self.window()?.unminimize()
     }
 
     fn focus(&mut self) -> Result<(), Self::Error> {
-        self.app
-            .get_webview_window(SETTINGS_WINDOW_LABEL)
-            .expect("settings window must exist after create")
-            .set_focus()
+        self.window()?.set_focus()
     }
 }
 

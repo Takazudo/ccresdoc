@@ -11,6 +11,19 @@ export const BACKEND_METHODS = Object.freeze([
   "revealConfigFile",
 ]);
 
+/**
+ * @typedef {{
+ *   schemaVersion: number,
+ *   claudeDir: string,
+ *   appearanceMode: string,
+ *   themePack: string,
+ *   preferredPort: number,
+ *   fallbackToFreePort: boolean
+ * }} SettingsDraft
+ * @typedef {"claudeDir"|"appearanceMode"|"themePack"|"preferredPort"|"fallbackToFreePort"} DirtyField
+ * @typedef {{code: string, message: string, details: unknown}} BackendError
+ */
+
 export function decodeBackendError(error) {
   if (error && typeof error === "object" && typeof error.code === "string") {
     return {

@@ -15,8 +15,8 @@
 //!      of ~135 skills) and navigates the WebView there only after generated
 //!      resource navigation is present.
 //!
-//! On window close the sidecar process group is SIGTERM→SIGKILL'd so nothing
-//! is left holding its effective port.
+//! On main-window close the sidecar process group is SIGTERM→SIGKILL'd so
+//! nothing is left holding its effective port. Closing Settings only hides it.
 
 pub mod runtime;
 pub mod settings;
@@ -1353,13 +1353,10 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |app_handle, event| {
-            // Tear down on EVERY exit path. Window close fires
-            // `WindowEvent::Destroyed`; an app-level Quit (Cmd+Q, Dock → Quit,
-            // `osascript` quit) fires `ExitRequested` (before exit) then `Exit`
-            // (last) but NOT necessarily `Destroyed` — handling all three (and
-            // relying on `teardown`'s take-once idempotency) guarantees the
-            // sidecar process group is killed exactly once regardless of which
-            // event the platform delivers, so nothing is orphaned on 4892.
+            // Main-window destruction stops owned runtime resources but leaves
+            // the macOS app available for Dock reopen. Settings close is
+            // intercepted and hidden. App-level Quit still tears down through
+            // ExitRequested/Exit; take-once cleanup makes repeated events safe.
             let action = match &event {
                 tauri::RunEvent::WindowEvent { label, event, .. } => {
                     let kind = match event {
@@ -1404,14 +1401,21 @@ fn main() {
                             let _ = main.unminimize();
                         }
                         let _ = main.set_focus();
-                    } else if create_main_window(app_handle, reopen_navigation_port.clone()).is_ok()
-                    {
-                        if app_handle.state::<AppState>().runtime.snapshot().phase
-                            == RuntimePhase::Ready
-                        {
-                            navigate_to_docs(app_handle);
-                        } else {
-                            start_launch(app_handle);
+                    } else {
+                        match create_main_window(app_handle, reopen_navigation_port.clone()) {
+                            Ok(()) => {
+                                if app_handle.state::<AppState>().runtime.snapshot().phase
+                                    == RuntimePhase::Ready
+                                {
+                                    navigate_to_docs(app_handle);
+                                } else {
+                                    start_launch(app_handle);
+                                }
+                            }
+                            Err(error) => log_to(
+                                &log_path(app_handle),
+                                &format!("reopen main window failed: {error}"),
+                            ),
                         }
                     }
                 }
