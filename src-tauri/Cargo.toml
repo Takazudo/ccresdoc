@@ -8,6 +8,7 @@ edition = "2021"
 
 [dependencies]
 tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-dialog = "2"
 # Wave 3 (#44): the node-free live-update engine — generate() at boot + watch()
 # in-process. The host spawns the native `zfb dev` separately (process group),
 # so no async runtime is needed here (the watcher owns its own thread).

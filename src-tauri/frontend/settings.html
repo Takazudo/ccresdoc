@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCResDoc Settings</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <main class="settings-shell" aria-labelledby="settings-title">
+    <header class="settings-header">
+      <h1 id="settings-title">Settings</h1>
+      <p>Configure the local documentation source and runtime.</p>
+    </header>
+    <section id="settings-loading" class="settings-state" aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <p>Loading settings…</p>
+    </section>
+    <section id="settings-content" class="settings-state" hidden>
+      <h2>Configuration loaded</h2>
+      <dl class="settings-summary">
+        <div><dt>Config</dt><dd id="config-path"></dd></div>
+        <div><dt>Status</dt><dd id="config-status"></dd></div>
+        <div><dt>Runtime</dt><dd id="runtime-status"></dd></div>
+      </dl>
+      <p class="settings-note">The complete editor will appear here in the next implementation wave.</p>
+    </section>
+    <section id="settings-fatal" class="settings-state settings-fatal" role="alert" hidden>
+      <h2>Settings could not be loaded</h2>
+      <p id="fatal-message"></p>
+      <button id="reload-settings" type="button">Try again</button>
+    </section>
+  </main>
+  <script type="module" src="settings-shell.mjs"></script>
+</body>
+</html>

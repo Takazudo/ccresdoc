@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "settings",
+  "description": "Narrow bundled Settings window capabilities",
+  "windows": ["settings"],
+  "permissions": [
+    "allow-get-settings-snapshot",
+    "allow-validate-settings-draft",
+    "allow-save-and-apply-settings",
+    "allow-rebase-stale-settings",
+    "allow-replace-malformed-settings",
+    "allow-pick-source-directory",
+    "allow-open-config-file",
+    "allow-reveal-config-file"
+  ]
+}
