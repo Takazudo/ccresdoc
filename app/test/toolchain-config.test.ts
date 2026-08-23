@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { compile } from "@takazudo/zfb-md-wasm";
 import type { PipelineOptions } from "@takazudo/zfb-md-wasm";
 import { describe, expect, it } from "vitest";
@@ -20,6 +22,28 @@ describe("latest zudo-doc configuration", () => {
         onBrokenLinks: "warn",
       },
     });
+  });
+
+  it("uses only public zudo-doc entry points in the consumer and its tests", () => {
+    const roots = ["pages", "src", "scripts", "test"];
+    const files = [
+      "zfb.config.ts",
+      ...roots.flatMap((root) =>
+        readdirSync(resolve(process.cwd(), root), {
+          recursive: true,
+          withFileTypes: true,
+        })
+          .filter((entry) => entry.isFile())
+          .map((entry) => resolve(entry.parentPath, entry.name))
+          .filter((file) => /\.(?:[cm]?[jt]sx?|mjs)$/.test(file)),
+      ),
+    ];
+
+    for (const file of files) {
+      const source = readFileSync(resolve(process.cwd(), file), "utf8");
+      expect(source, file).not.toMatch(/@takazudo\/zudo-doc\/dist\//);
+      expect(source, file).not.toMatch(/node_modules\/@takazudo\/zudo-doc/);
+    }
   });
 
   it("retains the current package Markdown defaults", () => {
