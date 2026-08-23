@@ -150,10 +150,27 @@ fn navigate_to_docs(app_handle: &AppHandle) {
     }
 }
 
+/// A freshly built main WebView already carries a current static DocumentStart
+/// seed, so reopen can use native navigation without racing an eval against the
+/// loading document's creation.
+#[cfg(target_os = "macos")]
+fn navigate_fresh_main_to_docs(app_handle: &AppHandle) {
+    let state = app_handle.state::<AppState>();
+    state.appearance.clear_candidate();
+    let port = state.effective_port.load(Ordering::SeqCst);
+    if let (Some(window), Ok(url)) = (
+        app_handle.get_webview_window("main"),
+        runtime::docs_url(port).parse::<tauri::Url>(),
+    ) {
+        let _ = window.navigate(url);
+    }
+}
+
 /// Restore the bundled loading surface before a Refresh begins. Retry already
 /// runs from this page's error panel, so both paths converge on the same launch
 /// lease and semantic-readiness classifier.
 fn navigate_to_loading(app_handle: &AppHandle) {
+    app_handle.state::<AppState>().appearance.clear_candidate();
     if let Some(w) = app_handle.get_webview_window("main") {
         if let Ok(url) = LOADING_URL.parse::<tauri::Url>() {
             let _ = w.navigate(url);
@@ -1439,7 +1456,7 @@ fn main() {
                                 if app_handle.state::<AppState>().runtime.snapshot().phase
                                     == RuntimePhase::Ready
                                 {
-                                    navigate_to_docs(app_handle);
+                                    navigate_fresh_main_to_docs(app_handle);
                                 } else {
                                     start_launch(app_handle);
                                 }
@@ -1486,6 +1503,20 @@ mod tests {
         );
         let url: Result<tauri::Url, _> = docs_url.parse();
         assert!(url.is_ok(), "docs_url should parse: {docs_url}");
+    }
+
+    #[test]
+    fn appearance_bootstrap_is_document_start_not_page_load_eval() {
+        let source = include_str!("main.rs");
+        assert!(source.contains(".initialization_script(appearance::initialization_script"));
+        assert!(source.contains("appearance::window_name_script"));
+        let page_load = source
+            .split(".on_page_load")
+            .nth(1)
+            .and_then(|tail| tail.split(".build()?").next())
+            .unwrap();
+        assert!(page_load.contains("reapply_zoom"));
+        assert!(!page_load.contains("appearance"));
     }
 
     #[test]
@@ -1888,6 +1919,10 @@ mod tests {
             assert!(settings_permissions.contains(&serde_json::json!(privileged)));
         }
         assert!(!settings_permissions.contains(&serde_json::json!("allow-update-appearance")));
+        assert!(settings_permissions.contains(&serde_json::json!("core:event:allow-listen")));
+        assert!(settings_permissions.contains(&serde_json::json!("core:event:allow-unlisten")));
+        assert!(!settings_permissions.contains(&serde_json::json!("core:event:default")));
+        assert!(!settings_permissions.contains(&serde_json::json!("core:event:allow-emit")));
         assert!(!settings.to_string().contains('*'));
         assert!(!settings.to_string().to_ascii_lowercase().contains("test"));
     }

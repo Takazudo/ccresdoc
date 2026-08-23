@@ -35,7 +35,7 @@ describe("docs appearance bridge", () => {
     window.dispatchEvent(new CustomEvent("color-scheme-changed"));
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(invoke).toHaveBeenCalledWith("update_appearance", {
-      request: { mode: "dark", themePack: "default", intent: "persist" },
+      request: { mode: "dark", themePack: "default", intent: "persist", field: "mode" },
     });
 
     const authoritative = {
@@ -62,7 +62,7 @@ describe("docs appearance bridge", () => {
     const mount = document.createElement("div"); document.body.append(mount);
     act(() => render(<AppearanceBridge />, mount)); await flush();
     expect(invoke).toHaveBeenCalledWith("update_appearance", {
-      request: { mode: "light", themePack: "default", intent: "legacy_candidate" },
+      request: { mode: "light", themePack: "default", intent: "legacy_candidate", field: "mode" },
     });
     expect(localStorage.getItem("ccresdoc-appearance-v1")).toBeNull();
   });

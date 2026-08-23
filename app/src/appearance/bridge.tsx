@@ -49,7 +49,7 @@ export function AppearanceBridge() {
       bootAppearance?.source ?? "default";
     let authoritativeRevision: unknown = root.__CCRESDOC_APPEARANCE__?.revision ?? null;
     let pending = "";
-    let queued: Appearance | null = null;
+    let queued: { appearance: Appearance; field: "mode" | "theme_pack" } | null = null;
     let applySequence = 0;
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -131,16 +131,16 @@ export function AppearanceBridge() {
       await apply(envelope.appearance, envelope.source);
     }
 
-    async function persist(value: Appearance) {
+    async function persist(value: Appearance, field: "mode" | "theme_pack") {
       if (!invoke || applying) return;
       if (pending) {
-        if (pending !== key(value)) queued = { ...value };
+        if (pending !== key(value)) queued = { appearance: { ...value }, field };
         return;
       }
       if (key(value) === key(authoritative)) return;
       pending = key(value);
       try {
-        const result = await invoke("update_appearance", { request: { ...value, intent: "persist" } }) as Envelope;
+        const result = await invoke("update_appearance", { request: { ...value, intent: "persist", field } }) as Envelope;
         await accept(result);
       } catch (error) {
         pending = "";
@@ -149,19 +149,19 @@ export function AppearanceBridge() {
       } finally {
         const next = queued;
         queued = null;
-        if (next) void persist(next);
+        if (next) void persist(next.appearance, next.field);
       }
     }
 
     const colorChanged = () => {
       if (applying) return;
       const mode = document.documentElement.dataset.theme;
-      if (mode === "light" || mode === "dark") void persist({ ...active, mode });
+      if (mode === "light" || mode === "dark") void persist({ ...active, mode }, "mode");
     };
     const packChanged = (event: Event) => {
       if (applying) return;
       const pack = (event as CustomEvent<{ pack?: unknown }>).detail?.pack;
-      if (typeof pack === "string") void persist({ ...active, themePack: pack });
+      if (typeof pack === "string") void persist({ ...active, themePack: pack }, "theme_pack");
     };
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const mediaChanged = () => { if (active.mode === "system") void apply(active, "media"); };
@@ -172,7 +172,7 @@ export function AppearanceBridge() {
     const boot = root.__CCRESDOC_APPEARANCE__;
     if (boot?.source === "legacy_candidate" && invoke) {
       void invoke("update_appearance", {
-        request: { mode: boot.mode, themePack: boot.themePack, intent: "legacy_candidate" },
+        request: { mode: boot.mode, themePack: boot.themePack, intent: "legacy_candidate", field: "mode" },
       }).catch((error) => console.warn("legacy appearance candidate was not accepted:", error));
     }
     const listen = root.__TAURI__?.event?.listen;

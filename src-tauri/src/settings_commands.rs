@@ -287,6 +287,13 @@ pub enum AppearanceIntent {
     Persist,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppearanceField {
+    Mode,
+    ThemePack,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
@@ -294,6 +301,7 @@ pub struct AppearanceRequest {
     pub mode: AppearanceMode,
     pub theme_pack: String,
     pub intent: AppearanceIntent,
+    pub field: AppearanceField,
 }
 
 fn authorize_docs_url(url: &tauri::Url, effective_port: u16) -> Result<String, CommandError> {
@@ -377,9 +385,11 @@ pub(crate) async fn update_appearance(
     tauri::async_runtime::spawn_blocking(move || {
         let state = task_app.state::<AppState>();
         appearance_save_operation(&task_app, &state, || {
-            state
-                .settings_store
-                .update_appearance(appearance.mode, &appearance.theme_pack)
+            let (mode, theme_pack) = match request.field {
+                AppearanceField::Mode => (Some(appearance.mode), None),
+                AppearanceField::ThemePack => (None, Some(appearance.theme_pack.as_str())),
+            };
+            state.settings_store.update_appearance(mode, theme_pack)
         })?;
         state.appearance.clear_candidate();
         Ok(state.appearance.envelope(&state.settings_store.load()))
@@ -623,13 +633,13 @@ mod tests {
     #[test]
     fn appearance_request_rejects_extra_fields_invalid_modes_and_nonappearance_shape() {
         let valid: AppearanceRequest = serde_json::from_value(json!({
-            "mode": "dark", "themePack": "default", "intent": "persist"
+            "mode": "dark", "themePack": "default", "intent": "persist", "field": "mode"
         }))
         .unwrap();
         assert_eq!(valid.mode, AppearanceMode::Dark);
         for invalid in [
-            json!({ "mode": "sepia", "themePack": "default", "intent": "persist" }),
-            json!({ "mode": "dark", "themePack": "default", "intent": "persist", "preferredPort": 1 }),
+            json!({ "mode": "sepia", "themePack": "default", "intent": "persist", "field": "mode" }),
+            json!({ "mode": "dark", "themePack": "default", "intent": "persist", "field": "mode", "preferredPort": 1 }),
             json!({ "claudeDir": "/tmp", "intent": "persist" }),
         ] {
             assert!(serde_json::from_value::<AppearanceRequest>(invalid).is_err());

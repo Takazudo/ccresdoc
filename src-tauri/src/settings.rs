@@ -376,14 +376,23 @@ impl SettingsStore {
     /// protects against an editor replacing the file between read and rename.
     pub fn update_appearance(
         &self,
-        mode: AppearanceMode,
-        theme_pack: &str,
+        mode: Option<AppearanceMode>,
+        theme_pack: Option<&str>,
     ) -> Result<SaveResult, SaveError> {
-        if !self.supports_theme_pack(theme_pack) {
+        if mode.is_none() && theme_pack.is_none() {
+            return Err(SaveError::Validation(vec![diagnostic(
+                DiagnosticKind::InvalidAppearanceMode,
+                Some("appearance"),
+                "an appearance field is required".into(),
+                true,
+            )]));
+        }
+        if theme_pack.is_some_and(|slug| !self.supports_theme_pack(slug)) {
+            let slug = theme_pack.expect("checked as some");
             return Err(SaveError::Validation(vec![diagnostic(
                 DiagnosticKind::ThemePackUnavailable,
                 Some("appearance.theme_pack"),
-                format!("theme pack '{theme_pack}' is unavailable"),
+                format!("theme pack '{slug}' is unavailable"),
                 true,
             )]));
         }
@@ -404,8 +413,12 @@ impl SettingsStore {
                 LoadStatus::Invalid => return Err(SaveError::LatestNotValid),
             }
             let mut draft = latest.authored.clone();
-            draft.appearance_mode = mode.as_str().into();
-            draft.theme_pack = theme_pack.into();
+            if let Some(mode) = &mode {
+                draft.appearance_mode = mode.as_str().into();
+            }
+            if let Some(theme_pack) = theme_pack {
+                draft.theme_pack = theme_pack.into();
+            }
             match self.save(&draft, latest.revision.as_ref()) {
                 Ok(result) => return Ok(result),
                 Err(error @ SaveError::RevisionConflict { .. }) => last_conflict = Some(error),
@@ -1679,7 +1692,7 @@ mod tests {
             ["default", "paper"],
         );
         let first = store
-            .update_appearance(AppearanceMode::Dark, "paper")
+            .update_appearance(Some(AppearanceMode::Dark), Some("paper"))
             .unwrap();
         assert_eq!(first.impact, ApplyImpact::AppearanceOnly);
         assert_eq!(first.snapshot.authored.appearance_mode, "dark");
@@ -1707,12 +1720,32 @@ mod tests {
             }
         });
         let saved = racing
-            .update_appearance(AppearanceMode::Light, "default")
+            .update_appearance(Some(AppearanceMode::Light), Some("default"))
             .unwrap();
         assert_eq!(saved.snapshot.authored.preferred_port, 6001);
         let final_raw = fs::read_to_string(&path).unwrap();
         assert!(final_raw.contains("future_key = \"keep\""));
         assert!(final_raw.contains("mode = \"light\""));
+    }
+
+    #[test]
+    fn mode_only_quick_update_preserves_unavailable_authored_theme() {
+        let (root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(
+            store.path(),
+            format!(
+                "schema_version = 1\n[source]\nclaude_dir = {:?}\n[appearance]\nmode = \"system\"\ntheme_pack = \"not-installed\"\n[server]\npreferred_port = 4892\nfallback_to_free_port = true\n",
+                root.path().join("home/.claude").to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let result = store
+            .update_appearance(Some(AppearanceMode::Dark), None)
+            .unwrap();
+        assert_eq!(result.snapshot.authored.appearance_mode, "dark");
+        assert_eq!(result.snapshot.authored.theme_pack, "not-installed");
+        assert_eq!(result.snapshot.effective.theme_pack, DEFAULT_THEME_PACK);
     }
 
     #[test]

@@ -4,7 +4,8 @@
   "description": "Narrow bundled Settings window capabilities",
   "windows": ["settings"],
   "permissions": [
-    "core:event:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "allow-get-settings-snapshot",
     "allow-preview-appearance",
     "allow-clear-appearance-preview",
