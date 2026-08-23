@@ -393,6 +393,14 @@ impl ApplyCoordinator {
         }
     }
 
+    pub fn publish_stopped(&self, generation: u64) {
+        let mut state = lock_unpoisoned(&self.state);
+        state.generation = generation;
+        state.active = None;
+        state.phase = RuntimePhase::Stopped;
+        state.fallback_used = false;
+    }
+
     pub fn with_serialized_apply<T>(&self, operation: impl FnOnce() -> T) -> T {
         while self
             .applying

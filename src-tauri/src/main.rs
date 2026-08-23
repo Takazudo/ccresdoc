@@ -24,7 +24,7 @@ pub mod settings;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, thread};
@@ -95,6 +95,9 @@ struct AppState {
     runtime: Arc<runtime::ApplyCoordinator>,
     /// Read by the navigation callback without consulting Tauri state.
     effective_port: Arc<AtomicU16>,
+    /// Set before exit teardown. Publication handshakes with this flag so a
+    /// watcher or child spawned concurrently with exit cannot escape tracking.
+    shutting_down: AtomicBool,
 }
 
 // ── Helpers ───────────────────────────────────────
@@ -600,6 +603,11 @@ fn spawn_zfb_dev(
 /// `WatchHandle`) are taken out of shared state, so whichever exit event fires
 /// first does the work and any later call is a no-op.
 fn teardown(app_handle: &AppHandle, sidecar: &Arc<Mutex<Option<Sidecar>>>, log_path: &str) {
+    let state = app_handle.state::<AppState>();
+    state.shutting_down.store(true, Ordering::SeqCst);
+    let stopped_generation = state.runtime.claim_generation();
+    state.runtime.publish_stopped(stopped_generation);
+    state.effective_port.store(0, Ordering::SeqCst);
     let _ = app_handle
         .state::<AppState>()
         .watch_handle
@@ -924,7 +932,17 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
         }) {
             Ok(handle) => {
                 let state = app_handle.state::<AppState>();
-                *state.watch_handle.lock().unwrap() = Some(handle);
+                let mut slot = state.watch_handle.lock().unwrap();
+                if state.shutting_down.load(Ordering::SeqCst) {
+                    drop(slot);
+                    drop(handle);
+                    log_to(
+                        &log_path,
+                        "launch: dropping watcher created during shutdown",
+                    );
+                    return;
+                }
+                *slot = Some(handle);
                 log_to(&log_path, "launch: watcher started");
             }
             Err(e) => {
@@ -974,7 +992,15 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
             }
         }
         match spawn_zfb_dev(&zfb_bin, &workspace, choice.effective_port, &log_path) {
-            Ok(sidecar) => *sidecar_arc.lock().unwrap() = Some(sidecar),
+            Ok(mut sidecar) => {
+                let mut slot = sidecar_arc.lock().unwrap();
+                if state.shutting_down.load(Ordering::SeqCst) {
+                    drop(slot);
+                    kill_sidecar(&mut sidecar, &log_path);
+                    return;
+                }
+                *slot = Some(sidecar);
+            }
             Err(error) => {
                 log_to(&log_path, &format!("launch: spawn failed: {error}"));
                 result = ReadyResult::SidecarExited { code: None };
@@ -1065,6 +1091,9 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
 
 fn start_launch(app_handle: &AppHandle) {
     let state = app_handle.state::<AppState>();
+    if state.shutting_down.load(Ordering::SeqCst) {
+        return;
+    }
     let generation = state.runtime.claim_generation();
     let authored = state.runtime.snapshot().authored;
     let desired = authored.effective.clone();
@@ -1155,6 +1184,7 @@ fn main() {
         log_path: Mutex::new(String::new()),
         runtime,
         effective_port: effective_port.clone(),
+        shutting_down: AtomicBool::new(false),
     };
     let sidecar_for_exit = app_state.sidecar.clone();
     let navigation_port = effective_port.clone();
