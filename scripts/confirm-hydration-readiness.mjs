@@ -449,8 +449,8 @@ async function assertBrowserSurface(browser, firstReady, samples, workspace) {
     if (state.missingSince !== null) state.missingMs = Math.max(state.missingMs, performance.now() - state.missingSince);
     return state;
   });
-  assert(transition.missingMs <= 100, `pending treatment remained visible for ${transition.missingMs}ms`);
-  assert(transition.missingFrames <= 8, `pending treatment spanned ${transition.missingFrames} animation frames`);
+  assert(transition.missingMs <= 50, `pending treatment remained visible for ${transition.missingMs}ms`);
+  assert(transition.missingFrames <= 3, `pending treatment spanned ${transition.missingFrames} animation frames`);
 
   const postSwapTheme = await page.locator("html").getAttribute("data-theme");
   const postSwapToggle = page.locator('[data-zfb-island="ThemeToggle"] button').first();

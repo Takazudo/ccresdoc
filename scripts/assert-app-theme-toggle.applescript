@@ -59,6 +59,23 @@ tell application "System Events"
     end repeat
     if afterLabel is "" then error "ThemeToggle disappeared after activation"
     if beforeLabel is afterLabel then error "ThemeToggle did not change its mode label after activation"
-    return "ThemeToggle interactive: " & beforeLabel & " -> " & afterLabel
+
+    -- Put the control back in the state this smoke observed on entry so the
+    -- interaction assertion does not leave the user's selected mode flipped.
+    click candidate
+    set restoredLabel to ""
+    repeat with attempt from 1 to 50
+      try
+        set candidate to UI element 1 of UI element 4 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of front window
+        set label to (description of candidate as text)
+        if (role of candidate as text) is "AXButton" and label contains "Switch to " then
+          set restoredLabel to label
+        end if
+      end try
+      if restoredLabel is beforeLabel then exit repeat
+      delay 0.1
+    end repeat
+    if restoredLabel is not beforeLabel then error "ThemeToggle did not restore its initial mode label"
+    return "ThemeToggle interactive: " & beforeLabel & " -> " & afterLabel & " -> " & restoredLabel & " (restored)"
   end tell
 end tell

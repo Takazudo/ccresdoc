@@ -1229,26 +1229,36 @@ mod tests {
     }
 
     #[test]
+    fn module_script_parser_fails_closed_above_the_probe_cap() {
+        let html = (0..=MAX_MODULE_SCRIPT_PROBES)
+            .map(|index| format!("<script type=module src=/assets/islands-{index}.js></script>"))
+            .collect::<String>();
+        let scan = scan_module_scripts(&html, 4892);
+        assert_eq!(scan.paths.len(), MAX_MODULE_SCRIPT_PROBES);
+        assert!(scan.over_probe_cap);
+    }
+
+    #[test]
     fn semantic_readiness_probes_every_module_entry_and_deduplicates_requests() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         let script_requests = Arc::new(AtomicUsize::new(0));
         let script_requests_for_server = script_requests.clone();
         let server = thread::spawn(move || {
-            for _ in 0..4 {
+            for _ in 0..5 {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut request = [0_u8; 4096];
                 let count = stream.read(&mut request).unwrap();
                 let request = String::from_utf8_lossy(&request[..count]);
                 let path = request.split_whitespace().nth(1).unwrap_or_default();
-                if path == "/assets/islands.js" {
+                if matches!(path, "/assets/islands-a.js" | "/assets/islands-b.js") {
                     script_requests_for_server.fetch_add(1, Ordering::SeqCst);
                     write!(stream, "HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n").unwrap();
                     continue;
                 }
                 let body = match path {
                     DOCS_PATH => format!(
-                        "{SHELL_MARKER}<div data-zfb-island><script src=/assets/islands.js type=module><script type='module' src=\"/assets/islands.js\">"
+                        "{SHELL_MARKER}<div data-zfb-island><script src=/assets/islands-a.js type=module><script type='module' src=\"/assets/islands-b.js\"><script type=module src=/assets/islands-a.js>"
                     ),
                     CLAUDE_PATH => {
                         "data-ccresdoc-resource=\"claude\" data-ccresdoc-state=\"disabled\" generation-current"
@@ -1282,7 +1292,7 @@ mod tests {
             ReadinessState::Ready
         );
         server.join().unwrap();
-        assert_eq!(script_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(script_requests.load(Ordering::SeqCst), 2);
     }
 
     #[test]
