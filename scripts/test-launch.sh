@@ -55,10 +55,12 @@ for RUN in $(seq 1 "$COUNT"); do
   # Cold first-run can take ~135s (walking + rendering ~135 skills + site build).
   # A stale staged shell can return 200, so require the generator-owned marker.
   OK=0
+  READY_OBSERVED=0
   for i in $(seq 1 100); do
     sleep 3
     HTTP=$(curl -s -o /tmp/ccresdoc-launch-docs.html -w "%{http_code}" http://localhost:4892/docs/ 2>/dev/null)
     if [ "$HTTP" = "200" ] && grep -Fq "CCResDoc Resources" /tmp/ccresdoc-launch-docs.html; then
+      READY_OBSERVED=1
       OK=1
       echo "  Run $RUN: PASS (ready at $((i*3))s)"
       if [[ "$CHECK_CONTROLS" == "1" && "$RUN" == "1" ]]; then
@@ -78,7 +80,9 @@ for RUN in $(seq 1 "$COUNT"); do
   done
 
   if [ "$OK" = "0" ]; then
-    echo "  Run $RUN: FAIL (server not ready after 300s)"
+    if [ "$READY_OBSERVED" = "0" ]; then
+      echo "  Run $RUN: FAIL (server not ready after 300s)"
+    fi
     FAIL=$((FAIL + 1))
   fi
 done

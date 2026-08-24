@@ -9,29 +9,22 @@ tell application "System Events"
     set frontmost to true
     if (count of windows) = 0 then error "CCResDoc has no window"
     set targetButton to missing value
-    repeat with candidate in (entire contents of front window)
+    -- The sidecar's /docs/ can become ready just before the host navigation
+    -- has published the WebKit AX tree. Wait for that host-owned boundary,
+    -- never for a livereload event.
+    repeat with attempt from 1 to 150
       try
-        if (role of candidate as text) is "AXButton" then
-          set label to ""
-          try
-            set label to (description of candidate as text)
-          end try
-          if label is "" then
-            try
-              set label to (title of candidate as text)
-            end try
-          end if
-          if label is "" then
-            try
-              set label to (name of candidate as text)
-            end try
-          end if
-          if label contains "Switch to " then
-            set targetButton to candidate
-            exit repeat
-          end if
+        -- Tauri wraps WKWebView in two groups and one scroll area. The page's
+        -- first group is the header; its fourth child owns ThemeToggle. This
+        -- bounded path avoids traversing hundreds of generated sidebar nodes.
+        set candidate to UI element 1 of UI element 4 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of front window
+        set label to (description of candidate as text)
+        if (role of candidate as text) is "AXButton" and label contains "Switch to " then
+          set targetButton to candidate
         end if
       end try
+      if targetButton is not missing value then exit repeat
+      delay 0.1
     end repeat
     if targetButton is missing value then error "hydrated ThemeToggle button was not exposed by WebKit"
 
@@ -53,29 +46,16 @@ tell application "System Events"
     delay 0.35
 
     set afterLabel to ""
-    repeat with candidate in (entire contents of front window)
+    repeat with attempt from 1 to 50
       try
-        if (role of candidate as text) is "AXButton" then
-          set label to ""
-          try
-            set label to (description of candidate as text)
-          end try
-          if label is "" then
-            try
-              set label to (title of candidate as text)
-            end try
-          end if
-          if label is "" then
-            try
-              set label to (name of candidate as text)
-            end try
-          end if
-          if label contains "Switch to " then
-            set afterLabel to label
-            exit repeat
-          end if
+        set candidate to UI element 1 of UI element 4 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of front window
+        set label to (description of candidate as text)
+        if (role of candidate as text) is "AXButton" and label contains "Switch to " then
+          set afterLabel to label
         end if
       end try
+      if afterLabel is not "" and afterLabel is not beforeLabel then exit repeat
+      delay 0.1
     end repeat
     if afterLabel is "" then error "ThemeToggle disappeared after activation"
     if beforeLabel is afterLabel then error "ThemeToggle did not change its mode label after activation"
