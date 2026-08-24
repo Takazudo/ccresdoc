@@ -4,16 +4,15 @@
 //!
 //! Runtime is **node-free**: the host resolves a writable app-project, the
 //! native `zfb` binary (NOT the Node-shebang `node_modules/.bin/zfb` wrapper),
-//! and the absolute `~/.claude` path, then:
+//! and the settings-selected Claude/Codex paths, then:
 //!
-//!   1. boots the Wave 2 generator (`ccresdoc_claude_md::generate`) once,
-//!   2. starts the Wave 2 watcher (`::watch`) in-process so edits under
-//!      `~/.claude` regenerate the MDX tree and `zfb dev`'s content-watch HMRs,
-//!   3. selects a settings-driven loopback port and spawns `zfb dev` as a
+//!   1. generates a complete selected-resource candidate outside the served
+//!      tree and journal-promotes only the managed namespaces,
+//!   2. starts exactly the enabled in-process watcher set,
+//!   3. selects a settings-driven loopback port and spawns native `zfb dev` as a
 //!      process-group sidecar,
-//!   4. polls semantic readiness on `/docs/` (scaled for the cold first build
-//!      of ~135 skills) and navigates the WebView there only after generated
-//!      resource navigation is present.
+//!   4. polls the neutral shell plus both selection overviews for the exact
+//!      transition marker before publishing/navigating the runtime.
 //!
 //! On main-window close the sidecar process group is SIGTERM→SIGKILL'd so
 //! nothing is left holding its effective port. Closing Settings only hides it.
@@ -32,13 +31,16 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, thread};
 
-use ccresdoc_claude_md::{Config as GenConfig, WatchEvent, WatchHandle, DEFAULT_DEBOUNCE};
+use ccresdoc_claude_md::{
+    generate_codex, watch_codex, CodexConfig, CodexWatchEvent, CodexWatchHandle,
+    Config as GenConfig, WatchEvent, WatchHandle, DEFAULT_DEBOUNCE,
+};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use runtime::{
     NavigationDecision, PortBoundary, PortChoice, ReadyResult, RuntimeDiagnostic,
-    RuntimeDiagnosticKind, RuntimePhase, SystemPortBoundary,
+    RuntimeDiagnosticKind, SystemPortBoundary,
 };
 use settings::{EffectiveSettings, SettingsStore};
 use settings_window::{
@@ -93,10 +95,37 @@ struct Sidecar {
     child: Child,
 }
 
+struct ResourceWatchers {
+    claude: Option<WatchHandle>,
+    codex: Option<CodexWatchHandle>,
+    /// Serializes coordinator-owned overview publications across both source
+    /// watchers. Detail namespaces remain disjoint and generator-owned.
+    publication: Arc<Mutex<()>>,
+}
+
+struct ResourceRuntime {
+    generation: u64,
+    marker: String,
+    selection: runtime::ResourceSelection,
+    effective: EffectiveSettings,
+    counts: runtime::ResourceCounts,
+    workspace: PathBuf,
+    sidecar: Sidecar,
+    watchers: ResourceWatchers,
+}
+
+#[derive(Debug, Clone)]
+struct PreviousRuntime {
+    marker: String,
+    effective: EffectiveSettings,
+    counts: runtime::ResourceCounts,
+    workspace: PathBuf,
+}
+
 struct AppState {
-    sidecar: Arc<Mutex<Option<Sidecar>>>,
-    /// Kept alive for the process lifetime; dropping it stops the watcher.
-    watch_handle: Mutex<Option<WatchHandle>>,
+    /// Cohesive ownership: a published runtime always owns its exact sidecar,
+    /// selected watcher set, generation marker, workspace, and settings.
+    resources: Arc<Mutex<Option<ResourceRuntime>>>,
     zoom: Mutex<f64>,
     /// Filled in during setup() (app_data_dir/ccresdoc.log).
     log_path: Mutex<String>,
@@ -130,6 +159,18 @@ pub(crate) fn ephemeral_webview_enabled() -> bool {
 
 fn resource_publication_allowed(shutting_down: bool, current: u64, expected: u64) -> bool {
     !shutting_down && current == expected
+}
+
+fn watcher_publication_allowed(app_handle: &AppHandle, expected: u64) -> bool {
+    let state = app_handle.state::<AppState>();
+    if state.shutting_down.load(Ordering::SeqCst) {
+        return false;
+    }
+    let allowed = state.resources.lock().unwrap().as_ref().map_or_else(
+        || state.runtime.generation().load(Ordering::SeqCst) == expected,
+        |runtime| runtime.generation == expected,
+    );
+    allowed
 }
 
 /// The log path resolved in setup(), read out of shared state.
@@ -196,6 +237,7 @@ fn navigate_to_loading(app_handle: &AppHandle) {
 /// path does not exist. macOS ships `cp` at `/bin/cp`; on other Unixes the
 /// layout can differ, so we let `PATH` resolve the bare name. This keeps
 /// current macOS behavior while making the host portable for local dev/CI.
+#[cfg(target_os = "macos")]
 fn tool_command(abs_path: &str, bare_name: &str) -> Command {
     if Path::new(abs_path).exists() {
         Command::new(abs_path)
@@ -649,7 +691,7 @@ fn spawn_zfb_dev(
 /// first does the work and any later call is a no-op.
 fn teardown(
     app_handle: &AppHandle,
-    sidecar: &Arc<Mutex<Option<Sidecar>>>,
+    resources: &Arc<Mutex<Option<ResourceRuntime>>>,
     log_path: &str,
     shutting_down: bool,
 ) {
@@ -659,7 +701,7 @@ fn teardown(
     }
     let stopped_generation = state.runtime.claim_generation();
     state.runtime.publish_stopped(stopped_generation);
-    stop_owned_runtime_resources(app_handle, sidecar, log_path);
+    stop_owned_runtime_resources(app_handle, resources, log_path);
 }
 
 /// `libc::kill(target, sig)` with its return value checked and logged on
@@ -760,15 +802,31 @@ fn kill_sidecar(sidecar: &mut Sidecar, log_path: &str) {
 
 fn stop_owned_runtime_resources(
     app_handle: &AppHandle,
-    sidecar: &Arc<Mutex<Option<Sidecar>>>,
+    resources: &Arc<Mutex<Option<ResourceRuntime>>>,
     log_path: &str,
 ) {
     let state = app_handle.state::<AppState>();
-    let _ = state.watch_handle.lock().unwrap().take();
-    if let Ok(mut slot) = sidecar.lock() {
-        if let Some(mut owned) = slot.take() {
-            kill_sidecar(&mut owned, log_path);
-        }
+    let mut owned = resources.lock().ok().and_then(|mut slot| slot.take());
+    if let Some(ref mut owned) = owned {
+        log_to(
+            log_path,
+            &format!(
+                "stop runtime[{}]: claude={} codex={}",
+                owned.generation, owned.selection.claude, owned.selection.codex
+            ),
+        );
+        // Never hold the resource slot while joining: an in-flight callback
+        // may be completing its final generation ownership check.
+        let watchers = std::mem::replace(
+            &mut owned.watchers,
+            ResourceWatchers {
+                claude: None,
+                codex: None,
+                publication: Arc::new(Mutex::new(())),
+            },
+        );
+        drop(watchers);
+        kill_sidecar(&mut owned.sidecar, log_path);
     }
     state.effective_port.store(0, Ordering::SeqCst);
 }
@@ -847,15 +905,474 @@ fn publish_launch_failure(
     );
 }
 
+#[derive(Debug)]
+struct CandidateTree {
+    root: PathBuf,
+    marker: String,
+    selection: runtime::ResourceSelection,
+    counts: runtime::ResourceCounts,
+}
+
+impl Drop for CandidateTree {
+    fn drop(&mut self) {
+        let _ = runtime::remove_exact(&self.root);
+        if let Some(parent) = self.root.parent() {
+            let _ = fs::remove_dir(parent);
+        }
+    }
+}
+
+fn write_overview(
+    docs_dir: &Path,
+    kind: &str,
+    enabled: bool,
+    categories: &[&str],
+    marker: &str,
+) -> Result<(), String> {
+    let dir = docs_dir.join(kind);
+    fs::create_dir_all(&dir).map_err(|error| format!("create {kind} overview: {error}"))?;
+    fs::write(
+        dir.join("index.mdx"),
+        runtime::overview_mdx(kind, enabled, categories, marker),
+    )
+    .map_err(|error| format!("write {kind} overview: {error}"))
+}
+
+/// Generate a complete selected-resource candidate away from the served docs
+/// tree. Disabled paths are never dereferenced or passed to a generator.
+fn build_candidate(
+    workspace: &Path,
+    desired: &EffectiveSettings,
+    generation: u64,
+    log_path: &str,
+) -> Result<CandidateTree, String> {
+    let selection = runtime::ResourceSelection::from_effective(desired);
+    let marker = runtime::transition_marker(generation)
+        .map_err(|error| format!("create transition marker: {error}"))?;
+    let transitions = workspace.join(".ccresdoc-resource-transitions");
+    let root = transitions.join(format!("candidate-{marker}"));
+    runtime::remove_exact(&root).map_err(|error| format!("clear candidate: {error}"))?;
+    fs::create_dir_all(&root).map_err(|error| format!("create candidate: {error}"))?;
+    let candidate = CandidateTree {
+        root,
+        marker,
+        selection,
+        counts: runtime::ResourceCounts::default(),
+    };
+    let mut candidate = candidate;
+
+    let mut claude_categories = Vec::new();
+    if selection.claude {
+        let source = desired
+            .claude_dir
+            .as_ref()
+            .ok_or_else(|| "Claude is enabled without an effective source".to_string())?;
+        let config = GenConfig {
+            claude_dir: source.clone(),
+            project_root: source.clone(),
+            docs_dir: candidate.root.clone(),
+        };
+        let report = ccresdoc_claude_md::generate(&config)
+            .map_err(|error| format!("Claude candidate generation failed: {error}"))?;
+        candidate.counts.claude_md = report.claude_md;
+        candidate.counts.claude_commands = report.commands;
+        candidate.counts.claude_skills = report.skills;
+        candidate.counts.claude_agents = report.agents;
+        if report.claude_md > 0 {
+            claude_categories.push("claude-md");
+        }
+        if report.commands > 0 {
+            claude_categories.push("claude-commands");
+        }
+        if report.skills > 0 {
+            claude_categories.push("claude-skills");
+        }
+        if report.agents > 0 {
+            claude_categories.push("claude-agents");
+        }
+        log_to(
+            log_path,
+            &format!(
+                "launch[{generation}]: Claude candidate — claude_md={} commands={} skills={} agents={}",
+                report.claude_md, report.commands, report.skills, report.agents
+            ),
+        );
+    }
+
+    let mut codex_categories = Vec::new();
+    if selection.codex {
+        let source = desired
+            .codex_dir
+            .as_ref()
+            .ok_or_else(|| "Codex is enabled without an effective source".to_string())?;
+        let config = CodexConfig {
+            codex_dir: source.clone(),
+            project_root: source.clone(),
+            docs_dir: candidate.root.clone(),
+        };
+        let report = generate_codex(&config)
+            .map_err(|error| format!("Codex candidate generation failed: {error}"))?;
+        candidate.counts.codex_agents_md = report.agents_md;
+        candidate.counts.codex_config = report.config;
+        candidate.counts.codex_agents = report.agents;
+        candidate.counts.codex_hooks = report.hooks;
+        candidate.counts.codex_rules = report.rules;
+        candidate.counts.codex_skills = report.skills;
+        candidate.counts.codex_warnings = report.warnings.len();
+        if report.agents_md > 0 {
+            codex_categories.push("codex-agents-md");
+        }
+        if report.config > 0 {
+            codex_categories.push("codex-config");
+        }
+        if report.agents > 0 {
+            codex_categories.push("codex-agents");
+        }
+        if report.hooks > 0 {
+            codex_categories.push("codex-hooks");
+        }
+        if report.rules > 0 {
+            codex_categories.push("codex-rules");
+        }
+        if report.skills > 0 {
+            codex_categories.push("codex-skills");
+        }
+        log_to(
+            log_path,
+            &format!(
+                "launch[{generation}]: Codex candidate — agents_md={} config={} agents={} hooks={} rules={} skills={} warnings={}",
+                report.agents_md,
+                report.config,
+                report.agents,
+                report.hooks,
+                report.rules,
+                report.skills,
+                report.warnings.len()
+            ),
+        );
+    }
+
+    write_overview(
+        &candidate.root,
+        "claude",
+        selection.claude,
+        &claude_categories,
+        &candidate.marker,
+    )?;
+    write_overview(
+        &candidate.root,
+        "codex",
+        selection.codex,
+        &codex_categories,
+        &candidate.marker,
+    )?;
+    Ok(candidate)
+}
+
+fn start_resource_watchers(
+    app_handle: &AppHandle,
+    desired: &EffectiveSettings,
+    docs_dir: &Path,
+    generation: u64,
+    marker: &str,
+    log_path: &str,
+) -> Result<ResourceWatchers, String> {
+    let mut watchers = ResourceWatchers {
+        claude: None,
+        codex: None,
+        publication: Arc::new(Mutex::new(())),
+    };
+    if desired.claude_resources {
+        let source = desired
+            .claude_dir
+            .as_ref()
+            .ok_or_else(|| "Claude is enabled without an effective source".to_string())?;
+        let callback_app = app_handle.clone();
+        let callback_log = log_path.to_string();
+        let callback_docs = docs_dir.to_path_buf();
+        let callback_marker = marker.to_string();
+        let publication = watchers.publication.clone();
+        watchers.claude = Some(
+            ccresdoc_claude_md::watch(
+                GenConfig {
+                    claude_dir: source.clone(),
+                    project_root: source.clone(),
+                    docs_dir: docs_dir.to_path_buf(),
+                },
+                DEFAULT_DEBOUNCE,
+                move |event| {
+                    if !watcher_publication_allowed(&callback_app, generation) {
+                        return;
+                    }
+                    match event {
+                        WatchEvent::Regenerated(report) => {
+                            let _publication = publication.lock().unwrap();
+                            if !watcher_publication_allowed(&callback_app, generation) {
+                                return;
+                            }
+                            let mut categories = Vec::new();
+                            if report.claude_md > 0 {
+                                categories.push("claude-md");
+                            }
+                            if report.commands > 0 {
+                                categories.push("claude-commands");
+                            }
+                            if report.skills > 0 {
+                                categories.push("claude-skills");
+                            }
+                            if report.agents > 0 {
+                                categories.push("claude-agents");
+                            }
+                            if let Err(error) = write_overview(
+                                &callback_docs,
+                                "claude",
+                                true,
+                                &categories,
+                                &callback_marker,
+                            ) {
+                                log_to(&callback_log, &format!("watch[{generation}]: Claude overview error: {error}"));
+                            }
+                            let counts = {
+                                let state = callback_app.state::<AppState>();
+                                let mut resources = state.resources.lock().unwrap();
+                                resources.as_mut().and_then(|runtime| {
+                                    (runtime.generation == generation).then(|| {
+                                        runtime.counts.claude_md = report.claude_md;
+                                        runtime.counts.claude_commands = report.commands;
+                                        runtime.counts.claude_skills = report.skills;
+                                        runtime.counts.claude_agents = report.agents;
+                                        runtime.counts.clone()
+                                    })
+                                })
+                            };
+                            if let Some(counts) = counts {
+                                callback_app
+                                    .state::<AppState>()
+                                    .runtime
+                                    .publish_generated(counts, generation);
+                            }
+                            log_to(&callback_log, &format!(
+                                "watch[{generation}]: Claude regenerated — claude_md={} commands={} skills={} agents={}",
+                                report.claude_md, report.commands, report.skills, report.agents
+                            ));
+                        }
+                        WatchEvent::Error(error) => log_to(
+                            &callback_log,
+                            &format!("watch[{generation}]: Claude error: {error}"),
+                        ),
+                    }
+                },
+            )
+            .map_err(|error| format!("start Claude watcher: {error}"))?,
+        );
+    }
+    if desired.codex_resources {
+        let source = desired
+            .codex_dir
+            .as_ref()
+            .ok_or_else(|| "Codex is enabled without an effective source".to_string())?;
+        let callback_app = app_handle.clone();
+        let callback_log = log_path.to_string();
+        let callback_docs = docs_dir.to_path_buf();
+        let callback_marker = marker.to_string();
+        let publication = watchers.publication.clone();
+        watchers.codex = Some(
+            watch_codex(
+                CodexConfig {
+                    codex_dir: source.clone(),
+                    project_root: source.clone(),
+                    docs_dir: docs_dir.to_path_buf(),
+                },
+                DEFAULT_DEBOUNCE,
+                move |event| {
+                    if !watcher_publication_allowed(&callback_app, generation) {
+                        return;
+                    }
+                    match event {
+                        CodexWatchEvent::Regenerated(report) => {
+                            let _publication = publication.lock().unwrap();
+                            if !watcher_publication_allowed(&callback_app, generation) {
+                                return;
+                            }
+                            let mut categories = Vec::new();
+                            if report.agents_md > 0 {
+                                categories.push("codex-agents-md");
+                            }
+                            if report.config > 0 {
+                                categories.push("codex-config");
+                            }
+                            if report.agents > 0 {
+                                categories.push("codex-agents");
+                            }
+                            if report.hooks > 0 {
+                                categories.push("codex-hooks");
+                            }
+                            if report.rules > 0 {
+                                categories.push("codex-rules");
+                            }
+                            if report.skills > 0 {
+                                categories.push("codex-skills");
+                            }
+                            if let Err(error) = write_overview(
+                                &callback_docs,
+                                "codex",
+                                true,
+                                &categories,
+                                &callback_marker,
+                            ) {
+                                log_to(&callback_log, &format!("watch[{generation}]: Codex overview error: {error}"));
+                            }
+                            let counts = {
+                                let state = callback_app.state::<AppState>();
+                                let mut resources = state.resources.lock().unwrap();
+                                resources.as_mut().and_then(|runtime| {
+                                    (runtime.generation == generation).then(|| {
+                                        runtime.counts.codex_agents_md = report.agents_md;
+                                        runtime.counts.codex_config = report.config;
+                                        runtime.counts.codex_agents = report.agents;
+                                        runtime.counts.codex_hooks = report.hooks;
+                                        runtime.counts.codex_rules = report.rules;
+                                        runtime.counts.codex_skills = report.skills;
+                                        runtime.counts.codex_warnings = report.warnings.len();
+                                        runtime.counts.clone()
+                                    })
+                                })
+                            };
+                            if let Some(counts) = counts {
+                                callback_app
+                                    .state::<AppState>()
+                                    .runtime
+                                    .publish_generated(counts, generation);
+                            }
+                            log_to(&callback_log, &format!(
+                                "watch[{generation}]: Codex regenerated — agents_md={} config={} agents={} hooks={} rules={} skills={} warnings={}",
+                                report.agents_md,
+                                report.config,
+                                report.agents,
+                                report.hooks,
+                                report.rules,
+                                report.skills,
+                                report.warnings.len()
+                            ));
+                        }
+                        CodexWatchEvent::Error { source, error } => log_to(
+                            &callback_log,
+                            &format!("watch[{generation}]: Codex {source:?} error: {error}"),
+                        ),
+                    }
+                },
+            )
+            .map_err(|error| format!("start Codex watcher: {error}"))?,
+        );
+    }
+    Ok(watchers)
+}
+
+fn relaunch_previous_runtime(
+    app_handle: &AppHandle,
+    previous: PreviousRuntime,
+    generation: u64,
+    log_path: &str,
+) -> Result<(ResourceRuntime, PortChoice), String> {
+    let docs_dir = previous.workspace.join("src").join("content").join("docs");
+    let selection = runtime::ResourceSelection::from_effective(&previous.effective);
+    let watchers = start_resource_watchers(
+        app_handle,
+        &previous.effective,
+        &docs_dir,
+        generation,
+        &previous.marker,
+        log_path,
+    )?;
+    let zfb_bin = resolve_zfb_binary(&previous.workspace)?;
+    let port = previous.effective.effective_port;
+    let mut sidecar = match spawn_zfb_dev(&zfb_bin, &previous.workspace, port, log_path) {
+        Ok(sidecar) => sidecar,
+        Err(error) => {
+            drop(watchers);
+            return Err(error);
+        }
+    };
+    let state = app_handle.state::<AppState>();
+    let ready = runtime::wait_for_ready(
+        port,
+        READY_TIMEOUT,
+        (state.runtime.generation(), generation),
+        || match sidecar.child.try_wait() {
+            Ok(Some(status)) => Some(status.code()),
+            _ => None,
+        },
+        |port| {
+            runtime::probe_resource_readiness(
+                port,
+                selection,
+                &previous.marker,
+                Duration::from_secs(1),
+            )
+        },
+    );
+    if ready != ReadyResult::Ready {
+        drop(watchers);
+        kill_sidecar(&mut sidecar, log_path);
+        return Err(format!("restored runtime readiness failed: {ready:?}"));
+    }
+    let choice = PortChoice {
+        preferred_port: previous.effective.preferred_port,
+        effective_port: port,
+        fallback_used: previous.effective.preferred_port != port,
+    };
+    Ok((
+        ResourceRuntime {
+            generation,
+            marker: previous.marker,
+            selection,
+            effective: previous.effective,
+            counts: previous.counts,
+            workspace: previous.workspace,
+            sidecar,
+            watchers,
+        },
+        choice,
+    ))
+}
+
+fn recover_previous_runtime(
+    app_handle: &AppHandle,
+    resources: &Arc<Mutex<Option<ResourceRuntime>>>,
+    previous: Option<PreviousRuntime>,
+    generation: u64,
+    log_path: &str,
+) -> Result<(), String> {
+    let previous = previous.ok_or_else(|| "no previous active runtime".to_string())?;
+    let active = previous.effective.clone();
+    let counts = previous.counts.clone();
+    let (runtime, choice) = relaunch_previous_runtime(app_handle, previous, generation, log_path)?;
+    app_handle
+        .state::<AppState>()
+        .effective_port
+        .store(choice.effective_port, Ordering::SeqCst);
+    *resources.lock().unwrap() = Some(runtime);
+    app_handle
+        .state::<AppState>()
+        .runtime
+        .publish_ready(active, choice, generation);
+    app_handle
+        .state::<AppState>()
+        .runtime
+        .publish_generated(counts, generation);
+    Ok(())
+}
+
 /// The full node-free boot, runnable from initial setup, Refresh, and Retry.
-/// Resolves workspace + zfb binary + `~/.claude`, runs `generate()`
-/// once, starts `watch()`, spawns `zfb dev`, polls readiness, then navigates.
+/// Resolves workspace + zfb binary, builds/promotes the selected candidate,
+/// starts its exact watcher set, spawns `zfb dev`, polls readiness, then
+/// publishes and navigates.
 ///
 /// The runtime coordinator's generation guards against stale terminal work,
 /// while its serialized apply lease prevents interleaved replacement.
-fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow_recovery: bool) {
+fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
     let log_path = log_path(app_handle);
-    let sidecar_arc = app_handle.state::<AppState>().sidecar.clone();
+    let resources_arc = app_handle.state::<AppState>().resources.clone();
     let state = app_handle.state::<AppState>();
 
     if !launch_is_current(app_handle, my_gen) {
@@ -907,24 +1424,7 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
         }
     };
 
-    // 3. Use the normalized source from the typed settings snapshot.
-    let claude = desired.claude_dir.clone();
-    if !claude.exists() {
-        let message = format!("source directory is unavailable: {}", claude.display());
-        log_to(&log_path, &format!("launch: {message}"));
-        publish_launch_failure(
-            &state,
-            my_gen,
-            &desired,
-            RuntimeDiagnosticKind::SourceUnavailable,
-            None,
-            message,
-        );
-        emit_launch_error_if_current(app_handle, my_gen, "claude_dir_missing");
-        return;
-    }
-
-    // Select before disturbing the previous working runtime whenever the
+    // 3. Select before disturbing the previous working runtime whenever the
     // requested port is not the port owned by that runtime.
     let previous = state.runtime.snapshot().active;
     let mut ports = SystemPortBoundary;
@@ -963,38 +1463,23 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
         }
     };
 
-    // 4. Boot the Wave 2 generator once. The old watcher/server remain alive
-    // until this succeeds, preserving the previous working runtime.
-    //    docs_dir is the workspace's zudo-doc content root.
-    let gen_config = GenConfig {
-        claude_dir: claude.clone(),
-        project_root: claude.clone(),
-        docs_dir: workspace.join("src").join("content").join("docs"),
-    };
-
-    match ccresdoc_claude_md::generate(&gen_config) {
-        Ok(report) => log_to(
-            &log_path,
-            &format!(
-                "launch: generate ok — claude_md={} commands={} skills={} agents={}",
-                report.claude_md, report.commands, report.skills, report.agents
-            ),
-        ),
-        Err(e) => {
-            log_to(&log_path, &format!("launch: generate failed: {e}"));
-            state.runtime.publish_failed(
-                RuntimeDiagnostic {
-                    kind: RuntimeDiagnosticKind::GenerateFailed,
-                    preferred_port: desired.preferred_port,
-                    attempted_port: None,
-                    message: e.to_string(),
-                },
+    // 4. Build the entire four-state candidate outside the served tree. This
+    // is the only point at which selected sources are inspected.
+    let candidate = match build_candidate(&workspace, &desired, my_gen, &log_path) {
+        Ok(candidate) => candidate,
+        Err(error) => {
+            publish_launch_failure(
+                &state,
                 my_gen,
+                &desired,
+                RuntimeDiagnosticKind::GenerateFailed,
+                None,
+                error,
             );
             emit_launch_error_if_current(app_handle, my_gen, "generate_failed");
             return;
         }
-    }
+    };
 
     if !launch_is_current(app_handle, my_gen) {
         log_to(
@@ -1004,72 +1489,110 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
         return;
     }
 
-    // The replacement transition begins here. Drop only app-owned resources;
-    // no port-owner discovery or signalling is permitted.
-    let _ = state.watch_handle.lock().unwrap().take();
-    let mut old_sidecar = sidecar_arc.lock().unwrap().take();
-    if let Some(ref mut old) = old_sidecar {
-        kill_sidecar(old, &log_path);
+    // 5. Cutover begins here. Capture metadata, then synchronously stop/join
+    // only the cohesive app-owned watcher/sidecar set.
+    let previous_runtime = resources_arc.lock().unwrap().take();
+    let previous_metadata = previous_runtime.as_ref().map(|runtime| PreviousRuntime {
+        marker: runtime.marker.clone(),
+        // The settings snapshot is authoritative for restart-free appearance
+        // changes; the owned runtime retains the source/port identity.
+        effective: previous
+            .clone()
+            .unwrap_or_else(|| runtime.effective.clone()),
+        counts: runtime.counts.clone(),
+        workspace: runtime.workspace.clone(),
+    });
+    if let Some(mut old) = previous_runtime {
+        drop(old.watchers);
+        kill_sidecar(&mut old.sidecar, &log_path);
     }
     state.effective_port.store(0, Ordering::SeqCst);
 
-    // Start the watcher; keep its handle in AppState so it lives for the
-    // process lifetime.
-    {
-        let watch_log = log_path.clone();
-        match ccresdoc_claude_md::watch(gen_config, DEFAULT_DEBOUNCE, move |event| match event {
-            WatchEvent::Regenerated(report) => log_to(
-                &watch_log,
-                &format!(
-                    "watch: regenerated — claude_md={} commands={} skills={} agents={}",
-                    report.claude_md, report.commands, report.skills, report.agents
-                ),
-            ),
-            WatchEvent::Error(e) => log_to(&watch_log, &format!("watch: regeneration error: {e}")),
-        }) {
-            Ok(handle) => {
-                let state = app_handle.state::<AppState>();
-                let mut slot = state.watch_handle.lock().unwrap();
-                if !resource_publication_allowed(
-                    state.shutting_down.load(Ordering::SeqCst),
-                    state.runtime.generation().load(Ordering::SeqCst),
-                    my_gen,
-                ) {
-                    drop(slot);
-                    drop(handle);
-                    log_to(
+    let docs_dir = workspace.join("src").join("content").join("docs");
+    let backup_dir = workspace
+        .join(".ccresdoc-resource-transitions")
+        .join(format!("backup-{}", candidate.marker));
+    let journal =
+        match runtime::ManagedTreeJournal::promote(&docs_dir, &candidate.root, &backup_dir) {
+            Ok(journal) => journal,
+            Err(error) => {
+                let mut diagnostic = RuntimeDiagnostic {
+                    kind: RuntimeDiagnosticKind::PromotionFailed,
+                    preferred_port: desired.preferred_port,
+                    attempted_port: None,
+                    message: format!("candidate promotion/restore failed: {error}"),
+                };
+                if previous_metadata.is_some() {
+                    if let Err(relaunch) = recover_previous_runtime(
+                        app_handle,
+                        &resources_arc,
+                        previous_metadata,
+                        my_gen,
                         &log_path,
-                        "launch: dropping watcher created after shutdown or supersession",
-                    );
-                    return;
+                    ) {
+                        diagnostic.kind = RuntimeDiagnosticKind::RelaunchFailed;
+                        diagnostic
+                            .message
+                            .push_str(&format!("; previous relaunch failed: {relaunch}"));
+                        state.runtime.clear_active(my_gen);
+                    }
+                } else {
+                    state.runtime.clear_active(my_gen);
                 }
-                *slot = Some(handle);
-                log_to(&log_path, "launch: watcher started");
+                state.runtime.publish_failed(diagnostic, my_gen);
+                emit_launch_error_if_current(app_handle, my_gen, "promotion_failed");
+                return;
             }
-            Err(e) => {
-                // Non-fatal: one-shot content is already on disk, so the site
-                // still serves; only live updates are lost.
-                log_to(
-                    &log_path,
-                    &format!("launch: watch failed (continuing without live updates): {e}"),
-                );
-            }
-        }
-    }
+        };
 
-    if !launch_is_current(app_handle, my_gen) {
-        log_to(
-            &log_path,
-            &format!("launch[{my_gen}]: superseded after watcher setup"),
-        );
-        stop_owned_runtime_resources(app_handle, &sidecar_arc, &log_path);
-        return;
-    }
+    // Enabled watcher startup is part of activation. A partial second-watcher
+    // failure drops/joins the first before the tree journal is rolled back.
+    let watchers = match start_resource_watchers(
+        app_handle,
+        &desired,
+        &docs_dir,
+        my_gen,
+        &candidate.marker,
+        &log_path,
+    ) {
+        Ok(watchers) => watchers,
+        Err(error) => {
+            let rollback = journal.rollback();
+            let mut kind = RuntimeDiagnosticKind::WatchFailed;
+            let mut message = match rollback {
+                Ok(()) => error,
+                Err(restore) => {
+                    kind = RuntimeDiagnosticKind::RestoreFailed;
+                    format!("{error}; restore failed: {restore}")
+                }
+            };
+            if kind != RuntimeDiagnosticKind::RestoreFailed && previous_metadata.is_some() {
+                if let Err(relaunch) = recover_previous_runtime(
+                    app_handle,
+                    &resources_arc,
+                    previous_metadata,
+                    my_gen,
+                    &log_path,
+                ) {
+                    kind = RuntimeDiagnosticKind::RelaunchFailed;
+                    message.push_str(&format!("; previous relaunch failed: {relaunch}"));
+                    state.runtime.clear_active(my_gen);
+                }
+            } else if kind == RuntimeDiagnosticKind::RestoreFailed {
+                state.runtime.clear_active(my_gen);
+            }
+            publish_launch_failure(&state, my_gen, &desired, kind, None, message);
+            emit_launch_error_if_current(app_handle, my_gen, "watch_failed");
+            return;
+        }
+    };
 
     // 5/6. Spawn and probe. If the released preflight socket was stolen,
     // retry with a fresh OS-assigned loopback candidate, boundedly.
     let mut result = ReadyResult::Timeout;
+    let mut candidate_sidecar = None;
     let mut bind_retry_exhausted = false;
+    let mut spawn_failure = None;
     for attempt in 0..runtime::MAX_BIND_ATTEMPTS {
         if attempt > 0 {
             match runtime::choose_port(&mut ports, desired.preferred_port, true) {
@@ -1094,22 +1617,10 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
             }
         }
         match spawn_zfb_dev(&zfb_bin, &workspace, choice.effective_port, &log_path) {
-            Ok(mut sidecar) => {
-                let mut slot = sidecar_arc.lock().unwrap();
-                if !resource_publication_allowed(
-                    state.shutting_down.load(Ordering::SeqCst),
-                    state.runtime.generation().load(Ordering::SeqCst),
-                    my_gen,
-                ) {
-                    drop(slot);
-                    kill_sidecar(&mut sidecar, &log_path);
-                    let _ = state.watch_handle.lock().unwrap().take();
-                    return;
-                }
-                *slot = Some(sidecar);
-            }
+            Ok(sidecar) => candidate_sidecar = Some(sidecar),
             Err(error) => {
                 log_to(&log_path, &format!("launch: spawn failed: {error}"));
+                spawn_failure = Some(error);
                 result = ReadyResult::SidecarExited { code: None };
                 break;
             }
@@ -1119,17 +1630,20 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
             READY_TIMEOUT,
             (state.runtime.generation(), my_gen),
             || {
-                let mut guard = sidecar_arc.lock().unwrap();
-                guard
+                candidate_sidecar
                     .as_mut()
                     .and_then(|sidecar| match sidecar.child.try_wait() {
                         Ok(Some(status)) => Some(status.code()),
                         _ => None,
                     })
             },
-            |port| match runtime::probe_docs(port, Duration::from_secs(1)) {
-                Ok((status, body)) => runtime::classify_readiness(status, &body),
-                Err(_) => runtime::ReadinessState::HttpUnavailable,
+            |port| {
+                runtime::probe_resource_readiness(
+                    port,
+                    candidate.selection,
+                    &candidate.marker,
+                    Duration::from_secs(1),
+                )
             },
         );
         if result != (ReadyResult::SidecarExited { code: None })
@@ -1137,7 +1651,9 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
         {
             break;
         }
-        let _ = sidecar_arc.lock().unwrap().take();
+        if let Some(mut sidecar) = candidate_sidecar.take() {
+            kill_sidecar(&mut sidecar, &log_path);
+        }
         if !desired.fallback_to_free_port
             || ports.is_available(choice.effective_port).unwrap_or(true)
         {
@@ -1152,46 +1668,133 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
             &log_path,
             "launch: superseded by a newer launch — skipping navigate/emit",
         );
-        stop_owned_runtime_resources(app_handle, &sidecar_arc, &log_path);
+        drop(watchers);
+        if let Some(mut sidecar) = candidate_sidecar {
+            kill_sidecar(&mut sidecar, &log_path);
+        }
+        match journal.rollback() {
+            Err(error) => log_to(
+                &log_path,
+                &format!("launch: supersession restore failed: {error}"),
+            ),
+            Ok(()) if !state.shutting_down.load(Ordering::SeqCst) => {
+                let handoff_generation = state.runtime.generation().load(Ordering::SeqCst);
+                if previous_metadata.is_some() {
+                    if let Err(error) = recover_previous_runtime(
+                        app_handle,
+                        &resources_arc,
+                        previous_metadata,
+                        handoff_generation,
+                        &log_path,
+                    ) {
+                        log_to(
+                            &log_path,
+                            &format!("launch: supersession relaunch failed: {error}"),
+                        );
+                        state.runtime.clear_active(handoff_generation);
+                    }
+                }
+            }
+            Ok(()) => {}
+        }
         return;
     }
 
     match result {
         ReadyResult::Ready => {
+            let sidecar = candidate_sidecar.expect("ready sidecar remains owned");
+            if !resource_publication_allowed(
+                state.shutting_down.load(Ordering::SeqCst),
+                state.runtime.generation().load(Ordering::SeqCst),
+                my_gen,
+            ) {
+                drop(watchers);
+                let mut sidecar = sidecar;
+                kill_sidecar(&mut sidecar, &log_path);
+                let _ = journal.rollback();
+                return;
+            }
+            let marker = candidate.marker.clone();
+            let mut active_effective = desired.clone();
+            active_effective.effective_port = choice.effective_port;
+            *resources_arc.lock().unwrap() = Some(ResourceRuntime {
+                generation: my_gen,
+                marker,
+                selection: candidate.selection,
+                effective: active_effective,
+                counts: candidate.counts.clone(),
+                workspace: workspace.clone(),
+                sidecar,
+                watchers,
+            });
             state
                 .effective_port
                 .store(choice.effective_port, Ordering::SeqCst);
             state.runtime.publish_ready(desired, choice, my_gen);
+            state
+                .runtime
+                .publish_generated(candidate.counts.clone(), my_gen);
+            if let Err(error) = journal.commit() {
+                log_to(
+                    &log_path,
+                    &format!("launch: backup cleanup failed: {error}"),
+                );
+            }
             navigate_to_docs(app_handle)
         }
         ReadyResult::Timeout | ReadyResult::SidecarExited { .. } => {
-            let kind = if bind_retry_exhausted {
+            drop(watchers);
+            if let Some(mut sidecar) = candidate_sidecar {
+                kill_sidecar(&mut sidecar, &log_path);
+            }
+            let kind = if spawn_failure.is_some() {
+                RuntimeDiagnosticKind::SpawnFailed
+            } else if bind_retry_exhausted {
                 RuntimeDiagnosticKind::BindRetryExhausted
             } else if matches!(result, ReadyResult::Timeout) {
                 RuntimeDiagnosticKind::Timeout
             } else {
                 RuntimeDiagnosticKind::SidecarExited
             };
-            let diagnostic = RuntimeDiagnostic {
+            let mut diagnostic = RuntimeDiagnostic {
                 kind,
                 preferred_port: desired.preferred_port,
                 attempted_port: Some(choice.effective_port),
-                message: format!("{result:?}"),
+                message: spawn_failure
+                    .clone()
+                    .unwrap_or_else(|| format!("{result:?}")),
             };
-            // A failure after replacement began has stopped the previous
-            // process. Restore that exact effective runtime when possible;
-            // then re-publish the new authored settings as saved-not-active.
-            if let Some(previous) = previous.filter(|_| allow_recovery) {
-                log_to(&log_path, "launch: attempting previous-runtime recovery");
-                launch(app_handle, my_gen, previous, false);
-                if state.runtime.snapshot().phase != RuntimePhase::Ready {
-                    state.runtime.clear_active(my_gen);
-                }
-            } else if !allow_recovery {
+            let restore_result = journal.rollback();
+            let had_previous = previous_metadata.is_some();
+            let recovery = match restore_result {
+                Ok(()) if had_previous => recover_previous_runtime(
+                    app_handle,
+                    &resources_arc,
+                    previous_metadata,
+                    my_gen,
+                    &log_path,
+                ),
+                Ok(()) => Ok(()),
+                Err(error) => Err(format!("managed-tree restore failed: {error}")),
+            };
+            if let Err(error) = recovery {
+                log_to(&log_path, &format!("launch: recovery failed: {error}"));
+                diagnostic.kind = if error.starts_with("managed-tree restore failed") {
+                    RuntimeDiagnosticKind::RestoreFailed
+                } else {
+                    RuntimeDiagnosticKind::RelaunchFailed
+                };
+                diagnostic.message.push_str(&format!("; {error}"));
+                state.runtime.clear_active(my_gen);
+            } else if !had_previous {
                 state.runtime.clear_active(my_gen);
             }
             state.runtime.publish_failed(diagnostic, my_gen);
-            emit_launch_error(app_handle, &result);
+            if spawn_failure.is_some() {
+                emit_launch_error_if_current(app_handle, my_gen, "spawn_failed");
+            } else {
+                emit_launch_error(app_handle, &result);
+            }
         }
         ReadyResult::Superseded => {}
     }
@@ -1209,7 +1812,7 @@ fn start_launch(app_handle: &AppHandle) {
     let coordinator = state.runtime.clone();
     let handle = app_handle.clone();
     thread::spawn(move || {
-        coordinator.with_serialized_apply(|| launch(&handle, generation, desired, true))
+        coordinator.with_serialized_apply(|| launch(&handle, generation, desired))
     });
 }
 
@@ -1299,8 +1902,7 @@ fn main() {
     let runtime = Arc::new(runtime::ApplyCoordinator::new(settings_snapshot));
     let effective_port = Arc::new(AtomicU16::new(0));
     let app_state = AppState {
-        sidecar: Arc::new(Mutex::new(None)),
-        watch_handle: Mutex::new(None),
+        resources: Arc::new(Mutex::new(None)),
         zoom: Mutex::new(1.0),
         log_path: Mutex::new(String::new()),
         runtime,
@@ -1309,7 +1911,7 @@ fn main() {
         effective_port: effective_port.clone(),
         shutting_down: AtomicBool::new(false),
     };
-    let sidecar_for_exit = app_state.sidecar.clone();
+    let resources_for_exit = app_state.resources.clone();
     let navigation_port = effective_port.clone();
     #[cfg(target_os = "macos")]
     let reopen_navigation_port = navigation_port.clone();
@@ -1510,11 +2112,11 @@ fn main() {
                 }
                 LifecycleAction::StopForMainClose => {
                     let log_path = log_path(app_handle);
-                    teardown(app_handle, &sidecar_for_exit, &log_path, false);
+                    teardown(app_handle, &resources_for_exit, &log_path, false);
                 }
                 LifecycleAction::Shutdown => {
                     let log_path = log_path(app_handle);
-                    teardown(app_handle, &sidecar_for_exit, &log_path, true);
+                    teardown(app_handle, &resources_for_exit, &log_path, true);
                 }
                 LifecycleAction::ReopenMain => {
                     #[cfg(target_os = "macos")]
@@ -1533,7 +2135,7 @@ fn main() {
                         match create_main_window(app_handle, reopen_navigation_port.clone(), seed) {
                             Ok(()) => {
                                 if app_handle.state::<AppState>().runtime.snapshot().phase
-                                    == RuntimePhase::Ready
+                                    == runtime::RuntimePhase::Ready
                                 {
                                     navigate_fresh_main_to_docs(app_handle);
                                 } else {
@@ -1596,6 +2198,104 @@ mod tests {
         );
         let url: Result<tauri::Url, _> = docs_url.parse();
         assert!(url.is_ok(), "docs_url should parse: {docs_url}");
+    }
+
+    #[test]
+    fn candidate_generation_covers_four_states_without_touching_live_tree() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace = temp.path().join("workspace");
+        let live_docs = workspace.join("src/content/docs");
+        fs::create_dir_all(&live_docs).unwrap();
+        fs::write(live_docs.join("foreign.mdx"), "served-before-cutover").unwrap();
+        let claude = temp.path().join("claude");
+        let codex = temp.path().join("codex");
+        fs::create_dir_all(&claude).unwrap();
+        fs::create_dir_all(&codex).unwrap();
+        fs::write(claude.join("CLAUDE.md"), "# Claude").unwrap();
+        fs::write(codex.join("AGENTS.md"), "# Codex").unwrap();
+
+        for (generation, claude_enabled, codex_enabled) in [
+            (1, false, false),
+            (2, true, false),
+            (3, false, true),
+            (4, true, true),
+        ] {
+            let effective = EffectiveSettings {
+                claude_resources: claude_enabled,
+                codex_resources: codex_enabled,
+                claude_dir: claude_enabled.then(|| claude.clone()),
+                codex_dir: codex_enabled.then(|| codex.clone()),
+                appearance_mode: settings::AppearanceMode::System,
+                theme_pack: "default".into(),
+                preferred_port: settings::DEFAULT_PORT,
+                effective_port: settings::DEFAULT_PORT,
+                fallback_to_free_port: true,
+            };
+            let candidate = build_candidate(&workspace, &effective, generation, "").unwrap();
+            assert_eq!(candidate.root.join("claude-md").exists(), claude_enabled);
+            assert_eq!(
+                candidate.root.join("codex-agents-md").exists(),
+                codex_enabled
+            );
+            assert_eq!(candidate.counts.claude_md > 0, claude_enabled);
+            assert_eq!(candidate.counts.codex_agents_md > 0, codex_enabled);
+            let claude_overview =
+                fs::read_to_string(candidate.root.join("claude/index.mdx")).unwrap();
+            let codex_overview =
+                fs::read_to_string(candidate.root.join("codex/index.mdx")).unwrap();
+            assert!(claude_overview.contains(if claude_enabled {
+                "data-ccresdoc-state=\"enabled\""
+            } else {
+                "data-ccresdoc-state=\"disabled\""
+            }));
+            assert!(codex_overview.contains(if codex_enabled {
+                "data-ccresdoc-state=\"enabled\""
+            } else {
+                "data-ccresdoc-state=\"disabled\""
+            }));
+            assert!(claude_overview.contains(&candidate.marker));
+            assert!(codex_overview.contains(&candidate.marker));
+            assert_eq!(
+                fs::read_to_string(live_docs.join("foreign.mdx")).unwrap(),
+                "served-before-cutover"
+            );
+        }
+    }
+
+    #[test]
+    fn partial_second_generator_failure_discards_candidate_and_preserves_live_tree() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace = temp.path().join("workspace");
+        let live_docs = workspace.join("src/content/docs");
+        let claude = temp.path().join("claude");
+        fs::create_dir_all(&live_docs).unwrap();
+        fs::create_dir_all(&claude).unwrap();
+        fs::write(claude.join("CLAUDE.md"), "# generated first").unwrap();
+        fs::write(live_docs.join("served.mdx"), "previous").unwrap();
+        let effective = EffectiveSettings {
+            claude_resources: true,
+            codex_resources: true,
+            claude_dir: Some(claude),
+            // The candidate is below workspace, so Codex rejects this source
+            // before walking it under the source↔docs ancestry contract.
+            codex_dir: Some(workspace.clone()),
+            appearance_mode: settings::AppearanceMode::System,
+            theme_pack: "default".into(),
+            preferred_port: settings::DEFAULT_PORT,
+            effective_port: settings::DEFAULT_PORT,
+            fallback_to_free_port: true,
+        };
+        let error = build_candidate(&workspace, &effective, 9, "").unwrap_err();
+        assert!(error.contains("Codex candidate generation failed"));
+        assert_eq!(
+            fs::read_to_string(live_docs.join("served.mdx")).unwrap(),
+            "previous"
+        );
+        let transitions = workspace.join(".ccresdoc-resource-transitions");
+        assert!(
+            !transitions.exists() || fs::read_dir(&transitions).unwrap().next().is_none(),
+            "failed candidate should be cleaned exactly"
+        );
     }
 
     #[test]
