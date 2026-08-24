@@ -9,7 +9,14 @@ use crate::settings::{
     ApplyImpact, ContentRevision, EffectiveSettings, SaveError, SettingsDraft, SettingsSnapshot,
     SettingsStore,
 };
+use html5ever::tendril::StrTendril;
+use html5ever::tokenizer::{
+    BufferQueue, Tag, TagKind, TagToken, Token, TokenSink, TokenSinkResult, Tokenizer,
+    TokenizerOpts,
+};
+use html5ever::{local_name, ns};
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -24,6 +31,11 @@ pub const SHELL_MARKER: &str = "CCResDoc";
 pub const CLAUDE_PATH: &str = "/docs/claude/";
 pub const CODEX_PATH: &str = "/docs/codex/";
 pub const MAX_BIND_ATTEMPTS: usize = 4;
+/// A generated docs shell normally has one islands entry. Keep readiness
+/// bounded even if a broken response contains a pathological number of
+/// module scripts; an over-cap response remains stale until the next poll.
+pub const MAX_MODULE_SCRIPT_PROBES: usize = 16;
+const MAX_STATUS_LINE_BYTES: usize = 8 * 1024;
 
 pub const CLAUDE_NAMESPACES: &[&str] = &[
     "claude",
@@ -478,6 +490,126 @@ pub fn classify_readiness(status: u16, body: &str, marker: &str) -> ReadinessSta
     }
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ModuleScriptScan {
+    paths: Vec<String>,
+    has_island_markers: bool,
+    over_probe_cap: bool,
+}
+
+struct ModuleScriptSink {
+    scan: RefCell<ModuleScriptScan>,
+    port: u16,
+}
+
+fn html_attribute<'a>(tag: &'a Tag, wanted: &str) -> Option<&'a str> {
+    tag.attrs
+        .iter()
+        .find(|attribute| {
+            attribute.name.ns == *ns!()
+                && attribute
+                    .name
+                    .local
+                    .to_string()
+                    .eq_ignore_ascii_case(wanted)
+        })
+        .map(|attribute| attribute.value.as_ref())
+}
+
+impl TokenSink for ModuleScriptSink {
+    type Handle = ();
+
+    fn process_token(&self, token: Token, _line_number: u64) -> TokenSinkResult<()> {
+        let TagToken(tag) = token else {
+            return TokenSinkResult::Continue;
+        };
+        if tag.kind != TagKind::StartTag {
+            return TokenSinkResult::Continue;
+        }
+
+        let mut scan = self.scan.borrow_mut();
+        if tag.attrs.iter().any(|attribute| {
+            attribute.name.ns == *ns!()
+                && (attribute
+                    .name
+                    .local
+                    .to_string()
+                    .eq_ignore_ascii_case("data-zfb-island")
+                    || attribute
+                        .name
+                        .local
+                        .to_string()
+                        .eq_ignore_ascii_case("data-zfb-island-skip-ssr"))
+        }) {
+            scan.has_island_markers = true;
+        }
+
+        if tag.name != local_name!("script") {
+            return TokenSinkResult::Continue;
+        }
+        let is_module = html_attribute(&tag, "type").is_some_and(|value| {
+            value
+                .trim_matches(|character: char| character.is_ascii_whitespace())
+                .eq_ignore_ascii_case("module")
+        });
+        let Some(src) = html_attribute(&tag, "src") else {
+            return TokenSinkResult::Continue;
+        };
+        if !is_module {
+            return TokenSinkResult::Continue;
+        }
+        let Some(path) = resolve_module_script_path(src, self.port) else {
+            return TokenSinkResult::Continue;
+        };
+        if !scan.paths.contains(&path) {
+            if scan.paths.len() >= MAX_MODULE_SCRIPT_PROBES {
+                scan.over_probe_cap = true;
+            } else {
+                scan.paths.push(path);
+            }
+        }
+        TokenSinkResult::Continue
+    }
+}
+
+fn resolve_module_script_path(src: &str, port: u16) -> Option<String> {
+    if src.is_empty() || src.contains(['\r', '\n']) {
+        return None;
+    }
+    let src = src.trim_matches(|character: char| character.is_ascii_whitespace());
+    if src.is_empty() {
+        return None;
+    }
+    let base = url::Url::parse(&format!("http://localhost:{port}{DOCS_PATH}")).ok()?;
+    let url = base.join(src).ok()?;
+    if url.origin() != base.origin() || !url.username().is_empty() || url.password().is_some() {
+        return None;
+    }
+    let path = url.path();
+    if path.is_empty() || path.contains(['\r', '\n']) {
+        return None;
+    }
+    let mut request_path = path.to_owned();
+    if let Some(query) = url.query() {
+        request_path.push('?');
+        request_path.push_str(query);
+    }
+    Some(request_path)
+}
+
+fn scan_module_scripts(body: &str, port: u16) -> ModuleScriptScan {
+    let sink = ModuleScriptSink {
+        scan: RefCell::new(ModuleScriptScan::default()),
+        port,
+    };
+    let tokenizer = Tokenizer::new(sink, TokenizerOpts::default());
+    let input = BufferQueue::default();
+    input.push_back(StrTendril::from_slice(body));
+    let _ = tokenizer.feed(&input);
+    tokenizer.end();
+    tokenizer.sink.scan.into_inner()
+}
+
 /// Minimal in-process HTTP/1.0 probe.  The server is mandatory-loopback and
 /// the response is bounded, so this avoids a shell/curl dependency without
 /// introducing a general-purpose network client into the app.
@@ -503,6 +635,49 @@ pub fn probe_path(port: u16, path: &str, io_timeout: Duration) -> std::io::Resul
     Ok((status, body.to_owned()))
 }
 
+/// Probe only the HTTP status line for a same-origin module entry. Dropping
+/// the stream immediately after the line avoids reading the entry's often
+/// hundreds-of-kilobytes JavaScript body on every readiness poll.
+pub fn probe_status(port: u16, path: &str, io_timeout: Duration) -> std::io::Result<u16> {
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let mut stream = TcpStream::connect_timeout(&addr, io_timeout)?;
+    stream.set_read_timeout(Some(io_timeout))?;
+    stream.set_write_timeout(Some(io_timeout))?;
+    stream.write_all(
+        format!("GET {path} HTTP/1.0\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
+    )?;
+
+    let mut line = Vec::new();
+    let mut byte = [0_u8; 1];
+    let deadline = Instant::now()
+        .checked_add(io_timeout)
+        .unwrap_or_else(Instant::now);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "timed out reading HTTP status line",
+            ));
+        }
+        stream.set_read_timeout(Some(remaining))?;
+        stream.read_exact(&mut byte)?;
+        if byte[0] == b'\n' {
+            break;
+        }
+        if line.len() >= MAX_STATUS_LINE_BYTES {
+            return Ok(0);
+        }
+        line.push(byte[0]);
+    }
+    Ok(String::from_utf8_lossy(&line)
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0))
+}
+
 pub fn probe_resource_readiness(
     port: u16,
     selection: ResourceSelection,
@@ -518,6 +693,23 @@ pub fn probe_resource_readiness(
         } else {
             ReadinessState::HttpUnavailable
         };
+    }
+
+    let scripts = scan_module_scripts(&shell, port);
+    if scripts.over_probe_cap {
+        return ReadinessState::StaleContent;
+    }
+    if scripts.has_island_markers && scripts.paths.is_empty() {
+        return ReadinessState::StaleContent;
+    }
+    for path in scripts.paths {
+        let status = match probe_status(port, &path, io_timeout) {
+            Ok(status) => status,
+            Err(_) => return ReadinessState::HttpUnavailable,
+        };
+        if status != 200 {
+            return ReadinessState::StaleContent;
+        }
     }
     for (path, kind, enabled) in [
         (CLAUDE_PATH, "claude", selection.claude),
@@ -776,6 +968,7 @@ mod tests {
     use crate::settings::{ActiveState, AppearanceMode, LoadStatus, SettingsDraft};
     use std::collections::VecDeque;
     use std::path::PathBuf;
+    use std::sync::atomic::AtomicUsize;
     use std::sync::{Arc, Barrier};
     use tempfile::TempDir;
 
@@ -986,6 +1179,279 @@ mod tests {
             ),
             ReadyResult::Superseded
         );
+    }
+
+    #[test]
+    fn module_script_parser_accepts_all_attribute_quoting_and_orders() {
+        let scan = scan_module_scripts(
+            r#"
+                <script src=/assets/unquoted.js type=module></script>
+                <script type='module' src='/assets/single.js'></script>
+                <script type="module" src="assets/double.js"></script>
+                <script src=/assets/not-module.js type=text/javascript></script>
+            "#,
+            4892,
+        );
+        assert_eq!(
+            scan.paths,
+            vec![
+                "/assets/unquoted.js",
+                "/assets/single.js",
+                "/docs/assets/double.js",
+            ]
+        );
+        assert!(!scan.has_island_markers);
+        assert!(!scan.over_probe_cap);
+    }
+
+    #[test]
+    fn module_script_parser_ignores_cross_origin_and_rejects_crlf_sources() {
+        let html = "<script type=module src=https://cdn.example.test/islands.js></script>\n"
+            .to_owned()
+            + "<script type=module src=\"/assets/bad\r\n.js\"></script>";
+        let scan = scan_module_scripts(&html, 4892);
+        assert!(scan.paths.is_empty());
+    }
+
+    #[test]
+    fn module_script_parser_deduplicates_paths_and_tracks_island_markers() {
+        let scan = scan_module_scripts(
+            r#"
+                <div data-zfb-island="true">
+                  <script type=module src=/assets/islands.js></script>
+                  <script src=/assets/islands.js type=module></script>
+                </div>
+            "#,
+            4892,
+        );
+        assert_eq!(scan.paths, vec!["/assets/islands.js"]);
+        assert!(scan.has_island_markers);
+    }
+
+    #[test]
+    fn module_script_parser_fails_closed_above_the_probe_cap() {
+        let html = (0..=MAX_MODULE_SCRIPT_PROBES)
+            .map(|index| format!("<script type=module src=/assets/islands-{index}.js></script>"))
+            .collect::<String>();
+        let scan = scan_module_scripts(&html, 4892);
+        assert_eq!(scan.paths.len(), MAX_MODULE_SCRIPT_PROBES);
+        assert!(scan.over_probe_cap);
+    }
+
+    #[test]
+    fn semantic_readiness_probes_every_module_entry_and_deduplicates_requests() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let script_requests = Arc::new(AtomicUsize::new(0));
+        let script_requests_for_server = script_requests.clone();
+        let server = thread::spawn(move || {
+            for _ in 0..5 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 4096];
+                let count = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..count]);
+                let path = request.split_whitespace().nth(1).unwrap_or_default();
+                if matches!(path, "/assets/islands-a.js" | "/assets/islands-b.js") {
+                    script_requests_for_server.fetch_add(1, Ordering::SeqCst);
+                    write!(stream, "HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n").unwrap();
+                    continue;
+                }
+                let body = match path {
+                    DOCS_PATH => format!(
+                        "{SHELL_MARKER}<div data-zfb-island><script src=/assets/islands-a.js type=module><script type='module' src=\"/assets/islands-b.js\"><script type=module src=/assets/islands-a.js>"
+                    ),
+                    CLAUDE_PATH => {
+                        "data-ccresdoc-resource=\"claude\" data-ccresdoc-state=\"disabled\" generation-current"
+                            .to_owned()
+                    }
+                    CODEX_PATH => {
+                        "data-ccresdoc-resource=\"codex\" data-ccresdoc-state=\"disabled\" generation-current"
+                            .to_owned()
+                    }
+                    _ => String::new(),
+                };
+                write!(
+                    stream,
+                    "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+            }
+        });
+        assert_eq!(
+            probe_resource_readiness(
+                port,
+                ResourceSelection {
+                    claude: false,
+                    codex: false,
+                },
+                "generation-current",
+                Duration::from_secs(1),
+            ),
+            ReadinessState::Ready
+        );
+        server.join().unwrap();
+        assert_eq!(script_requests.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn semantic_readiness_maps_module_status_failure_to_stale_content() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 4096];
+                let count = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..count]);
+                let path = request.split_whitespace().nth(1).unwrap_or_default();
+                if path == "/assets/islands.js" {
+                    write!(
+                        stream,
+                        "HTTP/1.0 404 Not Found\r\nContent-Length: 0\r\n\r\n"
+                    )
+                    .unwrap();
+                } else {
+                    let body = format!(
+                        "{SHELL_MARKER}<div data-zfb-island><script type=module src=/assets/islands.js>"
+                    );
+                    write!(
+                        stream,
+                        "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .unwrap();
+                }
+            }
+        });
+        assert_eq!(
+            probe_resource_readiness(
+                port,
+                ResourceSelection {
+                    claude: false,
+                    codex: false,
+                },
+                "generation-current",
+                Duration::from_secs(1),
+            ),
+            ReadinessState::StaleContent
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn semantic_readiness_maps_module_connection_failure_to_http_unavailable() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            let body = format!(
+                "{SHELL_MARKER}<div data-zfb-island><script type=module src=/assets/islands.js>"
+            );
+            write!(
+                stream,
+                "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let state = probe_resource_readiness(
+            port,
+            ResourceSelection {
+                claude: false,
+                codex: false,
+            },
+            "generation-current",
+            Duration::from_secs(1),
+        );
+        server.join().unwrap();
+        assert_eq!(state, ReadinessState::HttpUnavailable);
+    }
+
+    #[test]
+    fn semantic_readiness_rejects_island_markers_without_a_local_module_entry() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            let body = format!("{SHELL_MARKER}<div data-zfb-island></div>");
+            write!(
+                stream,
+                "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        assert_eq!(
+            probe_resource_readiness(
+                port,
+                ResourceSelection {
+                    claude: false,
+                    codex: false,
+                },
+                "generation-current",
+                Duration::from_secs(1),
+            ),
+            ReadinessState::StaleContent
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn semantic_readiness_ignores_cross_origin_module_entries() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 4096];
+                let count = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..count]);
+                let path = request.split_whitespace().nth(1).unwrap_or_default();
+                let body = match path {
+                    DOCS_PATH => format!(
+                        "{SHELL_MARKER}<script type=module src=https://cdn.example.test/islands.js>"
+                    ),
+                    CLAUDE_PATH => {
+                        "data-ccresdoc-resource=\"claude\" data-ccresdoc-state=\"disabled\" generation-current"
+                            .to_owned()
+                    }
+                    CODEX_PATH => {
+                        "data-ccresdoc-resource=\"codex\" data-ccresdoc-state=\"disabled\" generation-current"
+                            .to_owned()
+                    }
+                    _ => String::new(),
+                };
+                write!(
+                    stream,
+                    "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+            }
+        });
+        assert_eq!(
+            probe_resource_readiness(
+                port,
+                ResourceSelection {
+                    claude: false,
+                    codex: false,
+                },
+                "generation-current",
+                Duration::from_secs(1),
+            ),
+            ReadinessState::Ready
+        );
+        server.join().unwrap();
     }
 
     #[test]
@@ -1323,5 +1789,93 @@ mod tests {
             third.snapshot.active.unwrap().claude_dir,
             Some(std::fs::canonicalize(&source_a).unwrap())
         );
+    }
+
+    #[test]
+    fn apply_coordinator_launch_boundary_publishes_ready_only_after_module_probe() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let marker = "generation-apply-boundary";
+        let server = thread::spawn(move || {
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 4096];
+                let count = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..count]);
+                let path = request.split_whitespace().nth(1).unwrap_or_default();
+                let (status, body) = match path {
+                    DOCS_PATH => (
+                        200,
+                        format!(
+                            "{SHELL_MARKER}<div data-zfb-island><script type=module src=/assets/islands.js>"
+                        ),
+                    ),
+                    "/assets/islands.js" => (200, String::new()),
+                    CLAUDE_PATH => (
+                        200,
+                        format!(
+                            "data-ccresdoc-resource=\"claude\" data-ccresdoc-state=\"enabled\" {marker}"
+                        ),
+                    ),
+                    CODEX_PATH => (
+                        200,
+                        format!(
+                            "data-ccresdoc-resource=\"codex\" data-ccresdoc-state=\"disabled\" {marker}"
+                        ),
+                    ),
+                    _ => (404, String::new()),
+                };
+                write!(
+                    stream,
+                    "HTTP/1.0 {status} OK\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("claude");
+        std::fs::create_dir_all(&source).unwrap();
+        let store = SettingsStore::new(temp.path().join("config.toml"), temp.path().into());
+        let initial = store.load();
+        let coordinator = ApplyCoordinator::new(initial.clone());
+        let mut draft = initial.authored.clone();
+        draft.claude_dir = source.to_string_lossy().into_owned();
+        let probes = AtomicUsize::new(0);
+        // `main.rs::launch` supplies this restart boundary in production. The
+        // injected boundary keeps this test native and deterministic while
+        // exercising the same coordinator -> readiness -> Ready transition.
+        let result = coordinator
+            .apply_settings(
+                &store,
+                &draft,
+                initial.revision.as_ref(),
+                |generation, effective| {
+                    assert_eq!(generation, 1);
+                    probes.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(
+                        probe_resource_readiness(
+                            port,
+                            ResourceSelection::from_effective(effective),
+                            marker,
+                            Duration::from_secs(1),
+                        ),
+                        ReadinessState::Ready
+                    );
+                    Ok(PortChoice {
+                        preferred_port: effective.preferred_port,
+                        effective_port: port,
+                        fallback_used: effective.preferred_port != port,
+                    })
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.status, ApplyStatus::Active);
+        assert_eq!(result.snapshot.phase, RuntimePhase::Ready);
+        assert_eq!(result.snapshot.effective_port(), Some(port));
+        assert_eq!(probes.load(Ordering::SeqCst), 1);
+        server.join().unwrap();
     }
 }

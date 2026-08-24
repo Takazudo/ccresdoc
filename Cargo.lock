@@ -273,6 +273,7 @@ version = "0.1.0"
 dependencies = [
  "ccresdoc-claude-md",
  "filetime",
+ "html5ever",
  "libc",
  "open",
  "serde",

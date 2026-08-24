@@ -96,6 +96,23 @@ route tracking, filtering, and connector geometry come directly from the public
 components; see `docs/architecture/sidebar-navigation.md` for the ownership and
 accessibility contract.
 
+### Load-control readiness marker
+
+`AppearanceBridge` sets the host-owned
+`data-ccresdoc-load-controls-ready` attribute on `<html>` one animation frame
+after it mounts. The marker means only that synchronous `when: "load"` islands
+have completed their mount pass; it is deliberately not named or treated as a
+general hydration marker. Until it appears, host CSS gives the JS-only
+`ThemeToggle`, `ThemePackSwitcher`, and `SettingsHeaderButton` controls a pending
+visual and pointer affordance without affecting progressively enhanced links.
+This CSS does not provide keyboard or ARIA disabled semantics.
+
+Dynamic page transitions remove the attribute during each body swap and the
+remounted bridge sets it again. Do not add it to
+`zfb-preserve-html-attrs`: the incoming load islands really are pending during
+that interval. Bridge cleanup cancels its pending animation frame and removes
+the marker so a torn-down page cannot leave or re-arm stale readiness state.
+
 ## MDX Content Contract
 
 The Rust generator (`crates/ccresdoc-claude-md`) writes selected MDX to

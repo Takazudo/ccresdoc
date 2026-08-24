@@ -31,4 +31,18 @@ describe("package CSS foundation", () => {
     expect(css).not.toContain("--color-accent:");
     expect(css).toContain("@media (forced-colors: active)");
   });
+
+  it("limits the pre-hydration affordance to JS-only load controls", () => {
+    expect(css).toContain(
+      'html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="ThemeToggle"] button',
+    );
+    expect(css).toContain(
+      'html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="ThemePackSwitcher"] button',
+    );
+    expect(css).toContain(
+      'html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="SettingsHeaderButton"] button',
+    );
+    expect(css).not.toMatch(/data-ccresdoc-load-controls-ready[^\n]*SidebarTree/);
+    expect(css).not.toMatch(/\[data-zfb-island\][^\n]*button/);
+  });
 });

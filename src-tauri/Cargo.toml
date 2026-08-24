@@ -13,6 +13,7 @@ tauri-plugin-dialog = "2"
 # in-process. The host spawns the native `zfb dev` separately (process group),
 # so no async runtime is needed here (the watcher owns its own thread).
 ccresdoc-claude-md = { path = "../crates/ccresdoc-claude-md" }
+html5ever = "0.38"
 libc = "0.2"
 # issue #58: open external http(s) links in the OS browser from on_navigation
 open = "5"
