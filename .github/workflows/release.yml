@@ -34,7 +34,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       actions: read
-      contents: read
+      # GitHub hides draft Releases from tokens without push access.
+      contents: write
     outputs:
       disposition: ${{ steps.validate.outputs.disposition }}
       release_id: ${{ steps.validate.outputs.release_id }}

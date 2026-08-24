@@ -51,7 +51,10 @@ asset, checksum, or publication logic in ad-hoc commands:
 - `.github/workflows/ci.yml` is the ordinary push CI gate.
 - `.github/workflows/release.yml` is the fail-closed validator/publisher. Its
   dispatch inputs are `tag`, `target_sha`, `request_id`, and
-  `validation_only`; its default branch is `main`.
+  `validation_only`; its default branch is `main`. GitHub hides draft Releases
+  from tokens without push access, so the validation job needs
+  `contents: write` even though it performs no Release mutation; the
+  publication job owns the workflow's only Release `PATCH`.
 - `scripts/release-publication.mjs` is the publication snapshot validator used
   by the workflow. Do not weaken its exact tag, target, CI, draft, asset, or
   checksum requirements.
