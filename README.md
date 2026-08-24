@@ -202,6 +202,20 @@ pnpm rebuild:local-app
 See `.claude/skills/l-build/SKILL.md` for `/l-build`, including its
 same-session `SKIP_APP_BUILD=1` fast reinstall.
 
+## Build a release artifact
+
+On a clean macOS arm64 host, build and verify the exact local DMG/checksum pair
+without uploading or publishing anything:
+
+```bash
+bash scripts/build-macos-release.sh
+```
+
+The producer derives the version and names from the synchronized release
+contract, verifies the mounted ad-hoc-signed app and packaged runtime, and
+stages only the contract pair under `release-artifacts/`. The project release
+skill documents the separate existing-draft upload path.
+
 ## Install a release
 
 GitHub Releases is the canonical direct download for end users. The current
