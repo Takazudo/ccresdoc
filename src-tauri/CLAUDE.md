@@ -139,14 +139,16 @@ by package verification.
 ## Readiness & cold first build
 
 Readiness polls `GET /docs/` (NOT the old `/___ready`) with a **300s** window and
-accepts only a 200 body containing the current `CCResDoc` shell marker and the
-matching Claude/Codex overview transition markers. This prevents a staged or
-boot-lazy response from releasing the loading screen before current selected
-resources are rendered. The cold first launch must walk the enabled Claude and
-Codex sources and let `zfb dev` build the whole site once. The loading page stays informative
-(spinner; a "still building" hint appears after 20s). `wait_for_ready` also
-checks sidecar liveness each tick, so a crashed `zfb dev` surfaces an error in
-~1s rather than burning the full timeout.
+accepts only a 200 body containing the current `CCResDoc` shell marker, the
+matching Claude/Codex overview transition markers, and every same-origin island
+entry bundle referenced by the served HTML (each bundle must return 200). This
+prevents a staged or boot-lazy response from releasing the loading screen before
+current selected resources and their hydration entry are rendered. The cold first
+launch must walk the enabled Claude and Codex sources and let `zfb dev` build the
+whole site once. The loading page stays informative (spinner; a "still building"
+hint appears after 20s). `wait_for_ready` also checks sidecar liveness each tick,
+so a crashed `zfb dev` surfaces an error in ~1s rather than burning the full
+timeout.
 
 ### Selected resource contract
 
