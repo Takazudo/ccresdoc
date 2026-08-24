@@ -30,6 +30,8 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--da
 .section-heading h2 { font-size: 1.12rem; }
 .field-group { display: grid; gap: var(--field-gap); border: 0; margin: 0; padding: 0; }
 .field-group > label, .field-group legend { font-weight: 650; padding: 0; }
+.resource-group { display: grid; gap: .75rem; padding: 1rem; border: 1px solid var(--border); border-radius: .55rem; }
+.resource-group .field-group { padding-inline-start: 1.8rem; }
 .choice-row { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; }
 .choice-row label, .check-row { min-height: 44px; display: flex; align-items: center; gap: .55rem; cursor: pointer; }
 .choice-row input, .check-row input { width: 1.25rem; height: 1.25rem; margin: 0; flex: none; }

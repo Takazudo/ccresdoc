@@ -17,13 +17,16 @@ export const BACKEND_METHODS = Object.freeze([
 /**
  * @typedef {{
  *   schemaVersion: number,
+ *   claudeResources: boolean,
+ *   codexResources: boolean,
  *   claudeDir: string,
+ *   codexDir: string,
  *   appearanceMode: string,
  *   themePack: string,
  *   preferredPort: number,
  *   fallbackToFreePort: boolean
  * }} SettingsDraft
- * @typedef {"claudeDir"|"appearanceMode"|"themePack"|"preferredPort"|"fallbackToFreePort"} DirtyField
+ * @typedef {"claudeResources"|"codexResources"|"claudeDir"|"codexDir"|"appearanceMode"|"themePack"|"preferredPort"|"fallbackToFreePort"} DirtyField
  * @typedef {{code: string, message: string, details: unknown}} BackendError
  */
 

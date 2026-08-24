@@ -108,7 +108,10 @@ impl AppearanceMode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingsDraft {
     pub schema_version: i64,
+    pub claude_resources: bool,
+    pub codex_resources: bool,
     pub claude_dir: String,
+    pub codex_dir: String,
     pub appearance_mode: String,
     pub theme_pack: String,
     pub preferred_port: i64,
@@ -119,7 +122,10 @@ impl SettingsDraft {
     pub fn defaults() -> Self {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
+            claude_resources: true,
+            codex_resources: false,
             claude_dir: "~/.claude".into(),
+            codex_dir: "~/.codex".into(),
             appearance_mode: "system".into(),
             theme_pack: DEFAULT_THEME_PACK.into(),
             preferred_port: i64::from(DEFAULT_PORT),
@@ -130,7 +136,10 @@ impl SettingsDraft {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectiveSettings {
-    pub claude_dir: PathBuf,
+    pub claude_resources: bool,
+    pub codex_resources: bool,
+    pub claude_dir: Option<PathBuf>,
+    pub codex_dir: Option<PathBuf>,
     pub appearance_mode: AppearanceMode,
     pub theme_pack: String,
     pub preferred_port: u16,
@@ -215,7 +224,10 @@ pub struct SettingsSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SettingField {
+    ClaudeResources,
+    CodexResources,
     ClaudeDir,
+    CodexDir,
     AppearanceMode,
     ThemePack,
     PreferredPort,
@@ -632,11 +644,31 @@ impl SettingsStore {
 
         let mut authored = SettingsDraft::defaults();
         let mut diagnostics = Vec::new();
+        if validate_section(doc, "resources", &mut diagnostics) {
+            read_bool(
+                doc,
+                &["resources", "claude"],
+                &mut authored.claude_resources,
+                &mut diagnostics,
+            );
+            read_bool(
+                doc,
+                &["resources", "codex"],
+                &mut authored.codex_resources,
+                &mut diagnostics,
+            );
+        }
         if validate_section(doc, "source", &mut diagnostics) {
             read_string(
                 doc,
                 &["source", "claude_dir"],
                 &mut authored.claude_dir,
+                &mut diagnostics,
+            );
+            read_string(
+                doc,
+                &["source", "codex_dir"],
+                &mut authored.codex_dir,
                 &mut diagnostics,
             );
         }
@@ -703,7 +735,10 @@ impl SettingsStore {
 
     fn project_defaults(&self) -> EffectiveSettings {
         EffectiveSettings {
-            claude_dir: self.home.join(".claude"),
+            claude_resources: true,
+            codex_resources: false,
+            claude_dir: Some(self.home.join(".claude")),
+            codex_dir: None,
             appearance_mode: AppearanceMode::System,
             theme_pack: DEFAULT_THEME_PACK.into(),
             preferred_port: DEFAULT_PORT,
@@ -738,13 +773,18 @@ impl SettingsStore {
                 ));
                 DEFAULT_PORT
             });
-        let source = match normalize_source(&draft.claude_dir, &self.home) {
-            Ok(path) => path,
-            Err((kind, message)) => {
-                diagnostics.push(diagnostic(kind, Some("source.claude_dir"), message, true));
-                self.home.join(".claude")
-            }
-        };
+        let claude_dir = self.project_source(
+            draft.claude_resources,
+            &draft.claude_dir,
+            "source.claude_dir",
+            &mut diagnostics,
+        );
+        let codex_dir = self.project_source(
+            draft.codex_resources,
+            &draft.codex_dir,
+            "source.codex_dir",
+            &mut diagnostics,
+        );
         let theme_pack = if self.available_theme_packs.contains(&draft.theme_pack) {
             draft.theme_pack.clone()
         } else {
@@ -761,7 +801,10 @@ impl SettingsStore {
         };
         (
             EffectiveSettings {
-                claude_dir: source,
+                claude_resources: draft.claude_resources,
+                codex_resources: draft.codex_resources,
+                claude_dir,
+                codex_dir,
                 appearance_mode: mode,
                 theme_pack,
                 preferred_port: port,
@@ -770,6 +813,28 @@ impl SettingsStore {
             },
             diagnostics,
         )
+    }
+
+    fn project_source(
+        &self,
+        enabled: bool,
+        raw: &str,
+        field: &'static str,
+        diagnostics: &mut Vec<SettingsDiagnostic>,
+    ) -> Option<PathBuf> {
+        if !enabled {
+            return None;
+        }
+        // This store can enforce filesystem validity and the HOME boundary.
+        // Generator output-overlap validation stays at runtime where both the
+        // selected source and writable workspace output paths are available.
+        match normalize_source(raw, &self.home) {
+            Ok(path) => Some(path),
+            Err((kind, message)) => {
+                diagnostics.push(diagnostic(kind, Some(field), message, true));
+                None
+            }
+        }
     }
 
     fn ensure_valid_draft(&self, draft: &SettingsDraft) -> Result<(), SaveError> {
@@ -808,11 +873,17 @@ impl SettingsStore {
         doc: &DocumentMut,
         expected: Option<&ContentRevision>,
     ) -> Result<(), SaveError> {
+        let use_crlf = fs::read(&self.path)
+            .ok()
+            .is_some_and(|bytes| bytes.windows(2).any(|pair| pair == b"\r\n"));
         let mut rendered = doc.to_string();
         while rendered.ends_with('\n') {
             rendered.pop();
         }
         rendered.push('\n');
+        if use_crlf {
+            rendered = rendered.replace('\n', "\r\n");
+        }
 
         let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)?;
@@ -865,7 +936,10 @@ impl SettingsStore {
 impl SettingField {
     fn all() -> BTreeSet<Self> {
         [
+            Self::ClaudeResources,
+            Self::CodexResources,
             Self::ClaudeDir,
+            Self::CodexDir,
             Self::AppearanceMode,
             Self::ThemePack,
             Self::PreferredPort,
@@ -932,12 +1006,29 @@ fn normalize_source(raw: &str, home: &Path) -> Result<PathBuf, (DiagnosticKind, 
             format!("source directory is unreadable: {error}"),
         )
     })?;
-    fs::canonicalize(&expanded).map_err(|error| {
-        (
-            DiagnosticKind::InvalidSourcePath,
-            format!("source directory cannot be normalized: {error}"),
-        )
-    })
+    fs::canonicalize(&expanded)
+        .map_err(|error| {
+            (
+                DiagnosticKind::InvalidSourcePath,
+                format!("source directory cannot be normalized: {error}"),
+            )
+        })
+        .and_then(|canonical| {
+            let canonical_home = fs::canonicalize(home).map_err(|error| {
+                (
+                    DiagnosticKind::InvalidSourcePath,
+                    format!("HOME cannot be normalized: {error}"),
+                )
+            })?;
+            if canonical == canonical_home {
+                Err((
+                    DiagnosticKind::InvalidSourcePath,
+                    "source directory must be narrower than HOME".into(),
+                ))
+            } else {
+                Ok(canonical)
+            }
+        })
 }
 
 fn item_at<'a>(doc: &'a DocumentMut, path: &[&str]) -> Option<&'a Item> {
@@ -1079,8 +1170,17 @@ fn set_section_value(doc: &mut DocumentMut, section: &str, key: &str, replacemen
 
 fn merge_fields(doc: &mut DocumentMut, draft: &SettingsDraft, fields: &BTreeSet<SettingField>) {
     set_value_preserving_decor(&mut doc["schema_version"], value(CURRENT_SCHEMA_VERSION));
+    if fields.contains(&SettingField::ClaudeResources) {
+        set_section_value(doc, "resources", "claude", value(draft.claude_resources));
+    }
+    if fields.contains(&SettingField::CodexResources) {
+        set_section_value(doc, "resources", "codex", value(draft.codex_resources));
+    }
     if fields.contains(&SettingField::ClaudeDir) {
         set_section_value(doc, "source", "claude_dir", value(&draft.claude_dir));
+    }
+    if fields.contains(&SettingField::CodexDir) {
+        set_section_value(doc, "source", "codex_dir", value(&draft.codex_dir));
     }
     if fields.contains(&SettingField::AppearanceMode) {
         set_section_value(doc, "appearance", "mode", value(&draft.appearance_mode));
@@ -1112,7 +1212,10 @@ fn set_value_preserving_decor(target: &mut Item, mut replacement: Item) {
 fn copy_dirty(target: &mut SettingsDraft, source: &SettingsDraft, fields: &BTreeSet<SettingField>) {
     for field in fields {
         match field {
+            SettingField::ClaudeResources => target.claude_resources = source.claude_resources,
+            SettingField::CodexResources => target.codex_resources = source.codex_resources,
             SettingField::ClaudeDir => target.claude_dir.clone_from(&source.claude_dir),
+            SettingField::CodexDir => target.codex_dir.clone_from(&source.codex_dir),
             SettingField::AppearanceMode => {
                 target.appearance_mode.clone_from(&source.appearance_mode)
             }
@@ -1130,8 +1233,12 @@ fn impact_between(
     after: &SettingsDraft,
     fields: &BTreeSet<SettingField>,
 ) -> ApplyImpact {
-    let restart = (fields.contains(&SettingField::ClaudeDir)
-        && before.claude_dir != after.claude_dir)
+    let restart = (fields.contains(&SettingField::ClaudeResources)
+        && before.claude_resources != after.claude_resources)
+        || (fields.contains(&SettingField::CodexResources)
+            && before.codex_resources != after.codex_resources)
+        || (fields.contains(&SettingField::ClaudeDir) && before.claude_dir != after.claude_dir)
+        || (fields.contains(&SettingField::CodexDir) && before.codex_dir != after.codex_dir)
         || (fields.contains(&SettingField::PreferredPort)
             && before.preferred_port != after.preferred_port)
         || (fields.contains(&SettingField::FallbackToFreePort)
@@ -1227,7 +1334,7 @@ mod tests {
     }
 
     fn valid_toml(home: &Path) -> String {
-        format!("schema_version = 1\n\n[source]\nclaude_dir = {:?}\n\n[appearance]\nmode = \"dark\"\ntheme_pack = \"default\"\n\n[server]\npreferred_port = 5000\nfallback_to_free_port = false\n", home.join(".claude").to_string_lossy())
+        format!("schema_version = 1\n\n[resources]\nclaude = true\ncodex = false\n\n[source]\nclaude_dir = {:?}\ncodex_dir = \"~/.codex\"\n\n[appearance]\nmode = \"dark\"\ntheme_pack = \"default\"\n\n[server]\npreferred_port = 5000\nfallback_to_free_port = false\n", home.join(".claude").to_string_lossy())
     }
 
     #[test]
@@ -1297,7 +1404,8 @@ mod tests {
         assert_eq!(missing.config_path, path);
         assert_eq!(missing.status, LoadStatus::Missing);
         assert!(!missing.file_exists);
-        assert_eq!(missing.effective.claude_dir, home.join(".claude"));
+        assert_eq!(missing.effective.claude_dir, Some(home.join(".claude")));
+        assert_eq!(missing.effective.codex_dir, None);
         assert_eq!(missing.active.preferred_port, DEFAULT_PORT);
         assert_eq!(missing.active.effective_port, DEFAULT_PORT);
         assert!(
@@ -1323,7 +1431,7 @@ mod tests {
         assert_eq!(authored.effective.effective_port, 53001);
         assert_eq!(
             authored.effective.claude_dir,
-            fs::canonicalize(source).unwrap()
+            Some(fs::canonicalize(source).unwrap())
         );
         assert!(authored.effective.fallback_to_free_port);
     }
@@ -1347,9 +1455,121 @@ mod tests {
         assert_eq!(result.snapshot.status, LoadStatus::Valid);
         assert_eq!(
             result.snapshot.effective.claude_dir,
-            fs::canonicalize(root.path().join("home/.claude")).unwrap()
+            Some(fs::canonicalize(root.path().join("home/.claude")).unwrap())
         );
         assert!(fs::read_to_string(store.path()).unwrap().ends_with('\n'));
+    }
+
+    #[test]
+    fn legacy_and_missing_documents_inherit_resource_defaults_without_rewrite() {
+        let (_root, store) = fixture();
+        let missing = store.load();
+        assert!(missing.authored.claude_resources);
+        assert!(!missing.authored.codex_resources);
+        assert_eq!(missing.authored.claude_dir, "~/.claude");
+        assert_eq!(missing.authored.codex_dir, "~/.codex");
+        assert!(!store.path().exists());
+
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        let legacy = "schema_version = 1\n[appearance]\nmode = \"dark\"\n";
+        fs::write(store.path(), legacy).unwrap();
+        let loaded = store.load();
+        assert_eq!(loaded.status, LoadStatus::Valid);
+        assert!(loaded.authored.claude_resources);
+        assert!(!loaded.authored.codex_resources);
+        assert_eq!(fs::read_to_string(store.path()).unwrap(), legacy);
+    }
+
+    #[test]
+    fn all_resource_selection_combinations_project_only_enabled_paths() {
+        let (root, store) = fixture();
+        fs::create_dir_all(root.path().join("home/.codex")).unwrap();
+        for (claude, codex) in [(true, false), (false, true), (true, true), (false, false)] {
+            let draft = SettingsDraft {
+                claude_resources: claude,
+                codex_resources: codex,
+                ..SettingsDraft::defaults()
+            };
+            let (effective, diagnostics) = store.validate(&draft);
+            assert!(diagnostics.iter().all(|diagnostic| !diagnostic.blocking));
+            assert_eq!(effective.claude_resources, claude);
+            assert_eq!(effective.codex_resources, codex);
+            assert_eq!(effective.claude_dir.is_some(), claude);
+            assert_eq!(effective.codex_dir.is_some(), codex);
+        }
+    }
+
+    #[test]
+    fn disabled_sources_preserve_invalid_authored_paths_without_validation() {
+        let (_root, store) = fixture();
+        let draft = SettingsDraft {
+            claude_resources: false,
+            codex_resources: false,
+            claude_dir: "relative/claude".into(),
+            codex_dir: "/missing/codex".into(),
+            ..SettingsDraft::defaults()
+        };
+        let (effective, diagnostics) = store.validate(&draft);
+        assert!(diagnostics.iter().all(|diagnostic| !diagnostic.blocking));
+        assert_eq!(effective.claude_dir, None);
+        assert_eq!(effective.codex_dir, None);
+
+        for (enabled, field) in [
+            (
+                SettingsDraft {
+                    claude_resources: true,
+                    ..draft.clone()
+                },
+                "source.claude_dir",
+            ),
+            (
+                SettingsDraft {
+                    codex_resources: true,
+                    ..draft.clone()
+                },
+                "source.codex_dir",
+            ),
+        ] {
+            assert!(store.validate(&enabled).1.iter().any(|diagnostic| {
+                diagnostic.blocking && diagnostic.field.as_deref() == Some(field)
+            }));
+        }
+    }
+
+    #[test]
+    fn enabled_source_cannot_be_home() {
+        let (_root, store) = fixture();
+        let draft = SettingsDraft {
+            claude_dir: "~".into(),
+            ..SettingsDraft::defaults()
+        };
+        assert!(store.validate(&draft).1.iter().any(|diagnostic| {
+            diagnostic.blocking
+                && diagnostic.field.as_deref() == Some("source.claude_dir")
+                && diagnostic.message.contains("narrower than HOME")
+        }));
+    }
+
+    #[test]
+    fn regular_and_inline_resource_tables_are_losslessly_updated() {
+        let (root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::create_dir_all(root.path().join("home/.codex")).unwrap();
+        for original in [
+            "schema_version = 1\n[resources]\nclaude = true # keep claude\ncodex = false\nfuture = \"keep\"\n[source]\nclaude_dir = \"~/.claude\"\ncodex_dir = \"~/.codex\"\n",
+            "schema_version = 1\nresources = { claude = true, codex = false, future = \"keep\" } # resources note\nsource = { claude_dir = \"~/.claude\", codex_dir = \"~/.codex\", future = \"keep\" } # source note\n",
+        ] {
+            fs::write(store.path(), original).unwrap();
+            let loaded = store.load();
+            assert_eq!(loaded.raw_content.as_deref(), Some(original));
+            let mut draft = loaded.authored;
+            draft.codex_resources = true;
+            store.save(&draft, loaded.revision.as_ref()).unwrap();
+            let raw = fs::read_to_string(store.path()).unwrap();
+            assert!(raw.contains("codex = true"));
+            assert!(raw.contains("future = \"keep\""));
+            assert!(raw.contains("keep claude") || raw.contains("resources note"));
+        }
     }
 
     #[test]
@@ -1533,7 +1753,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             store.load().effective.claude_dir,
-            fs::canonicalize(root.path().join("home/.claude")).unwrap()
+            Some(fs::canonicalize(root.path().join("home/.claude")).unwrap())
         );
     }
 
@@ -1559,6 +1779,32 @@ mod tests {
             .validation
             .iter()
             .any(|d| d.kind == DiagnosticKind::UnreadableSourcePath));
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_disabled_source_is_nonblocking_until_enabled() {
+        use std::os::unix::fs::PermissionsExt;
+        let (root, store) = fixture();
+        let locked = root.path().join("locked-codex");
+        fs::create_dir(&locked).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let mut draft = SettingsDraft {
+            codex_dir: locked.to_string_lossy().into_owned(),
+            ..SettingsDraft::defaults()
+        };
+        assert!(store
+            .validate(&draft)
+            .1
+            .iter()
+            .all(|diagnostic| diagnostic.field.as_deref() != Some("source.codex_dir")));
+        draft.codex_resources = true;
+        assert!(store.validate(&draft).1.iter().any(|diagnostic| {
+            diagnostic.blocking
+                && diagnostic.kind == DiagnosticKind::UnreadableSourcePath
+                && diagnostic.field.as_deref() == Some("source.codex_dir")
+        }));
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
     }
 
@@ -1681,6 +1927,90 @@ mod tests {
         assert!(raw.contains("# external"));
         assert!(raw.contains("extra = true"));
         assert!(raw.contains("mode = \"light\""));
+    }
+
+    #[test]
+    fn dirty_rebase_keeps_external_resource_fields_independent() {
+        let (root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        let external_codex = root.path().join("external-codex");
+        fs::create_dir(&external_codex).unwrap();
+        fs::write(store.path(), valid_toml(root.path().join("home").as_path())).unwrap();
+        let stale = store.load();
+        let external = fs::read_to_string(store.path())
+            .unwrap()
+            .replace("claude = true", "claude = false # external toggle")
+            .replace(
+                "codex_dir = \"~/.codex\"",
+                &format!("codex_dir = {:?}", external_codex.to_string_lossy()),
+            );
+        fs::write(store.path(), external).unwrap();
+
+        let mut draft = stale.authored.clone();
+        draft.codex_resources = true;
+        draft.claude_dir = "/draft/claude".into();
+        let dirty = [SettingField::CodexResources, SettingField::ClaudeDir]
+            .into_iter()
+            .collect();
+        let result = store
+            .rebase_dirty(&draft, &dirty, stale.revision.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(result.impact, ApplyImpact::RestartRuntime);
+        let raw = fs::read_to_string(store.path()).unwrap();
+        assert!(raw.contains("claude = false # external toggle"));
+        assert!(raw.contains("codex = true"));
+        assert!(raw.contains("claude_dir = \"/draft/claude\""));
+        assert!(raw.contains(&external_codex.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn resource_fields_have_restart_impact_and_no_ops_do_not() {
+        let draft = SettingsDraft::defaults();
+        for field in [
+            SettingField::ClaudeResources,
+            SettingField::CodexResources,
+            SettingField::ClaudeDir,
+            SettingField::CodexDir,
+        ] {
+            let mut changed = draft.clone();
+            match field {
+                SettingField::ClaudeResources => changed.claude_resources = false,
+                SettingField::CodexResources => changed.codex_resources = true,
+                SettingField::ClaudeDir => changed.claude_dir = "/changed/claude".into(),
+                SettingField::CodexDir => changed.codex_dir = "/changed/codex".into(),
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                impact_between(&draft, &changed, &[field].into_iter().collect()),
+                ApplyImpact::RestartRuntime
+            );
+            assert_eq!(
+                impact_between(&draft, &draft, &[field].into_iter().collect()),
+                ApplyImpact::None
+            );
+        }
+    }
+
+    #[test]
+    fn save_preserves_crlf_newline_style() {
+        let (_root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(
+            store.path(),
+            "schema_version = 1\r\n[resources]\r\nclaude = true\r\ncodex = false\r\n",
+        )
+        .unwrap();
+        let loaded = store.load();
+        let mut draft = loaded.authored;
+        draft.appearance_mode = "dark".into();
+        store.save(&draft, loaded.revision.as_ref()).unwrap();
+        let bytes = fs::read(store.path()).unwrap();
+        assert!(bytes.windows(2).any(|pair| pair == b"\r\n"));
+        assert!(!bytes.windows(3).any(|window| window == b"\r\r\n"));
+        assert!(!bytes
+            .iter()
+            .enumerate()
+            .any(|(index, byte)| *byte == b'\n' && (index == 0 || bytes[index - 1] != b'\r')));
     }
 
     #[test]
@@ -1831,11 +2161,21 @@ mod tests {
         let wire = serde_json::to_value(&snapshot).unwrap();
         assert_eq!(wire["status"], "missing");
         assert_eq!(wire["authored"]["appearance_mode"], "system");
+        assert_eq!(wire["authored"]["claude_resources"], true);
+        assert_eq!(wire["authored"]["codex_resources"], false);
+        assert_eq!(wire["authored"]["codex_dir"], "~/.codex");
+        assert_eq!(wire["effective"]["claude_resources"], true);
+        assert_eq!(wire["effective"]["codex_resources"], false);
+        assert_eq!(wire["effective"]["codex_dir"], serde_json::Value::Null);
         assert_eq!(wire["effective"]["preferred_port"], 4892);
         assert_eq!(wire["active"]["effective_port"], 4892);
         assert_eq!(
             serde_json::to_value(SettingField::ClaudeDir).unwrap(),
             "claude_dir"
+        );
+        assert_eq!(
+            serde_json::to_value(SettingField::CodexResources).unwrap(),
+            "codex_resources"
         );
         assert_eq!(
             serde_json::to_value(ApplyImpact::RestartRuntime).unwrap(),
@@ -1861,7 +2201,10 @@ mod tests {
             serde_json::to_value(SettingsDraft::defaults()).unwrap(),
             serde_json::json!({
                 "schema_version": 1,
+                "claude_resources": true,
+                "codex_resources": false,
                 "claude_dir": "~/.claude",
+                "codex_dir": "~/.codex",
                 "appearance_mode": "system",
                 "theme_pack": "default",
                 "preferred_port": 4892,
