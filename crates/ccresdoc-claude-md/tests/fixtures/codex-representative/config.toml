@@ -1,0 +1,6 @@
+model = "gpt-5"
+approval_policy = "on-request"
+features = ["alpha", "beta"]
+
+[sandbox_workspace_write]
+network_access = false

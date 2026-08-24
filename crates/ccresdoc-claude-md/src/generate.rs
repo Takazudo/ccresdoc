@@ -6,8 +6,8 @@
 //!   `global.mdx` (slug `claude-md/global`) and nested files are
 //!   `project-<dir-slug>.mdx`. Upstream uses `<dir-slug>.mdx` / `root.mdx`.
 //! - Category index `sidebar_position` values follow the contract:
-//!   CLAUDE.md=900, commands=901, skills=902, agents=903; the overview
-//!   `claude/index.mdx` is 899 and carries `category_no_page: true`.
+//!   CLAUDE.md=900, commands=901, skills=902, agents=903. The coordinator owns
+//!   the routed `claude/index.mdx` overview at position 899.
 //!
 //! Skill sub-pages and frontmatter remain aligned with upstream. Escaping also
 //! normalizes CommonMark constructs that zudo-doc's MDX mode would reject.
@@ -19,16 +19,6 @@ use crate::error::{GenerateError, Result};
 use crate::escape::escape_for_mdx;
 use crate::walk::{self, AgentItem, ClaudeMdItem, CommandItem, SkillItem};
 use crate::Config;
-
-/// Which resource families produced at least one page — drives the overview
-/// `<CategoryNav>` slug list.
-#[derive(Debug, Clone, Copy, Default)]
-struct ResourceItemKinds {
-    has_claudemd: bool,
-    has_commands: bool,
-    has_skills: bool,
-    has_agents: bool,
-}
 
 /// Counts of generated resources, returned by [`crate::generate`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -229,7 +219,7 @@ fn is_repo_relative_link(url: &str) -> bool {
 /// retaining those hrefs produces broken-link diagnostics in current zfb.
 /// Resolvable URLs, anchors, site-absolute links, fenced code, and inline code
 /// remain untouched.
-fn downgrade_repo_relative_links(content: &str) -> String {
+pub(crate) fn downgrade_repo_relative_links(content: &str) -> String {
     let mut out = String::with_capacity(content.len());
     let mut fence: Option<(char, usize)> = None;
 
@@ -694,7 +684,7 @@ fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
 /// Rewrites are skipped inside fenced code blocks (``` ... ```) so that
 /// example code showing the original `](references/...)` syntax is preserved
 /// verbatim.
-fn rewrite_skill_links(body: &str) -> String {
+pub(crate) fn rewrite_skill_links(body: &str) -> String {
     // Split the body into fenced-code and prose segments, rewrite only prose.
     let segments = split_code_and_prose(body);
     let mut out = String::with_capacity(body.len());
@@ -809,25 +799,37 @@ fn find_prose_closing_fence(bytes: &[u8], from: usize, fence_len: usize) -> Opti
 fn rewrite_link_kind(input: &str, dir: &str, prefix: &str) -> String {
     let needle_open = format!("]({dir}");
     let mut out = String::with_capacity(input.len());
-    let mut rest = input;
-    while let Some(pos) = rest.find(&needle_open) {
-        out.push_str(&rest[..pos]);
-        let after = &rest[pos + needle_open.len()..];
-        // name = up to ".md)" — find the first ")" and require the chars before
-        // it end with ".md".
-        if let Some(close) = after.find(')') {
-            let inner = &after[..close];
-            if let Some(name) = inner.strip_suffix(".md") {
-                out.push_str(&format!("](./{prefix}{name})"));
-                rest = &after[close + 1..];
+    let bytes = input.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        // Literal Markdown examples commonly put a link in inline code. Keep
+        // the entire span byte-for-byte, including arbitrary delimiter width.
+        if bytes[index] == b'`' {
+            let width = bytes[index..].iter().take_while(|b| **b == b'`').count();
+            if let Some(close) = find_backtick_close(bytes, index + width, width) {
+                out.push_str(&input[index..close]);
+                index = close;
                 continue;
             }
         }
-        // Not a match — emit the literal needle and continue past it.
-        out.push_str(&needle_open);
-        rest = after;
+
+        if input[index..].starts_with(&needle_open) {
+            let after_start = index + needle_open.len();
+            let after = &input[after_start..];
+            if let Some(close) = after.find(')') {
+                let inner = &after[..close];
+                if let Some(name) = inner.strip_suffix(".md") {
+                    out.push_str(&format!("](./{prefix}{name})"));
+                    index = after_start + close + 1;
+                    continue;
+                }
+            }
+        }
+
+        let width = utf8_char_width(bytes[index]);
+        out.push_str(&input[index..index + width]);
+        index += width;
     }
-    out.push_str(rest);
     out
 }
 
@@ -891,48 +893,6 @@ fn generate_agents_docs(items: &[AgentItem], docs_dir: &Path) -> Result<usize> {
 }
 
 // ---------------------------------------------------------------------------
-// Overview index
-// ---------------------------------------------------------------------------
-
-fn generate_overview_index(docs_dir: &Path, kinds: ResourceItemKinds) -> Result<()> {
-    let output_dir = docs_dir.join("claude");
-    ensure_dir(&output_dir)?;
-
-    // Build the category slug list in the contract's order: CLAUDE.md,
-    // commands, skills, agents (only those that were generated).
-    let mut slugs: Vec<&str> = Vec::new();
-    if kinds.has_claudemd {
-        slugs.push("claude-md");
-    }
-    if kinds.has_commands {
-        slugs.push("claude-commands");
-    }
-    if kinds.has_skills {
-        slugs.push("claude-skills");
-    }
-    if kinds.has_agents {
-        slugs.push("claude-agents");
-    }
-
-    // JSON-encode the slug list for the JSX attribute. Slugs are fixed ASCII
-    // identifiers (no quotes/backslashes), so a plain join is exact.
-    let categories_attr = format!(
-        "[{}]",
-        slugs
-            .iter()
-            .map(|s| format!("\"{s}\""))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-
-    // Contract: overview carries category_no_page: true at position 899.
-    let index = format!(
-        "---\ntitle: \"Claude Resources\"\ndescription: \"Claude Code configuration reference.\"\nsidebar_position: 899\ncategory_no_page: true\ngenerated: true\n---\n\nClaude Code configuration reference.\n\n## Resources\n\n<CategoryNav categories={{{categories_attr}}} />\n",
-    );
-    write_file(&output_dir.join("index.mdx"), &index)
-}
-
-// ---------------------------------------------------------------------------
 // Public driver (called by lib::generate)
 // ---------------------------------------------------------------------------
 
@@ -950,16 +910,6 @@ pub(crate) fn run(config: &Config) -> Result<GenerateReport> {
     let commands = generate_commands_docs(&tree.commands, docs_dir)?;
     let skills = generate_skills_docs(&tree.skills, docs_dir)?;
     let agents = generate_agents_docs(&tree.agents, docs_dir)?;
-
-    generate_overview_index(
-        docs_dir,
-        ResourceItemKinds {
-            has_claudemd: claude_md > 0,
-            has_commands: commands > 0,
-            has_skills: skills > 0,
-            has_agents: agents > 0,
-        },
-    )?;
 
     Ok(GenerateReport {
         claude_md,
