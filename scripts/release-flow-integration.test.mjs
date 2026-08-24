@@ -161,7 +161,7 @@ test("the producer derives its pair from the contract and keeps upload mutation 
   assert.match(packageProbe, /Packaged CCResDoc did not quit during probe cleanup/);
 });
 
-test("the publication workflow is parseable, input-correlated, permission-split, and Ubuntu-only", () => {
+test("the publication workflow is parseable, input-correlated, draft-visible, and Ubuntu-only", () => {
   const yamlCheck = spawnSync("ruby", ["-e", "require 'yaml'; YAML.load_file(ARGV.fetch(0))", workflowPath], {
     encoding: "utf8",
   });
@@ -184,7 +184,10 @@ test("the publication workflow is parseable, input-correlated, permission-split,
   const validateJob = workflow.slice(validateStart, publishStart);
   const publishJob = workflow.slice(publishStart);
   assert.match(validateJob, /runs-on: ubuntu-latest/);
-  assert.match(validateJob, /permissions:\n\s+actions: read\n\s+contents: read/);
+  assert.match(validateJob, /GitHub hides draft Releases from tokens without push access/);
+  assert.match(validateJob, /permissions:\n\s+actions: read\n\s+# GitHub hides draft Releases from tokens without push access\.\n\s+contents: write/);
+  assert.doesNotMatch(validateJob, /--method (?:PATCH|POST|PUT|DELETE)/);
+  assert.doesNotMatch(validateJob, /gh release (?:create|delete|edit|upload)/);
   assert.match(publishJob, /if: \$\{\{ inputs\.validation_only == false && needs\.validate\.outputs\.disposition == 'draft' \}\}/);
   assert.match(publishJob, /runs-on: ubuntu-latest/);
   assert.match(publishJob, /permissions:\n\s+actions: read\n\s+contents: write/);

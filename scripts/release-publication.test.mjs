@@ -147,15 +147,18 @@ test("published retry is complete only with exact release, peeled tag, target, a
   assert.equal(validatePublicationSnapshot(value, { phase: "published" }).disposition, "already_complete");
 });
 
-test("workflow structure is Ubuntu-only, pinned, permission-split, and guarded", () => {
+test("workflow structure is Ubuntu-only, pinned, draft-visible, and guarded", () => {
   const workflow = readFileSync(resolve(root, ".github/workflows/release.yml"), "utf8");
   assert.match(workflow, /run-name: Release \$\{\{ inputs\.tag \}\} @ \$\{\{ inputs\.target_sha \}\} \[\$\{\{ inputs\.request_id \}\}\]/);
   assert.match(workflow, /validation_only:\n\s+description:.*\n\s+required: true\n\s+type: boolean\n\s+default: true/);
   assert.match(workflow, /cancel-in-progress: false/);
   assert.equal((workflow.match(/runs-on: ubuntu-latest/g) ?? []).length, 2);
   assert.doesNotMatch(workflow, /macos-|cargo tauri build|xcodebuild|hdiutil/);
-  assert.match(workflow, /validate:[\s\S]*?permissions:\n\s+actions: read\n\s+contents: read/);
+  assert.match(workflow, /validate:[\s\S]*?permissions:\n\s+actions: read\n\s+# GitHub hides draft Releases from tokens without push access\.\n\s+contents: write/);
   assert.match(workflow, /publish:[\s\S]*?if:.*inputs\.validation_only == false[\s\S]*?permissions:\n\s+actions: read\n\s+contents: write/);
+  const validateJob = workflow.slice(workflow.indexOf("  validate:"), workflow.indexOf("  publish:"));
+  assert.doesNotMatch(validateJob, /--method (?:PATCH|POST|PUT|DELETE)/);
+  assert.doesNotMatch(validateJob, /gh release (?:create|delete|edit|upload)/);
   assert.equal((workflow.match(/actions\/workflows\/ci\.yml\/runs/g) ?? []).length, 3);
   assert.equal((workflow.match(/--method PATCH/g) ?? []).length, 1);
   assert.ok(workflow.indexOf("publish:") < workflow.indexOf("--method PATCH"));
