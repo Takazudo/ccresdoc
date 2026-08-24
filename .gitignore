@@ -14,8 +14,16 @@ app/dist/**
 app/public/theme-packs/
 release-artifacts/
 
-# Wave 2 — Rust-generated MDX content (not committed; rebuilt on launch)
+# Runtime-generated resource detail MDX (not committed; rebuilt on launch).
+# The coordinator-owned overview shells remain permanent source files.
 app/src/content/docs/claude*/
+app/src/content/docs/codex*/
+!app/src/content/docs/claude/
+app/src/content/docs/claude/*
+!app/src/content/docs/claude/index.mdx
+!app/src/content/docs/codex/
+app/src/content/docs/codex/*
+!app/src/content/docs/codex/index.mdx
 
 # Logs
 *.log

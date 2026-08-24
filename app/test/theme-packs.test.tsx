@@ -45,7 +45,10 @@ describe("CCResDoc theme-pack host integration", () => {
       codexResources: false,
       siteTreeNavIgnore: [],
       packageOwnedRoutes: false,
-      headerNav: [],
+      headerNav: [
+        { label: "Claude", path: "/docs/claude", categoryMatch: "claude", versioned: false },
+        { label: "Codex", path: "/docs/codex", categoryMatch: "codex", versioned: false },
+      ],
       metaTags: {
         description: false,
         keywords: false,

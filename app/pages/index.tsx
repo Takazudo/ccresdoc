@@ -4,7 +4,7 @@
 import type { JSX } from "preact";
 import DocsPage, { paths as docsPaths } from "./docs/[[...slug]]";
 
-export const frontmatter = { title: "Claude Code Resources" };
+export const frontmatter = { title: "CCResDoc Resources" };
 
 /** `/` is an SSR alias of the canonical `/docs/` document shell. */
 export default function IndexPage(): JSX.Element {
