@@ -1,0 +1,321 @@
+name: Release
+
+run-name: Release ${{ inputs.tag }} @ ${{ inputs.target_sha }} [${{ inputs.request_id }}]
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Strict stable release tag (vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
+      target_sha:
+        description: Full lowercase commit SHA already at main
+        required: true
+        type: string
+      request_id:
+        description: Unique caller-provided request identifier
+        required: true
+        type: string
+      validation_only:
+        description: Validate without publishing the draft
+        required: true
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate exact draft state
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      disposition: ${{ steps.validate.outputs.disposition }}
+      release_id: ${{ steps.validate.outputs.release_id }}
+      artifact_name: ${{ steps.validate.outputs.artifact_name }}
+      checksum_name: ${{ steps.validate.outputs.checksum_name }}
+      artifact_id: ${{ steps.validate.outputs.artifact_id }}
+      checksum_id: ${{ steps.validate.outputs.checksum_id }}
+
+    steps:
+      - name: Require dispatch to identify the checked-out commit
+        env:
+          DISPATCH_SHA: ${{ github.sha }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          set -euo pipefail
+          test "$DISPATCH_SHA" = "$TARGET_SHA" || {
+            echo "Dispatch github.sha does not equal target_sha" >&2
+            exit 1
+          }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          fetch-depth: 1
+
+      - name: Normalize, download, and validate draft state
+        id: validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          work_dir="$RUNNER_TEMP_DIR/release-$RUN_ID-$RUN_ATTEMPT-validation"
+          mkdir "$work_dir"
+
+          node scripts/release-contract.mjs check --json > "$work_dir/source.json"
+          main_sha="$(gh api "repos/$REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+
+          gh api --method GET "repos/$REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f branch=main -f event=push -f head_sha="$TARGET_SHA" -f per_page=100 > "$work_dir/runs.json"
+          jq -e '.workflow_runs | length > 0' "$work_dir/runs.json" >/dev/null
+          jq '.workflow_runs | sort_by(.run_attempt, .id) | reverse | .[0]
+            | {databaseId: .id, workflowPath: ".github/workflows/ci.yml", workflowName: .name,
+               event, branch: .head_branch, headSha: .head_sha, status, conclusion}' \
+            "$work_dir/runs.json" > "$work_dir/ci.json"
+
+          gh api --paginate --slurp "repos/$REPOSITORY/releases?per_page=100" > "$work_dir/release-pages.json"
+          jq --arg tag "$TAG" '[.[][] | select(.tag_name == $tag)]' \
+            "$work_dir/release-pages.json" > "$work_dir/matches.json"
+          test "$(jq length "$work_dir/matches.json")" -eq 1 || {
+            echo "Expected exactly one draft or published Release for $TAG" >&2
+            exit 1
+          }
+          release_id="$(jq -r '.[0].id' "$work_dir/matches.json")"
+          if latest_id="$(gh api "repos/$REPOSITORY/releases/latest" --jq .id 2>"$work_dir/latest-error.txt")"; then
+            :
+          elif grep -q 'HTTP 404' "$work_dir/latest-error.txt"; then
+            latest_id=0
+          else
+            cat "$work_dir/latest-error.txt" >&2
+            exit 1
+          fi
+          jq --argjson latest_id "${latest_id:-0}" '.[0]
+            | {databaseId: .id, tagName: .tag_name, targetCommitish: .target_commitish,
+               draft, prerelease, latest: (.id == $latest_id),
+               assets: [.assets[] | {id, name}]}' "$work_dir/matches.json" > "$work_dir/release.json"
+
+          git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}" > "$work_dir/tag-refs.txt"
+          ref_count="$(wc -l < "$work_dir/tag-refs.txt" | tr -d ' ')"
+          if test "$ref_count" -eq 0; then
+            jq -n '{kind:"absent",objectSha:null,peeledSha:null}' > "$work_dir/tag.json"
+          elif test "$ref_count" -eq 1; then
+            object_sha="$(awk '{print $1}' "$work_dir/tag-refs.txt")"
+            jq -n --arg sha "$object_sha" '{kind:"lightweight",objectSha:$sha,peeledSha:$sha}' > "$work_dir/tag.json"
+          elif test "$ref_count" -eq 2; then
+            object_sha="$(awk '$2 !~ /\^\{\}$/ {print $1}' "$work_dir/tag-refs.txt")"
+            peeled_sha="$(awk '$2 ~ /\^\{\}$/ {print $1}' "$work_dir/tag-refs.txt")"
+            jq -n --arg object "$object_sha" --arg peeled "$peeled_sha" \
+              '{kind:"annotated",objectSha:$object,peeledSha:$peeled}' > "$work_dir/tag.json"
+          else
+            echo "Ambiguous remote tag state for $TAG" >&2
+            exit 1
+          fi
+
+          artifact_name="$(jq -r .artifactName "$work_dir/source.json")"
+          checksum_name="$(jq -r .checksumName "$work_dir/source.json")"
+          jq -e --arg artifact "$artifact_name" --arg checksum "$checksum_name" \
+            '([.[0].assets[].name] | sort) == ([$artifact, $checksum] | sort)' \
+            "$work_dir/matches.json" >/dev/null
+          artifact_id="$(jq -r --arg name "$artifact_name" '.[0].assets[] | select(.name == $name) | .id' "$work_dir/matches.json")"
+          checksum_id="$(jq -r --arg name "$checksum_name" '.[0].assets[] | select(.name == $name) | .id' "$work_dir/matches.json")"
+          test -n "$artifact_id" && test -n "$checksum_id"
+          gh api "repos/$REPOSITORY/releases/assets/$artifact_id" -H "Accept: application/octet-stream" > "$work_dir/$artifact_name"
+          gh api "repos/$REPOSITORY/releases/assets/$checksum_id" -H "Accept: application/octet-stream" > "$work_dir/$checksum_name"
+          node scripts/release-publication.mjs check-checksum "$work_dir/$checksum_name" "$artifact_name"
+          (cd "$work_dir" && sha256sum -c "$checksum_name")
+
+          # Re-fetch the exact database object after downloading so replacement
+          # assets or a draft-state race cannot be hidden by the earlier list.
+          main_sha="$(gh api "repos/$REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          gh api --method GET "repos/$REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f branch=main -f event=push -f head_sha="$TARGET_SHA" -f per_page=100 > "$work_dir/runs.json"
+          jq -e '.workflow_runs | length > 0' "$work_dir/runs.json" >/dev/null
+          jq '.workflow_runs | sort_by(.run_attempt, .id) | reverse | .[0]
+            | {databaseId: .id, workflowPath: ".github/workflows/ci.yml", workflowName: .name,
+               event, branch: .head_branch, headSha: .head_sha, status, conclusion}' \
+            "$work_dir/runs.json" > "$work_dir/ci.json"
+          gh api "repos/$REPOSITORY/releases/$release_id" > "$work_dir/release-api.json"
+          if latest_id="$(gh api "repos/$REPOSITORY/releases/latest" --jq .id 2>"$work_dir/latest-error.txt")"; then
+            :
+          elif grep -q 'HTTP 404' "$work_dir/latest-error.txt"; then
+            latest_id=0
+          else
+            cat "$work_dir/latest-error.txt" >&2
+            exit 1
+          fi
+          jq --argjson latest_id "${latest_id:-0}" '
+            {databaseId: .id, tagName: .tag_name, targetCommitish: .target_commitish,
+             draft, prerelease, latest: (.id == $latest_id), assets: [.assets[] | {id, name}]}' \
+            "$work_dir/release-api.json" > "$work_dir/release.json"
+          jq -n --arg phase initial --argjson releaseId "$release_id" \
+            --argjson artifactId "$artifact_id" --argjson checksumId "$checksum_id" \
+            --arg artifact "$artifact_name" --arg checksum "$checksum_name" \
+            '{phase:$phase,expected:{releaseDatabaseId:$releaseId,assetIds:{($artifact):$artifactId,($checksum):$checksumId}}}' \
+            > "$work_dir/expected.json"
+
+          git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}" > "$work_dir/tag-refs.txt"
+          ref_count="$(wc -l < "$work_dir/tag-refs.txt" | tr -d ' ')"
+          if test "$ref_count" -eq 0; then
+            jq -n '{kind:"absent",objectSha:null,peeledSha:null}' > "$work_dir/tag.json"
+          elif test "$ref_count" -eq 1; then
+            object_sha="$(awk '{print $1}' "$work_dir/tag-refs.txt")"
+            jq -n --arg sha "$object_sha" '{kind:"lightweight",objectSha:$sha,peeledSha:$sha}' > "$work_dir/tag.json"
+          elif test "$ref_count" -eq 2; then
+            object_sha="$(awk '$2 !~ /\^\{\}$/ {print $1}' "$work_dir/tag-refs.txt")"
+            peeled_sha="$(awk '$2 ~ /\^\{\}$/ {print $1}' "$work_dir/tag-refs.txt")"
+            jq -n --arg object "$object_sha" --arg peeled "$peeled_sha" \
+              '{kind:"annotated",objectSha:$object,peeledSha:$peeled}' > "$work_dir/tag.json"
+          else
+            echo "Ambiguous remote tag state for $TAG" >&2
+            exit 1
+          fi
+
+          jq -n \
+            --arg tag "$TAG" --arg target "$TARGET_SHA" --arg main "$main_sha" \
+            --slurpfile source "$work_dir/source.json" --slurpfile remoteTag "$work_dir/tag.json" \
+            --slurpfile ci "$work_dir/ci.json" --slurpfile release "$work_dir/release.json" \
+            --rawfile checksumText "$work_dir/$checksum_name" \
+            '{tag:$tag,targetSha:$target,mainSha:$main,source:$source[0],remoteTag:$remoteTag[0],
+              ci:$ci[0],release:$release[0],checksum:{text:$checksumText,verified:true}}' \
+            > "$work_dir/snapshot.json"
+          node scripts/release-publication.mjs validate "$work_dir/snapshot.json" "$work_dir/expected.json" \
+            > "$work_dir/validated.json"
+
+          {
+            echo "disposition=$(jq -r .disposition "$work_dir/validated.json")"
+            echo "release_id=$release_id"
+            echo "artifact_name=$artifact_name"
+            echo "checksum_name=$checksum_name"
+            echo "artifact_id=$artifact_id"
+            echo "checksum_id=$checksum_id"
+          } >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Revalidate and publish exact draft
+    needs: validate
+    if: ${{ inputs.validation_only == false && needs.validate.outputs.disposition == 'draft' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          fetch-depth: 1
+
+      - name: Revalidate exact state, publish, and verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+          EXPECTED_RELEASE_ID: ${{ needs.validate.outputs.release_id }}
+          ARTIFACT_NAME: ${{ needs.validate.outputs.artifact_name }}
+          CHECKSUM_NAME: ${{ needs.validate.outputs.checksum_name }}
+          EXPECTED_ARTIFACT_ID: ${{ needs.validate.outputs.artifact_id }}
+          EXPECTED_CHECKSUM_ID: ${{ needs.validate.outputs.checksum_id }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          work_dir="$RUNNER_TEMP_DIR/release-$RUN_ID-$RUN_ATTEMPT-publication"
+          mkdir "$work_dir"
+          node scripts/release-contract.mjs check --json > "$work_dir/source.json"
+
+          snapshot_state() {
+            local phase="$1"
+            local main_sha latest_id object_sha peeled_sha ref_count artifact_id checksum_id
+            if test "$phase" = prepublish; then
+              gh api "repos/$REPOSITORY/releases/assets/$EXPECTED_ARTIFACT_ID" -H "Accept: application/octet-stream" > "$work_dir/$ARTIFACT_NAME"
+              gh api "repos/$REPOSITORY/releases/assets/$EXPECTED_CHECKSUM_ID" -H "Accept: application/octet-stream" > "$work_dir/$CHECKSUM_NAME"
+              node scripts/release-publication.mjs check-checksum "$work_dir/$CHECKSUM_NAME" "$ARTIFACT_NAME"
+              (cd "$work_dir" && sha256sum -c "$CHECKSUM_NAME")
+            fi
+            main_sha="$(gh api "repos/$REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+            gh api --method GET "repos/$REPOSITORY/actions/workflows/ci.yml/runs" \
+              -f branch=main -f event=push -f head_sha="$TARGET_SHA" -f per_page=100 > "$work_dir/runs.json"
+            jq -e '.workflow_runs | length > 0' "$work_dir/runs.json" >/dev/null
+            jq '.workflow_runs | sort_by(.run_attempt, .id) | reverse | .[0]
+              | {databaseId: .id, workflowPath: ".github/workflows/ci.yml", workflowName: .name,
+                 event, branch: .head_branch, headSha: .head_sha, status, conclusion}' \
+              "$work_dir/runs.json" > "$work_dir/ci.json"
+
+            gh api "repos/$REPOSITORY/releases/$EXPECTED_RELEASE_ID" > "$work_dir/release-api.json"
+            if latest_id="$(gh api "repos/$REPOSITORY/releases/latest" --jq .id 2>"$work_dir/latest-error.txt")"; then
+              :
+            elif grep -q 'HTTP 404' "$work_dir/latest-error.txt"; then
+              latest_id=0
+            else
+              cat "$work_dir/latest-error.txt" >&2
+              exit 1
+            fi
+            jq --argjson latest_id "${latest_id:-0}" '
+              {databaseId: .id, tagName: .tag_name, targetCommitish: .target_commitish,
+               draft, prerelease, latest: (.id == $latest_id), assets: [.assets[] | {id, name}]}' \
+              "$work_dir/release-api.json" > "$work_dir/release.json"
+
+            git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}" > "$work_dir/tag-refs.txt"
+            ref_count="$(wc -l < "$work_dir/tag-refs.txt" | tr -d ' ')"
+            if test "$ref_count" -eq 0; then
+              jq -n '{kind:"absent",objectSha:null,peeledSha:null}' > "$work_dir/tag.json"
+            elif test "$ref_count" -eq 1; then
+              object_sha="$(awk '{print $1}' "$work_dir/tag-refs.txt")"
+              jq -n --arg sha "$object_sha" '{kind:"lightweight",objectSha:$sha,peeledSha:$sha}' > "$work_dir/tag.json"
+            elif test "$ref_count" -eq 2; then
+              object_sha="$(awk '$2 !~ /\^\{\}$/ {print $1}' "$work_dir/tag-refs.txt")"
+              peeled_sha="$(awk '$2 ~ /\^\{\}$/ {print $1}' "$work_dir/tag-refs.txt")"
+              jq -n --arg object "$object_sha" --arg peeled "$peeled_sha" \
+                '{kind:"annotated",objectSha:$object,peeledSha:$peeled}' > "$work_dir/tag.json"
+            else
+              echo "Ambiguous remote tag state for $TAG" >&2
+              exit 1
+            fi
+
+            artifact_id="$(jq -r --arg name "$ARTIFACT_NAME" '.assets[] | select(.name == $name) | .id' "$work_dir/release-api.json")"
+            checksum_id="$(jq -r --arg name "$CHECKSUM_NAME" '.assets[] | select(.name == $name) | .id' "$work_dir/release-api.json")"
+            test "$artifact_id" = "$EXPECTED_ARTIFACT_ID"
+            test "$checksum_id" = "$EXPECTED_CHECKSUM_ID"
+
+            jq -n --argjson releaseId "$EXPECTED_RELEASE_ID" \
+              --argjson artifactId "$EXPECTED_ARTIFACT_ID" --argjson checksumId "$EXPECTED_CHECKSUM_ID" \
+              --arg artifact "$ARTIFACT_NAME" --arg checksum "$CHECKSUM_NAME" --arg phase "$phase" \
+              '{phase:$phase,expected:{releaseDatabaseId:$releaseId,assetIds:{($artifact):$artifactId,($checksum):$checksumId}}}' \
+              > "$work_dir/expected.json"
+            jq -n --arg tag "$TAG" --arg target "$TARGET_SHA" --arg main "$main_sha" \
+              --slurpfile source "$work_dir/source.json" --slurpfile remoteTag "$work_dir/tag.json" \
+              --slurpfile ci "$work_dir/ci.json" --slurpfile release "$work_dir/release.json" \
+              --rawfile checksumText "$work_dir/$CHECKSUM_NAME" \
+              '{tag:$tag,targetSha:$target,mainSha:$main,source:$source[0],remoteTag:$remoteTag[0],
+                ci:$ci[0],release:$release[0],checksum:{text:$checksumText,verified:true}}' \
+              > "$work_dir/snapshot.json"
+            node scripts/release-publication.mjs validate "$work_dir/snapshot.json" "$work_dir/expected.json"
+          }
+
+          snapshot_state prepublish
+          test "$(gh api "repos/$REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$TARGET_SHA"
+          gh api --method PATCH "repos/$REPOSITORY/releases/$EXPECTED_RELEASE_ID" \
+            -F draft=false -F prerelease=false -f target_commitish="$TARGET_SHA" -f make_latest=true \
+            > "$work_dir/published.json"
+          snapshot_state published
+          test "$(gh api "repos/$REPOSITORY/releases/latest" --jq .id)" = "$EXPECTED_RELEASE_ID"

@@ -202,6 +202,42 @@ pnpm rebuild:local-app
 See `.claude/skills/l-build/SKILL.md` for `/l-build`, including its
 same-session `SKIP_APP_BUILD=1` fast reinstall.
 
+## Build a release artifact
+
+On a clean macOS arm64 host, build and verify the exact local DMG/checksum pair
+without uploading or publishing anything:
+
+```bash
+bash scripts/build-macos-release.sh
+```
+
+The producer derives the version and names from the synchronized release
+contract, verifies the mounted ad-hoc-signed app and packaged runtime, and
+stages only the contract pair under `release-artifacts/`. The project release
+skill documents the separate existing-draft upload path.
+
+## Install a release
+
+GitHub Releases is the canonical direct download for end users. The current
+artifact is Apple Silicon (`aarch64`) and is effectively macOS 11+:
+`CCResDoc_<version>_aarch64.dmg` with its matching
+`CCResDoc_<version>_aarch64.dmg.sha256` file.
+
+Download both files, verify the DMG from the directory containing them, then
+open the DMG and drag `CCResDoc.app` to Applications:
+
+```bash
+shasum -a 256 -c CCResDoc_<version>_aarch64.dmg.sha256
+```
+
+The current build is ad-hoc signed but not notarized. On first launch,
+right-click `CCResDoc.app` and choose **Open**, or explicitly approve it in
+**System Settings → Privacy & Security**. Full Developer ID signing,
+notarization, and additional architectures are future improvements, not
+current distribution claims. The local macOS build is a product and
+architecture choice; standard public-repository GitHub-hosted runner billing
+is not the reason for it.
+
 ## Project structure
 
 ```
@@ -209,9 +245,9 @@ crates/          Rust workspace crates
   ccresdoc-claude-md/   ~/.claude→MDX generator + watcher (the live engine)
 src-tauri/       Tauri host (main.rs, tauri.conf.json, loading page)
 app/             zfb frontend project (zudo-doc consumer, port 4892)
-scripts/         run-b4push.sh, rebuild-local-app.sh, test-launch.sh, test-macos-settings.sh
-.github/         GitHub Actions CI workflow
-.claude/skills/  l-build skill (local build + verified /Applications install)
+scripts/         local build, verification, release-contract, and release-producer commands
+.github/         GitHub Actions CI and guarded release-publication workflows
+.claude/skills/  local build/install and release-orchestration skills
 ```
 
 See per-directory CLAUDE.md files for detailed architecture notes.

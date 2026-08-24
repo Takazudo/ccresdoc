@@ -7,6 +7,24 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+EXISTING_BUNDLE=""
+if (( $# == 2 )) && [[ "$1" == "--existing-bundle" ]]; then
+  [[ -d "$2" ]] || { echo "Existing app bundle not found: $2" >&2; exit 1; }
+  EXISTING_BUNDLE="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
+elif (( $# != 0 )); then
+  echo "Usage: bash scripts/test-macos-package.sh [--existing-bundle <CCResDoc.app>]" >&2
+  exit 2
+fi
+
+app_running() {
+  [[ "$(/usr/bin/osascript -e 'application id "com.takazudo.ccresdoc" is running' 2>/dev/null || true)" == "true" ]]
+}
+
+if app_running; then
+  echo "Refusing to run beside an existing CCResDoc instance." >&2
+  exit 1
+fi
+
 PROBE_DIR="$(mktemp -d /tmp/ccresdoc-macos-package.XXXXXX)"
 PROBE_HOME="$PROBE_DIR/home"
 SENTINEL_DIR="$PROBE_DIR/bin"
@@ -28,17 +46,38 @@ DARWIN_SIZE=""
 DARWIN_SHA256=""
 
 cleanup() {
-  if [[ -n "$APP_PID" ]] && kill -0 "$APP_PID" 2>/dev/null; then
-    kill -TERM "$APP_PID" 2>/dev/null || true
+  local status=$?
+  trap - EXIT INT TERM
+  if [[ -n "$APP_PID" ]]; then
+    if app_running; then
+      /usr/bin/osascript -e 'tell application id "com.takazudo.ccresdoc" to quit' >/dev/null 2>&1 || true
+      for _ in $(seq 1 80); do
+        app_running || break
+        sleep 0.25
+      done
+      if app_running; then
+        echo "Packaged CCResDoc did not quit during probe cleanup." >&2
+        status=1
+      fi
+    fi
+    if kill -0 "$APP_PID" 2>/dev/null; then
+      kill -TERM "$APP_PID" 2>/dev/null || true
+    fi
     wait "$APP_PID" 2>/dev/null || true
   fi
-  rm -rf "$PROBE_DIR"
+  case "$PROBE_DIR" in
+    /tmp/ccresdoc-macos-package.*) rm -rf "$PROBE_DIR" ;;
+    *) echo "Refusing to remove unexpected probe directory: $PROBE_DIR" >&2 ;;
+  esac
   if [[ "$PORT_LOCK_HELD" = "1" ]]; then
     rm -rf "$PORT_LOCK"
     PORT_LOCK_HELD=0
   fi
+  exit "$status"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 acquire_port_lock() {
   local owner_pid=""
@@ -87,16 +126,20 @@ EOF
 chmod 755 "$SENTINEL_DIR/node"
 
 cd "$REPO_ROOT"
-export CARGO_TARGET_DIR
-pnpm --dir app install --frozen-lockfile
-pnpm --dir app exec zfb build
-pnpm run probe:runtime-package
-cargo tauri build --bundles app
+if [[ -z "$EXISTING_BUNDLE" ]]; then
+  export CARGO_TARGET_DIR
+  pnpm --dir app install --frozen-lockfile
+  pnpm --dir app exec zfb build
+  pnpm run probe:runtime-package
+  cargo tauri build --bundles app
+  APP_PATH="$CARGO_TARGET_DIR/release/bundle/macos/CCResDoc.app"
+else
+  APP_PATH="$EXISTING_BUNDLE"
+fi
 
 acquire_port_lock
 test -z "$(lsof -ti :4892 2>/dev/null || true)"
 
-APP_PATH="$CARGO_TARGET_DIR/release/bundle/macos/CCResDoc.app"
 RUNTIME_ROOT="$APP_PATH/Contents/Resources/runtime-workspace/app"
 ZFB_BIN="$RUNTIME_ROOT/$DARWIN_RELATIVE_PATH"
 
@@ -163,5 +206,9 @@ for RUN in 1 2; do
 done
 
 echo "PASS host gate macos-arm64-packaged-app-webview: packaged workspace, WebView launch, node sentinel, relaunch, and process-group shutdown"
-echo "Fresh Cargo target: $CARGO_TARGET_DIR"
+if [[ -z "$EXISTING_BUNDLE" ]]; then
+  echo "Fresh Cargo target: $CARGO_TARGET_DIR"
+else
+  echo "Existing bundle mode: verified without rebuilding"
+fi
 echo "Bundle: $APP_PATH"
