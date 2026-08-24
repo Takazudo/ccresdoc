@@ -184,38 +184,28 @@ fn apply_saved(
     let impact = saved.impact.clone();
     let before = state.runtime.snapshot();
     let effective = saved.snapshot.effective.clone();
-    let generation = state.runtime.claim_generation();
-    state.runtime.publish_starting(saved.snapshot, generation);
 
     let status = if matches!(impact, ApplyImpact::RestartRuntime) {
-        launch(app, generation, effective, true);
+        let generation = state.runtime.claim_generation();
+        state.runtime.publish_starting(saved.snapshot, generation);
+        launch(app, generation, effective);
         if state.runtime.snapshot().phase == RuntimePhase::Ready {
             ApplyStatus::Active
         } else {
             ApplyStatus::SavedNotActive
         }
-    } else if let Some(mut active) = before.active {
-        active.appearance_mode = effective.appearance_mode;
-        active.theme_pack = effective.theme_pack;
-        let port = active.effective_port;
-        let preferred_port = active.preferred_port;
-        state.runtime.publish_ready(
-            active,
-            crate::runtime::PortChoice {
-                preferred_port,
-                effective_port: port,
-                fallback_used: before.fallback_used,
-            },
-            generation,
-        );
-        ApplyStatus::SavedNoRestart
     } else {
-        if let Some(diagnostic) = before.diagnostic {
-            state.runtime.publish_failed(diagnostic, generation);
+        // Appearance-only persistence is not a resource generation. Keep the
+        // active watcher callbacks on their existing generation lease while
+        // updating only authored/active appearance fields.
+        state
+            .runtime
+            .publish_authoritative_appearance(saved.snapshot);
+        if before.active.is_some() {
+            ApplyStatus::SavedNoRestart
         } else {
-            state.runtime.publish_stopped(generation);
+            ApplyStatus::SavedNotActive
         }
-        ApplyStatus::SavedNotActive
     };
 
     if clear_preview {
