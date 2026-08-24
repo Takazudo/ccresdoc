@@ -20,6 +20,12 @@ import {
   validateGeneratedThemePacks,
 } from "../app/scripts/sync-theme-packs.mjs";
 import {
+  assertAllowlistedInventory,
+  assertRuntimeWorkspacePrivacy,
+  copyGeneratedThemePacks,
+  copyRuntimeApp,
+} from "./runtime-workspace-files.mjs";
+import {
   RUNTIME_WORKSPACE_DIGEST_ALGORITHM,
   refreshTokenFromWorkspaceDigest,
   runtimeWorkspaceDigest,
@@ -50,18 +56,6 @@ const hostPackage = hostPlatform.package;
 const packageFacts = JSON.parse(readFileSync(packageFactsPath, "utf8"));
 const hostNativeFact = packageFacts.nativeCarriers[hostPlatform.factKey];
 assert(hostNativeFact, `canonical native fact missing: ${hostPlatform.factKey}`);
-
-const appFiles = [
-  "package.json",
-  "pnpm-lock.yaml",
-  "pnpm-workspace.yaml",
-  "tsconfig.json",
-  "zfb.config.ts",
-  "pages",
-  "public",
-  "src",
-  "dist",
-];
 
 const packageJson = JSON.parse(readFileSync(join(appRoot, "package.json"), "utf8"));
 assert.equal(
@@ -106,12 +100,19 @@ assert(!stageRoot.startsWith(`${appRoot}${sep}`), "stage destination must not be
 rmSync(stageRoot, { recursive: true, force: true });
 mkdirSync(stageApp, { recursive: true });
 
-for (const entry of appFiles) {
-  const source = join(appRoot, entry);
-  if (!existsSync(source)) continue;
-  cpSync(source, join(stageApp, entry), { recursive: true, dereference: true });
-}
+const copiedApp = copyRuntimeApp(appRoot, stageApp);
+const copiedThemeFiles = copyGeneratedThemePacks(
+  appRoot,
+  join(stageApp, "public", "theme-packs"),
+);
 validateGeneratedThemePacks({ outputRoot: join(stageApp, "public", "theme-packs") });
+assertAllowlistedInventory(stageApp);
+const privacyAudit = assertRuntimeWorkspacePrivacy(stageApp, {
+  // These are build checkout paths, not user-resource paths.  Rejecting them
+  // catches accidental sourcemaps or fixture copies without embedding them in
+  // the staged artifact.
+  forbiddenPaths: [repoRoot, appRoot],
+});
 
 const runtimePackageJson = {
   name: packageJson.name,
@@ -162,6 +163,10 @@ const workspaceDigest = runtimeWorkspaceDigest(stageApp, {
       label: "scripts/stage-runtime-workspace.mjs",
       path: fileURLToPath(import.meta.url),
     },
+    {
+      label: "scripts/runtime-workspace-files.mjs",
+      path: fileURLToPath(new URL("./runtime-workspace-files.mjs", import.meta.url)),
+    },
   ],
 });
 const token = refreshTokenFromWorkspaceDigest(workspaceDigest);
@@ -187,6 +192,18 @@ const manifest = {
     packs: themeAssets.packs,
     files: themeAssets.files,
     publicRoot: "app/public/theme-packs",
+  },
+  admittedAppFiles: {
+    source: copiedApp.copiedSourceFiles,
+    dist: copiedApp.copiedDistFiles,
+    theme: copiedThemeFiles.map((path) => `public/theme-packs/${path}`),
+  },
+  privacy: {
+    audit: "staged-app-surfaces",
+    filesChecked: privacyAudit.filesChecked,
+    sentinelsChecked: privacyAudit.sentinelsChecked,
+    generatedResourceDetails: "excluded-by-file-and-route-allowlist",
+    configuredRootPaths: "rejected-from-staged-text-surfaces",
   },
   packages: stagedNames.map((name) => ({ name, version: packages.get(name).version })),
   excluded: {

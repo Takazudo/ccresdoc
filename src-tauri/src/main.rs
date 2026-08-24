@@ -621,8 +621,8 @@ fn resolve_zfb_binary(workspace: &Path) -> Result<PathBuf, String> {
 // ── Sidecar (zfb dev) management ──────────────────
 
 /// Build the native zfb command. `ZFB_DEV_BOOT_LAZY` is removed explicitly:
-/// Finder and terminal launches may inherit it, but boot-lazy is allowed to
-/// serve staged `dist/` before the freshly generated resource tree is ready.
+/// Finder and terminal launches may inherit it, but readiness must come from a
+/// fresh sidecar build over the privacy-scoped source tree, not staged `dist/`.
 fn zfb_dev_command(zfb_bin: &Path, workspace: &Path, port: u16) -> Command {
     let mut cmd = Command::new(zfb_bin);
     cmd.args(["dev", "--host", "127.0.0.1", "--port", &port.to_string()])

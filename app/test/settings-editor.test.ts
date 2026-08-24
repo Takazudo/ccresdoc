@@ -55,7 +55,7 @@ describe("bundled Settings editor", () => {
     expect(document.activeElement).toBe(document.querySelector('[name="appearance-mode"]:checked'));
     expect(document.querySelector('label[for="claude-dir"]')).not.toBeNull();
     expect(document.querySelector("#claude-dir")?.getAttribute("aria-describedby")).toContain("claude-dir-description");
-    expect(document.querySelector("#effective-source")?.textContent).toBe("/Users/test/.claude / /Users/test/.claude");
+    expect(document.querySelector("#claude-source-status")?.textContent).toBe("~/.claude / /Users/test/.claude / /Users/test/.claude");
     expect(document.querySelector("#port-status")?.textContent).toBe("4892 / 4892");
     expect((document.querySelector("#save-settings") as HTMLButtonElement).disabled).toBe(true);
   });
@@ -104,8 +104,8 @@ describe("bundled Settings editor", () => {
   it("treats picker cancellation as a no-op, selected paths as drafts, Reset as unsaved, and Escape as Cancel", async () => {
     const { editor, backend, close } = setup(); await editor.load(); await flush();
     const source = document.querySelector("#claude-dir") as HTMLInputElement;
-    (document.querySelector("#pick-source") as HTMLButtonElement).click(); await flush(); expect(source.value).toBe("~/.claude");
-    backend.pickSourceDirectory.mockResolvedValueOnce("/safe/resources"); (document.querySelector("#pick-source") as HTMLButtonElement).click(); await flush(); expect(source.value).toBe("/safe/resources"); expect(backend.saveAndApply).not.toHaveBeenCalled();
+    (document.querySelector("#pick-claude-source") as HTMLButtonElement).click(); await flush(); expect(source.value).toBe("~/.claude");
+    backend.pickSourceDirectory.mockResolvedValueOnce("/safe/resources"); (document.querySelector("#pick-claude-source") as HTMLButtonElement).click(); await flush(); expect(source.value).toBe("/safe/resources"); expect(backend.saveAndApply).not.toHaveBeenCalled();
     (document.querySelector("#reset-defaults") as HTMLButtonElement).click(); await flush(); expect(source.value).toBe("~/.claude"); expect(backend.saveAndApply).not.toHaveBeenCalled();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await flush(); expect(close).toHaveBeenCalledOnce();
   });

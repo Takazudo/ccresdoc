@@ -103,6 +103,32 @@ DARWIN_RELATIVE_PATH="$(node -e 'const f=require(process.argv[1]).nativeCarriers
 DARWIN_SIZE="$(node -e 'const f=require(process.argv[1]).nativeCarriers["darwin-arm64"]; process.stdout.write(String(f.sizeBytes))' "$PACKAGE_FACTS")"
 DARWIN_SHA256="$(node -e 'const f=require(process.argv[1]).nativeCarriers["darwin-arm64"]; process.stdout.write(f.sha256)' "$PACKAGE_FACTS")"
 
+cd "$REPO_ROOT"
+if [[ -z "$EXISTING_BUNDLE" ]]; then
+  export CARGO_TARGET_DIR
+  pnpm --dir app install --frozen-lockfile
+  pnpm --dir app exec zfb build
+  pnpm run probe:runtime-package
+  cargo tauri build --bundles app
+  APP_PATH="$CARGO_TARGET_DIR/release/bundle/macos/CCResDoc.app"
+else
+  APP_PATH="$EXISTING_BUNDLE"
+fi
+
+acquire_port_lock
+test -z "$(lsof -ti :4892 2>/dev/null || true)"
+
+RUNTIME_ROOT="$APP_PATH/Contents/Resources/runtime-workspace/app"
+ZFB_BIN="$RUNTIME_ROOT/$DARWIN_RELATIVE_PATH"
+
+# Audit the final bundle's staged app before any user fixture is introduced.
+# This checks the same explicit source/namespace/privacy contract as the Linux
+# staged probe and receives only synthetic temporary paths as rejection inputs.
+node "$REPO_ROOT/scripts/audit-runtime-workspace.mjs" "$RUNTIME_ROOT" "$PROBE_HOME" "$APP_PATH"
+
+# Create the temporary source and failing Node sentinel only after the final
+# bundle has passed its privacy audit. They are launch inputs, never staging
+# inputs, and therefore cannot influence the audited package bytes.
 mkdir -p "$PROBE_HOME/.claude/skills/package-readiness-probe" "$SENTINEL_DIR"
 printf '%s\n' \
   '---' \
@@ -124,24 +150,6 @@ printf '%s\n' "\$*" >> '$SENTINEL_LOG'
 exit 97
 EOF
 chmod 755 "$SENTINEL_DIR/node"
-
-cd "$REPO_ROOT"
-if [[ -z "$EXISTING_BUNDLE" ]]; then
-  export CARGO_TARGET_DIR
-  pnpm --dir app install --frozen-lockfile
-  pnpm --dir app exec zfb build
-  pnpm run probe:runtime-package
-  cargo tauri build --bundles app
-  APP_PATH="$CARGO_TARGET_DIR/release/bundle/macos/CCResDoc.app"
-else
-  APP_PATH="$EXISTING_BUNDLE"
-fi
-
-acquire_port_lock
-test -z "$(lsof -ti :4892 2>/dev/null || true)"
-
-RUNTIME_ROOT="$APP_PATH/Contents/Resources/runtime-workspace/app"
-ZFB_BIN="$RUNTIME_ROOT/$DARWIN_RELATIVE_PATH"
 
 test "$DARWIN_PACKAGE" = "@takazudo/zfb-darwin-arm64@$(node -p 'require("./app/package.json").optionalDependencies["@takazudo/zfb-darwin-arm64"]')"
 test -x "$ZFB_BIN"
@@ -171,15 +179,18 @@ for RUN in 1 2; do
       exit 1
     fi
     if [[ "$(curl -s -o "$PROBE_DIR/root.html" -w '%{http_code}' http://127.0.0.1:4892/ || true)" = "200" ]] \
-      && grep -Fq "Claude Code Resources" "$PROBE_DIR/root.html" \
+      && grep -Fq "CCResDoc Resources" "$PROBE_DIR/root.html" \
       && grep -Fq "$FIXTURE_LABEL" "$PROBE_DIR/root.html" \
       && ! grep -Fq "data-home-page" "$PROBE_DIR/root.html" \
-      && ! grep -Fq ">Claude</a>" "$PROBE_DIR/root.html" \
+      && grep -Fq "Claude" "$PROBE_DIR/root.html" \
+      && grep -Fq "Codex" "$PROBE_DIR/root.html" \
       && grep -Fq "data-header-logo" "$PROBE_DIR/root.html" \
       && grep -Eq 'href="?/docs/' "$PROBE_DIR/root.html" \
       && [[ "$(curl -s -o "$PROBE_DIR/docs.html" -w '%{http_code}' http://127.0.0.1:4892/docs/ || true)" = "200" ]] \
-      && grep -Fq "Claude Resources" "$PROBE_DIR/docs.html" \
+      && grep -Fq "CCResDoc Resources" "$PROBE_DIR/docs.html" \
       && grep -Fq "$FIXTURE_LABEL" "$PROBE_DIR/docs.html" \
+      && grep -Fq "Claude" "$PROBE_DIR/docs.html" \
+      && grep -Fq "Codex" "$PROBE_DIR/docs.html" \
       && [[ "$(curl -s -o "$PROBE_DIR/fixture.html" -w '%{http_code}' "$FIXTURE_ROUTE" || true)" = "200" ]] \
       && grep -Fq "$FIXTURE_LABEL" "$PROBE_DIR/fixture.html" \
       && grep -Fq "$FIXTURE_BODY" "$PROBE_DIR/fixture.html" \

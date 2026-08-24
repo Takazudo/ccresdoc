@@ -15,6 +15,11 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import {
+  assertAllowlistedInventory,
+  assertRuntimeRenderedPrivacy,
+  assertRuntimeWorkspacePrivacy,
+} from "./runtime-workspace-files.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const stagedRoot = join(repoRoot, "src-tauri", "runtime-workspace");
@@ -27,6 +32,7 @@ const workspace = join(probeRoot, "app-workspace");
 const sentinelDir = join(probeRoot, "sentinel-bin");
 const sentinelLog = join(probeRoot, "node-invocations.log");
 const processSamples = [];
+let renderedPrivacyResponses = 0;
 let processSampleFailure;
 const port = 4892;
 const portLock = join(tmpdir(), `ccresdoc-runtime-port-${port}.lock`);
@@ -42,6 +48,12 @@ process.once("exit", () => {
 });
 
 cpSync(join(stagedRoot, "app"), workspace, { recursive: true, dereference: true });
+assertAllowlistedInventory(workspace);
+const privacyAudit = assertRuntimeWorkspacePrivacy(workspace, {
+  // The temporary probe path is a synthetic configured-root candidate. It is
+  // passed only as a rejection input and is never written to the workspace.
+  forbiddenPaths: [probeRoot],
+});
 mkdirSync(sentinelDir);
 writeFileSync(sentinelLog, "");
 const sentinel = join(sentinelDir, process.platform === "win32" ? "node.cmd" : "node");
@@ -229,6 +241,11 @@ function launch() {
   return child;
 }
 
+function assertRenderedPrivacy(path, body) {
+  assertRuntimeRenderedPrivacy(path, body, { forbiddenPaths: [probeRoot] });
+  renderedPrivacyResponses += 1;
+}
+
 async function runOnce({ hmr }) {
   const child = launch();
   activeChild = child;
@@ -241,16 +258,18 @@ async function runOnce({ hmr }) {
     }
   }, 100);
   try {
-    const home = await fetchUntil("/", "Claude Code Resources");
+    const home = await fetchUntil("/", "CCResDoc Resources");
+    assertRenderedPrivacy("/", home);
     assert.match(home, /data-zfb-island=/, "representative SSR page must include hydrated islands");
-    assert.doesNotMatch(home, /data-home-page|>Claude<\/a/, "the root alias must not render marketing or Claude nav chrome");
+    assert.doesNotMatch(home, /data-home-page/, "the root alias must not render a marketing home");
     assert.match(home, /<a[^>]*(?:href=(?:\/docs\/|\"\/docs\/\")[^>]*data-header-logo|data-header-logo(?:=true|=\"true\")[^>]*href=(?:\/docs\/|\"\/docs\/\"))/, "root alias must link its logo to /docs/");
     const assets = home.match(/\/assets\/[A-Za-z0-9._-]+/g) ?? [];
     assert.ok(assets.length > 0, "representative SSR route must reference packaged assets");
 
-    const docs = await fetchUntil("/docs/", "Claude Code Resources");
+    const docs = await fetchUntil("/docs/", "CCResDoc Resources");
+    assertRenderedPrivacy("/docs/", docs);
     for (const [signal, pattern] of [
-      ["Claude Code Resources", /Claude Code Resources/],
+      ["CCResDoc Resources", /CCResDoc Resources/],
       ["data-header-logo", /data-header-logo/],
       ["data-theme-pack", /data-theme-pack/],
       ["ThemePackSwitcher", /data-zfb-island(?:=ThemePackSwitcher|=\"ThemePackSwitcher\")/],
@@ -262,17 +281,19 @@ async function runOnce({ hmr }) {
     assert.match(docs, /Choose a resource category below\./, "first accepted docs response must contain the populated landing content");
     assert.match(docs, /<a[^>]*(?:href=(?:\/docs\/|\"\/docs\/\")[^>]*data-header-logo|data-header-logo(?:=true|=\"true\")[^>]*href=(?:\/docs\/|\"\/docs\/\"))/, "docs logo must link to /docs/");
     assert.match(docs, /data-header-nav(?:=true|=\"true\")/, "docs shell must expose its header nav seam");
-    assert.doesNotMatch(docs, /<[^>]*data-nav-item(?:=|\s|>)[^>]*>|>Claude<\/a/, "header nav must be empty and must not contain Claude");
+    assert.match(docs, /Claude/, "header nav must keep the permanent Claude category");
+    assert.match(docs, /Codex/, "header nav must keep the permanent Codex category");
     const headerNav = docs.match(/<nav[^>]*data-header-nav[^>]*>([\s\S]*?)<\/nav>/);
     assert.ok(headerNav, "docs shell must include a header nav element");
-    assert.doesNotMatch(headerNav[1], /<a\b|<li\b/, "header nav must not contain links or list items");
+    assert.match(headerNav[1], /Claude/);
+    assert.match(headerNav[1], /Codex/);
     assert.match(docs, /data-theme-pack(?:=default|=\"default\")/, "docs shell must bootstrap the default theme pack");
     assert.match(docs, /data-zfb-island(?:=ThemePackSwitcher|=\"ThemePackSwitcher\")/, "docs shell must hydrate the theme-pack switcher");
     assert.match(docs, /data-zd-theme-pack-loading|zudo-doc-theme-pack/, "docs shell must include no-flash theme bootstrap");
     await assertThemeAssetParity();
     const missing = await fetch(`http://127.0.0.1:${port}/definitely-missing/`);
     assert.equal(missing.status, 404, "missing routes must return the host-owned 404 response");
-    await missing.text();
+    assertRenderedPrivacy("/definitely-missing/", await missing.text());
 
     if (hmr) {
       const reload = await fetch(`http://127.0.0.1:${port}/__zfb/reload`, {
@@ -305,7 +326,8 @@ async function runOnce({ hmr }) {
       const original = readFileSync(content, "utf8");
       assert.match(original, /Choose a resource category below\./);
       writeFileSync(content, `${original}\n\n${marker}\n`);
-      await fetchUntil("/docs/", marker);
+      const hmrBody = await fetchUntil("/docs/", marker);
+      assertRenderedPrivacy("/docs/ (HMR)", hmrBody);
       const reloadResult = await Promise.race([
         event,
         delay(10_000).then(() => { throw new Error("reload event timeout"); }),
@@ -344,6 +366,8 @@ try {
     resolvedPluginDescriptors: 0,
     nodeSentinelInvocations: 0,
     processSamples: processSamples.length,
+    renderedPrivacyResponses,
+    privacyAudit,
     processGroupShutdown: true,
     fixedPortSerialized: true,
     portReleasedAfterEachLaunch: true,
