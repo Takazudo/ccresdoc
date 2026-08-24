@@ -1,0 +1,3 @@
+# 日本語 prefix_rule(pattern=["ignored"], decision="deny")
+prefix_rule(pattern = ["git", ["status", "diff"]], decision = "allow", justification = "read only")
+message = "prefix_rule(pattern=['inside-string'])"

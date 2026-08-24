@@ -1,0 +1,8 @@
+{
+  "hooks": {
+    "SessionStart": [{
+      "matcher": "repo|worktree",
+      "hooks": [{"type": "command", "command": "./hooks/start.sh | tee log", "timeout": 30, "async": false}]
+    }]
+  }
+}

@@ -43,11 +43,9 @@ fn live_generate_against_real_claude_dir() {
     assert!(report.skills > 0, "expected >=1 skill");
     assert!(report.agents > 0, "expected >=1 agent");
 
-    // Contract category index pages exist with the right positions.
-    let overview = std::fs::read_to_string(out.path().join("claude/index.mdx")).unwrap();
-    assert!(overview.contains("sidebar_position: 899"));
-    assert!(overview.contains("<CategoryNav categories="));
-
+    // Detail category index pages exist with the right positions. The routed
+    // `claude/` landing is coordinator-owned and is intentionally not emitted.
+    assert!(!out.path().join("claude/index.mdx").exists());
     for (sub, pos) in [
         ("claude-md", "900"),
         ("claude-commands", "901"),
