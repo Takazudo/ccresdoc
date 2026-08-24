@@ -132,7 +132,7 @@ validate_release() {
   local json="$1"
   local phase="$2"
   local expected_database_id="${3:-}"
-  local summary target target_sha managed_names
+  local summary target target_sha asset_names
   summary="$(node -e '
     const r=JSON.parse(process.argv[1]);
     const fields=[r.databaseId, r.isDraft, r.isPrerelease, r.tagName, r.targetCommitish];
@@ -156,23 +156,23 @@ validate_release() {
     fail "$phase: draft Release identity changed during upload"
   fi
 
-  managed_names="$(node -e '
+  asset_names="$(node -e '
     const r=JSON.parse(process.argv[1]);
-    const names=(r.assets ?? []).map((a) => a.name).filter((name) => /^CCResDoc_.*_aarch64\.dmg(?:\.sha256)?$/.test(name)).sort();
+    const names=(r.assets ?? []).map((a) => a.name).sort();
     process.stdout.write(names.join("\n"));
   ' "$json")" || fail "$phase: malformed GitHub asset metadata"
-  printf '%s' "$managed_names"
+  printf '%s' "$asset_names"
 }
 
 validate_managed_inventory() {
-  local managed_names="$1"
+  local asset_names="$1"
   local phase="$2"
   if [[ "$CLOBBER" == "1" ]]; then
-    [[ "$managed_names" == "$EXPECTED_MANAGED" ]] ||
-      fail "$phase: --clobber requires the same complete managed asset pair on the matching draft"
+    [[ "$asset_names" == "$EXPECTED_MANAGED" ]] ||
+      fail "$phase: --clobber requires the same complete release asset pair on the matching draft"
   else
-    [[ -z "$managed_names" ]] ||
-      fail "$phase: draft already has managed release assets; use --clobber only for an exact-pair retry"
+    [[ -z "$asset_names" ]] ||
+      fail "$phase: draft already has release assets; use --clobber only for an exact-pair retry"
   fi
 }
 
@@ -203,10 +203,10 @@ validate_uploaded_assets() {
 if [[ -n "$UPLOAD_TAG" ]]; then
   BEFORE_RELEASE_JSON="$(release_json)" ||
     fail "existing draft Release $EXPECTED_TAG was not found or could not be read"
-  BEFORE_MANAGED="$(validate_release "$BEFORE_RELEASE_JSON" "before build")"
+  BEFORE_ASSETS="$(validate_release "$BEFORE_RELEASE_JSON" "before build")"
   RELEASE_DATABASE_ID="$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).databaseId ?? ""))' "$BEFORE_RELEASE_JSON")"
   EXPECTED_MANAGED="$(printf '%s\n%s' "$ARTIFACT_NAME" "$CHECKSUM_NAME" | LC_ALL=C sort)"
-  validate_managed_inventory "$BEFORE_MANAGED" "before build"
+  validate_managed_inventory "$BEFORE_ASSETS" "before build"
 fi
 
 [[ ! -e "$ARTIFACT_PATH" && ! -e "$CHECKSUM_PATH" ]] ||
@@ -295,15 +295,15 @@ PAIR_COMPLETE=1
 
 if [[ -n "$UPLOAD_TAG" ]]; then
   PRE_UPLOAD_RELEASE_JSON="$(release_json)" || fail "draft Release disappeared before upload"
-  PRE_UPLOAD_MANAGED="$(validate_release "$PRE_UPLOAD_RELEASE_JSON" "immediately before upload" "$RELEASE_DATABASE_ID")"
-  validate_managed_inventory "$PRE_UPLOAD_MANAGED" "immediately before upload"
+  PRE_UPLOAD_ASSETS="$(validate_release "$PRE_UPLOAD_RELEASE_JSON" "immediately before upload" "$RELEASE_DATABASE_ID")"
+  validate_managed_inventory "$PRE_UPLOAD_ASSETS" "immediately before upload"
   upload_arguments=("$EXPECTED_TAG" "$ARTIFACT_PATH" "$CHECKSUM_PATH")
   if [[ "$CLOBBER" == "1" ]]; then upload_arguments+=(--clobber); fi
   gh release upload "${upload_arguments[@]}"
   AFTER_RELEASE_JSON="$(release_json)" || fail "draft Release disappeared after upload"
-  AFTER_MANAGED="$(validate_release "$AFTER_RELEASE_JSON" "after upload" "$RELEASE_DATABASE_ID")"
-  [[ "$AFTER_MANAGED" == "$EXPECTED_MANAGED" ]] ||
-    fail "uploaded draft does not contain both and only the expected managed asset names"
+  AFTER_ASSETS="$(validate_release "$AFTER_RELEASE_JSON" "after upload" "$RELEASE_DATABASE_ID")"
+  [[ "$AFTER_ASSETS" == "$EXPECTED_MANAGED" ]] ||
+    fail "uploaded draft does not contain both and only the expected release asset names"
   validate_uploaded_assets "$AFTER_RELEASE_JSON"
 fi
 
