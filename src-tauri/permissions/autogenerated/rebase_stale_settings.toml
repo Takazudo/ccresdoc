@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rebase-stale-settings"
+description = "Enables the rebase_stale_settings command without any pre-configured scope."
+commands.allow = ["rebase_stale_settings"]
+
+[[permission]]
+identifier = "deny-rebase-stale-settings"
+description = "Denies the rebase_stale_settings command without any pre-configured scope."
+commands.deny = ["rebase_stale_settings"]

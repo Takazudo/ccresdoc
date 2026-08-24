@@ -18,7 +18,7 @@
       "✗ error: bundler step failed",
       "  caused by: bundler: esbuild exited with status exit status: 1: ✘ [ERROR] Could not resolve \"diff\"",
       "",
-      "    ../..<probe-root>/node_modules/@takazudo/zudo-doc/dist/doc-history/index.js:97:37:",
+      "    <probe-root>/node_modules/@takazudo/zudo-doc/dist/doc-history/index.js:97:37:",
       "      97 │   const { diffLines } = await import(\"diff\");",
       "         ╵                                      ~~~~~~",
       "",

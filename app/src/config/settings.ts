@@ -3,12 +3,17 @@
 
 import { DEFAULT_SETTINGS } from "@takazudo/zudo-doc/config";
 import themePackCatalog from "@takazudo/zudo-doc/catalog";
+import runtimeThemePackSlugs from "./theme-pack-slugs.json";
 import type {
   HeaderRightItem,
   Settings,
 } from "@takazudo/zudo-doc/settings";
 
-export const themePackSlugs = themePackCatalog.packs.map(({ slug }) => slug);
+const catalogThemePackSlugs = themePackCatalog.packs.map(({ slug }) => slug);
+if (JSON.stringify(catalogThemePackSlugs) !== JSON.stringify(runtimeThemePackSlugs)) {
+  throw new Error("CCResDoc runtime theme-pack catalog is out of sync");
+}
+export const themePackSlugs = [...runtimeThemePackSlugs];
 
 export const settings = {
   ...DEFAULT_SETTINGS,
@@ -66,6 +71,7 @@ export const settings = {
   // primary navigation entry and points directly at the canonical doc shell.
   headerNav: [],
   headerRightItems: [
+    { type: "component", component: "ccresdoc-settings" },
     { type: "component", component: "theme-toggle" },
   ] as HeaderRightItem[],
   // No default-locale-only paths (no i18n)

@@ -1,6 +1,9 @@
 # CCResDoc
 
-macOS documentation viewer for `$HOME/.claude/`. Thin Tauri host around a **node-free sidecar** architecture: at launch the host runs the in-process Rust generator/watcher (`ccresdoc-claude-md`) and spawns the native `zfb` binary (`zfb dev --port 4892`); the WebView navigates to `http://localhost:4892/docs/` after semantic readiness.
+macOS documentation viewer for a settings-selected Claude resources directory
+(`$HOME/.claude/` by default). The thin Tauri host runs the in-process Rust
+generator/watcher (`ccresdoc-claude-md`), spawns the native `zfb` binary on the
+effective loopback port, and navigates there after semantic readiness.
 
 This project consumes the published zfb toolchain through the app's frozen
 lockfile. The hybrid architecture is documented in the epic issue (#41).
@@ -10,7 +13,8 @@ lockfile. The hybrid architecture is documented in the epic issue (#41).
 - `node_modules` is populated at **setup/build time only** via `pnpm install --frozen-lockfile` (Node at setup only — NOT at runtime).
 - The published toolchain is `@takazudo/zfb*` `2.10.1` plus `@takazudo/zudo-doc` `5.12.0`; the app and compatibility fixture are validated from their own frozen lockfiles.
 - The host resolves the **native** zfb binary at the package-root carrier `<workspace>/node_modules/@takazudo/zfb-<platform>/zfb` — NOT the `.bin/zfb` Node-shebang wrapper.
-- **Port 4892**: pinned in `app/zfb.config.ts` and `src-tauri/tauri.conf.json`.
+- **Port 4892**: the authored default. The host passes the validated effective
+  port to zfb and may select a free loopback fallback without touching its owner.
 - **Node-free at runtime**: the zfb config ends with `plugins: []`; host-owned route adapters replace package route/plugin entrypoints, and `zfb dev` spawns no Node host process.
 - **Writable workspace model**: bundled `.app` copies `Resources/runtime-workspace/app/` to `<app_data_dir>/app-workspace/` on first launch. A SHA-256 tree digest covers the staged workspace plus the staging/digest implementation; its refresh token gates the `.ccresdoc-workspace-ready` sentinel.
 - **Rust `~/.claude`→MDX generator** (`crates/ccresdoc-claude-md`) is the live engine: `generate()` + `watch()` write MDX → `zfb dev` content-watch → HMR.

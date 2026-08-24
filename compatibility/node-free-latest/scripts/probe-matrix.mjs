@@ -7,11 +7,21 @@ import { resolveNativeBinary, probeRoot } from "./native-binary.mjs";
 
 const variants = ["wholesale", "routes-off", "selected", "manual"];
 const results = {};
-const escapedProbeRoot = probeRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapedProbeRoot = escapeRegExp(probeRoot);
+const escapedRelativeProbeRoot = escapeRegExp(probeRoot.replace(/^\/+/, ""));
+const escapedTempRoot = escapeRegExp(tmpdir());
 const normalize = (value) => value
-  .replace(new RegExp(`(?:\\.\\.\\/)*${escapedProbeRoot}`, "g"), "<probe-root>")
-  .replace(/\/tmp\/ccresdoc-config-[^/ ]+\/workspace/g, "<isolated-workspace>")
-  .replace(/\/tmp\/zfb-plugin-host-[^/ ]+/g, "<zfb-plugin-host>")
+  .replace(new RegExp(`(?:\\.\\.\\/)+${escapedRelativeProbeRoot}`, "g"), "<probe-root>")
+  .replace(new RegExp(escapedProbeRoot, "g"), "<probe-root>")
+  .replace(
+    new RegExp(`(?:/private)?${escapedTempRoot}/ccresdoc-config-[^/ ]+/workspace`, "g"),
+    "<isolated-workspace>",
+  )
+  .replace(
+    new RegExp(`(?:/private)?${escapedTempRoot}/zfb-plugin-host-[^/ ]+`, "g"),
+    "<zfb-plugin-host>",
+  )
   .replace(/ in \d+\.\d+s/g, " in <duration>");
 const shellQuote = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
 

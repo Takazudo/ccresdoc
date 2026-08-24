@@ -9,19 +9,25 @@
 //!   1. boots the Wave 2 generator (`ccresdoc_claude_md::generate`) once,
 //!   2. starts the Wave 2 watcher (`::watch`) in-process so edits under
 //!      `~/.claude` regenerate the MDX tree and `zfb dev`'s content-watch HMRs,
-//!   3. spawns `zfb dev --port 4892` (cwd = the writable app project) as a
+//!   3. selects a settings-driven loopback port and spawns `zfb dev` as a
 //!      process-group sidecar,
 //!   4. polls semantic readiness on `/docs/` (scaled for the cold first build
 //!      of ~135 skills) and navigates the WebView there only after generated
 //!      resource navigation is present.
 //!
-//! On window close the sidecar process group is SIGTERM→SIGKILL'd so nothing
-//! is left holding port 4892.
+//! On main-window close the sidecar process group is SIGTERM→SIGKILL'd so
+//! nothing is left holding its effective port. Closing Settings only hides it.
+
+pub mod appearance;
+pub mod runtime;
+pub mod settings;
+pub mod settings_commands;
+pub mod settings_window;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, thread};
@@ -30,12 +36,15 @@ use ccresdoc_claude_md::{Config as GenConfig, WatchEvent, WatchHandle, DEFAULT_D
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
-const PORT: u16 = 4892;
-const DOCS_PATH: &str = "/docs/";
-/// Generator-owned category title rendered into `/docs/`'s full navigation
-/// tree. The checked-in staged snapshot lacks this marker, so a stale 200 can
-/// never release the loading screen before generation + zfb rendering finish.
-const READINESS_MARKER: &str = "Claude Resources";
+use runtime::{
+    NavigationDecision, PortBoundary, PortChoice, ReadyResult, RuntimeDiagnostic,
+    RuntimeDiagnosticKind, RuntimePhase, SystemPortBoundary,
+};
+use settings::{EffectiveSettings, SettingsStore};
+use settings_window::{
+    lifecycle_action, open_or_focus_settings, LifecycleAction, SETTINGS_ACCELERATOR,
+    SETTINGS_MENU_ID, SETTINGS_WINDOW_LABEL,
+};
 const LOADING_URL: &str = "tauri://localhost/index.html";
 const IS_DEV: bool = cfg!(debug_assertions);
 
@@ -49,6 +58,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(300);
 /// completes. Its presence + matching version token is what marks the
 /// workspace "ready"; a partial/interrupted copy lacks it and is re-copied.
 const WORKSPACE_READY_FILE: &str = ".ccresdoc-workspace-ready";
+const EPHEMERAL_WEBVIEW_ENV: &str = "CCRESDOC_EPHEMERAL_WEBVIEW";
 
 /// Maps `std::env::consts::OS`-`ARCH` to the zfb platform package name.
 /// Mirrors `@takazudo/zfb/bin/zfb.mjs` exactly (biome's pattern). The native
@@ -90,14 +100,14 @@ struct AppState {
     zoom: Mutex<f64>,
     /// Filled in during setup() (app_data_dir/ccresdoc.log).
     log_path: Mutex<String>,
-    /// Bumped at the start of every launch attempt (initial setup + each
-    /// retry). A launch thread that finishes after a newer one began sees a
-    /// mismatch and skips its navigate/emit so the two cannot race.
-    launch_gen: AtomicU64,
-    /// Serializes launch mutation (watcher/sidecar replacement). A newer
-    /// generation can supersede an older one immediately, while this lock
-    /// prevents their teardown/spawn phases from interleaving.
-    launch_lock: Mutex<()>,
+    runtime: Arc<runtime::ApplyCoordinator>,
+    settings_store: SettingsStore,
+    appearance: appearance::AppearanceState,
+    /// Read by the navigation callback without consulting Tauri state.
+    effective_port: Arc<AtomicU16>,
+    /// Set before exit teardown. Publication handshakes with this flag so a
+    /// watcher or child spawned concurrently with exit cannot escape tracking.
+    shutting_down: AtomicBool,
 }
 
 // ── Helpers ───────────────────────────────────────
@@ -110,16 +120,16 @@ fn home_dir() -> Option<String> {
     env::var("HOME").ok().filter(|h| !h.is_empty())
 }
 
-/// Absolute `~/.claude`. Passed to the Wave 2 generator as both `claude_dir`
-/// and `project_root` — NEVER `$HOME` (the walk must stay scoped to
-/// `~/.claude`; the generator rejects `project_root == $HOME`). `None` when
-/// `$HOME` is unavailable so callers can emit an error instead of panicking.
-fn claude_dir() -> Option<PathBuf> {
-    home_dir().map(|h| PathBuf::from(h).join(".claude"))
+fn ephemeral_webview_enabled_value(value: Option<&str>) -> bool {
+    value == Some("1")
 }
 
-fn docs_url() -> String {
-    format!("http://localhost:{PORT}{DOCS_PATH}")
+pub(crate) fn ephemeral_webview_enabled() -> bool {
+    ephemeral_webview_enabled_value(env::var(EPHEMERAL_WEBVIEW_ENV).ok().as_deref())
+}
+
+fn resource_publication_allowed(shutting_down: bool, current: u64, expected: u64) -> bool {
+    !shutting_down && current == expected
 }
 
 /// The log path resolved in setup(), read out of shared state.
@@ -133,13 +143,39 @@ fn log_path(app_handle: &AppHandle) -> String {
 }
 
 /// Navigate the main window to the doc site. Parse errors are impossible for
-/// the constant `docs_url()`, so they are silently ignored. Shared by the
+/// the runtime-generated docs URL, so they are silently ignored. Shared by the
 /// launch-success path, the dev retry path, and the Refresh menu item.
 fn navigate_to_docs(app_handle: &AppHandle) {
     if let Some(w) = app_handle.get_webview_window("main") {
-        if let Ok(url) = docs_url().parse::<tauri::Url>() {
-            let _ = w.navigate(url);
+        let state = app_handle.state::<AppState>();
+        let port = state.effective_port.load(Ordering::SeqCst);
+        if let Ok(url) = runtime::docs_url(port).parse::<tauri::Url>() {
+            // One WebKit task updates the appearance-only navigation seed and
+            // starts navigation. The installed initialization script consumes
+            // it at DocumentStart on the exact destination origin.
+            state.appearance.clear_candidate();
+            let snapshot = state.settings_store.load();
+            let seed =
+                appearance::bootstrap_seed(&snapshot, state.settings_store.available_theme_packs());
+            let script = appearance::window_name_script(&seed, url.as_str());
+            let _ = w.eval(script);
         }
+    }
+}
+
+/// A freshly built main WebView already carries a current static DocumentStart
+/// seed, so reopen can use native navigation without racing an eval against the
+/// loading document's creation.
+#[cfg(target_os = "macos")]
+fn navigate_fresh_main_to_docs(app_handle: &AppHandle) {
+    let state = app_handle.state::<AppState>();
+    state.appearance.clear_candidate();
+    let port = state.effective_port.load(Ordering::SeqCst);
+    if let (Some(window), Ok(url)) = (
+        app_handle.get_webview_window("main"),
+        runtime::docs_url(port).parse::<tauri::Url>(),
+    ) {
+        let _ = window.navigate(url);
     }
 }
 
@@ -147,6 +183,7 @@ fn navigate_to_docs(app_handle: &AppHandle) {
 /// runs from this page's error panel, so both paths converge on the same launch
 /// lease and semantic-readiness classifier.
 fn navigate_to_loading(app_handle: &AppHandle) {
+    app_handle.state::<AppState>().appearance.clear_candidate();
     if let Some(w) = app_handle.get_webview_window("main") {
         if let Ok(url) = LOADING_URL.parse::<tauri::Url>() {
             let _ = w.navigate(url);
@@ -156,10 +193,8 @@ fn navigate_to_loading(app_handle: &AppHandle) {
 
 /// Build a `Command` for an external tool, preferring the macOS absolute path
 /// but falling back to a bare name (resolved via `PATH`) when that absolute
-/// path does not exist. macOS ships these at fixed locations (`/usr/bin/lsof`,
-/// `/usr/bin/curl`, `/bin/cp`), so on macOS the absolute path is used as
-/// before; on other Unixes the layout differs (e.g. `/bin/lsof`,
-/// `/usr/local/bin/...`), so we let `PATH` resolve the bare name. This keeps
+/// path does not exist. macOS ships `cp` at `/bin/cp`; on other Unixes the
+/// layout can differ, so we let `PATH` resolve the bare name. This keeps
 /// current macOS behavior while making the host portable for local dev/CI.
 fn tool_command(abs_path: &str, bare_name: &str) -> Command {
     if Path::new(abs_path).exists() {
@@ -546,21 +581,26 @@ fn resolve_zfb_binary(workspace: &Path) -> Result<PathBuf, String> {
 /// Build the native zfb command. `ZFB_DEV_BOOT_LAZY` is removed explicitly:
 /// Finder and terminal launches may inherit it, but boot-lazy is allowed to
 /// serve staged `dist/` before the freshly generated resource tree is ready.
-fn zfb_dev_command(zfb_bin: &Path, workspace: &Path) -> Command {
+fn zfb_dev_command(zfb_bin: &Path, workspace: &Path, port: u16) -> Command {
     let mut cmd = Command::new(zfb_bin);
-    cmd.args(["dev", "--port", &PORT.to_string()])
+    cmd.args(["dev", "--host", "127.0.0.1", "--port", &port.to_string()])
         .current_dir(workspace)
         .env_remove("ZFB_DEV_BOOT_LAZY");
     cmd
 }
 
-/// Spawn `zfb dev --port 4892` with cwd = the writable workspace, in its own
-/// process group so the whole tree dies on window close (no orphan on 4892).
-fn spawn_zfb_dev(zfb_bin: &Path, workspace: &Path, log_path: &str) -> Result<Sidecar, String> {
+/// Spawn `zfb dev` on the selected port with cwd = the writable workspace, in
+/// its own process group so the whole owned tree dies on window close.
+fn spawn_zfb_dev(
+    zfb_bin: &Path,
+    workspace: &Path,
+    port: u16,
+    log_path: &str,
+) -> Result<Sidecar, String> {
     log_to(
         log_path,
         &format!(
-            "spawn_zfb_dev: bin={} cwd={}",
+            "spawn_zfb_dev: bin={} cwd={} port={port}",
             zfb_bin.display(),
             workspace.display()
         ),
@@ -575,7 +615,7 @@ fn spawn_zfb_dev(zfb_bin: &Path, workspace: &Path, log_path: &str) -> Result<Sid
         .try_clone()
         .map_err(|e| format!("clone sidecar log {log_path}: {e}"))?;
 
-    let mut cmd = zfb_dev_command(zfb_bin, workspace);
+    let mut cmd = zfb_dev_command(zfb_bin, workspace, port);
     cmd.stdout(Stdio::from(sidecar_log))
         .stderr(Stdio::from(sidecar_stderr));
 
@@ -594,37 +634,32 @@ fn spawn_zfb_dev(zfb_bin: &Path, workspace: &Path, log_path: &str) -> Result<Sid
 }
 
 /// Tear down the live sidecar + watcher: drop the `WatchHandle` (stops the
-/// watcher) and SIGTERM→SIGKILL the `zfb dev` process group so nothing is left
-/// holding port 4892.
+/// watcher) and SIGTERM→SIGKILL the `zfb dev` process group so no owned child
+/// remains.
 ///
 /// This MUST run on every app-exit path, not just window close. An app-level
 /// Quit (Cmd+Q, Dock → Quit, `osascript 'tell application … to quit'`) can
 /// terminate the app WITHOUT reliably emitting `WindowEvent::Destroyed` first,
-/// which previously left `zfb dev` orphaned on 4892. So the run-event handler
+/// which previously left `zfb dev` orphaned. So the run-event handler
 /// calls this from `WindowEvent::Destroyed` AND `ExitRequested` AND `Exit`.
 ///
 /// It is idempotent: both the sidecar (`Option::take()` on the shared
 /// `Mutex<Option<Sidecar>>`) and the watcher (`Option::take()` on the
 /// `WatchHandle`) are taken out of shared state, so whichever exit event fires
 /// first does the work and any later call is a no-op.
-fn teardown(app_handle: &AppHandle, sidecar: &Arc<Mutex<Option<Sidecar>>>, log_path: &str) {
-    let _ = app_handle
-        .state::<AppState>()
-        .watch_handle
-        .lock()
-        .unwrap()
-        .take();
-    if let Ok(mut g) = sidecar.lock() {
-        if let Some(mut s) = g.take() {
-            kill_sidecar(&mut s, log_path);
-        }
+fn teardown(
+    app_handle: &AppHandle,
+    sidecar: &Arc<Mutex<Option<Sidecar>>>,
+    log_path: &str,
+    shutting_down: bool,
+) {
+    let state = app_handle.state::<AppState>();
+    if shutting_down {
+        state.shutting_down.store(true, Ordering::SeqCst);
     }
-    // Final sweep: `kill_sidecar` only signals the direct child's process
-    // group, so a grandchild that escaped that group (re-parented, or in a new
-    // group of its own) could still hold :PORT. Reuse the lsof-based
-    // terminate-then-kill sweep to catch any holder regardless of group
-    // lineage. Cheap no-op when nothing is on the port.
-    kill_port(log_path);
+    let stopped_generation = state.runtime.claim_generation();
+    state.runtime.publish_stopped(stopped_generation);
+    stop_owned_runtime_resources(app_handle, sidecar, log_path);
 }
 
 /// `libc::kill(target, sig)` with its return value checked and logged on
@@ -692,186 +727,50 @@ fn kill_sidecar(sidecar: &mut Sidecar, log_path: &str) {
 
     // Bounded poll instead of a flat 500ms sleep so we return as soon as the
     // child is reaped (this can run on the main event loop during exit).
-    if wait_reaped(
+    let reaped = wait_reaped(
         &mut sidecar.child,
         Duration::from_millis(1000),
         Duration::from_millis(50),
-    ) {
+    );
+    if reaped {
         log_to(log_path, "kill_sidecar: exited after SIGTERM");
     } else {
         log_to(log_path, "kill_sidecar: escalating to SIGKILL");
-        let _ = sidecar.child.kill();
+    }
+
+    // The direct child can exit before one of its descendants. While any
+    // descendant remains, the app-created PGID remains allocated and cannot
+    // be reassigned, so a signal-0 check followed by SIGKILL targets only that
+    // exact owned group. This replaces the unsafe former port-owner sweep.
+    #[cfg(unix)]
+    if let Ok(pid) = i32::try_from(pid) {
+        // SAFETY: signal 0 performs an existence check only.
+        if unsafe { libc::kill(-pid, 0) } == 0 {
+            signal_checked(-pid, libc::SIGKILL, log_path, "kill_sidecar");
+        }
+    }
+    if !reaped {
+        #[cfg(not(unix))]
+        {
+            let _ = sidecar.child.kill();
+        }
         let _ = sidecar.child.wait();
     }
 }
 
-// ── Port cleanup ─────────────────────────────────
-
-/// List PIDs currently holding :PORT (via `lsof -ti`).
-fn pids_on_port() -> Vec<i32> {
-    tool_command("/usr/bin/lsof", "lsof")
-        .args(["-ti", &format!(":{PORT}")])
-        .output()
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .filter_map(|l| l.trim().parse::<i32>().ok())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Free :PORT before spawning a fresh sidecar. SIGTERM first; if a holder is
-/// slow/deaf to it, escalate to SIGKILL so a stuck process can't make every
-/// subsequent spawn (and Retry) fail to bind. Mirrors `kill_sidecar`'s
-/// terminate-then-kill escalation.
-fn kill_port(log_path: &str) {
-    let pids = pids_on_port();
-    if pids.is_empty() {
-        return;
-    }
-    for pid in &pids {
-        log_to(
-            log_path,
-            &format!("kill_port: SIGTERM stale pid {pid} on :{PORT}"),
-        );
-        #[cfg(unix)]
-        signal_checked(*pid, libc::SIGTERM, log_path, "kill_port");
-    }
-    thread::sleep(Duration::from_millis(500));
-
-    // Re-list rather than reuse `pids`: a slow holder may have died, and a PID
-    // gone from the list must NOT be SIGKILL'd (it could have been recycled).
-    let stragglers = pids_on_port();
-    for pid in &stragglers {
-        log_to(
-            log_path,
-            &format!("kill_port: SIGKILL straggler pid {pid} on :{PORT}"),
-        );
-        #[cfg(unix)]
-        signal_checked(*pid, libc::SIGKILL, log_path, "kill_port");
-    }
-    if !stragglers.is_empty() {
-        thread::sleep(Duration::from_millis(300));
-    }
-}
-
-// ── Readiness polling ────────────────────────────
-
-#[derive(Debug)]
-enum ReadyResult {
-    Ready,
-    Timeout,
-    Superseded,
-    /// The sidecar exited before becoming ready — short-circuit the wait.
-    SidecarExited {
-        code: Option<i32>,
-    },
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum ReadinessState {
-    HttpUnavailable,
-    StaleContent,
-    Ready,
-}
-
-fn classify_readiness(http_status: &str, body: &str) -> ReadinessState {
-    if http_status != "200" {
-        ReadinessState::HttpUnavailable
-    } else if !body.contains(READINESS_MARKER) {
-        ReadinessState::StaleContent
-    } else {
-        ReadinessState::Ready
-    }
-}
-
-#[derive(Debug)]
-struct HttpProbe {
-    status: String,
-    body: String,
-    diagnostic: String,
-}
-
-fn curl_docs() -> HttpProbe {
-    match tool_command("/usr/bin/curl", "curl")
-        .args(["-sS", "-w", "\n%{http_code}", &docs_url()])
-        .output()
-    {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let (body, status) = stdout
-                .rsplit_once('\n')
-                .map(|(body, status)| (body.to_string(), status.trim().to_string()))
-                .unwrap_or_else(|| (stdout.into_owned(), "err".to_string()));
-            HttpProbe {
-                status,
-                body,
-                diagnostic: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-            }
-        }
-        Err(error) => HttpProbe {
-            status: "err".to_string(),
-            body: String::new(),
-            diagnostic: error.to_string(),
-        },
-    }
-}
-
-/// Poll `GET /docs/` until it is both HTTP-successful and contains the
-/// generator-owned resource marker. Each tick first checks sidecar liveness so
-/// a crashed `zfb dev` surfaces an error within ~1s.
-fn wait_for_ready(
-    timeout: Duration,
+fn stop_owned_runtime_resources(
+    app_handle: &AppHandle,
     sidecar: &Arc<Mutex<Option<Sidecar>>>,
     log_path: &str,
-    generation: (&AtomicU64, u64),
-) -> ReadyResult {
-    log_to(log_path, "wait_for_ready: start");
-    let start = Instant::now();
-    while start.elapsed() < timeout {
-        if !is_current_generation(generation.0, generation.1) {
-            log_to(log_path, "wait_for_ready: superseded");
-            return ReadyResult::Superseded;
+) {
+    let state = app_handle.state::<AppState>();
+    let _ = state.watch_handle.lock().unwrap().take();
+    if let Ok(mut slot) = sidecar.lock() {
+        if let Some(mut owned) = slot.take() {
+            kill_sidecar(&mut owned, log_path);
         }
-        {
-            let mut guard = sidecar.lock().unwrap();
-            if let Some(ref mut s) = *guard {
-                match s.child.try_wait() {
-                    Ok(Some(status)) => {
-                        let code = status.code();
-                        log_to(
-                            log_path,
-                            &format!("wait_for_ready: sidecar exited early (code={code:?})"),
-                        );
-                        return ReadyResult::SidecarExited { code };
-                    }
-                    Ok(None) => {}
-                    Err(e) => log_to(log_path, &format!("wait_for_ready: try_wait error: {e}")),
-                }
-            }
-        }
-
-        let probe = curl_docs();
-        let state = classify_readiness(&probe.status, &probe.body);
-        log_to(
-            log_path,
-            &format!(
-                "curl {DOCS_PATH}: http={} semantic={state:?} bytes={} diagnostic={:?} ({}s)",
-                probe.status,
-                probe.body.len(),
-                probe.diagnostic,
-                start.elapsed().as_secs()
-            ),
-        );
-        if state == ReadinessState::Ready {
-            log_to(log_path, "wait_for_ready: semantically ready");
-            return ReadyResult::Ready;
-        }
-        thread::sleep(Duration::from_secs(1));
     }
-    log_to(log_path, "wait_for_ready: TIMEOUT");
-    ReadyResult::Timeout
+    state.effective_port.store(0, Ordering::SeqCst);
 }
 
 // ── Error emission ────────────────────────────────
@@ -909,20 +808,13 @@ fn emit_launch_error(app_handle: &AppHandle, result: &ReadyResult) {
 
 // ── Launch (boot + retry) ─────────────────────────
 
-fn claim_launch_generation(app_handle: &AppHandle) -> u64 {
+fn launch_is_current(app_handle: &AppHandle, generation: u64) -> bool {
     app_handle
         .state::<AppState>()
-        .launch_gen
-        .fetch_add(1, Ordering::SeqCst)
-        + 1
-}
-
-fn is_current_generation(counter: &AtomicU64, generation: u64) -> bool {
-    counter.load(Ordering::SeqCst) == generation
-}
-
-fn launch_is_current(app_handle: &AppHandle, generation: u64) -> bool {
-    is_current_generation(&app_handle.state::<AppState>().launch_gen, generation)
+        .runtime
+        .generation()
+        .load(Ordering::SeqCst)
+        == generation
 }
 
 fn emit_launch_error_if_current(app_handle: &AppHandle, generation: u64, reason: &str) {
@@ -936,17 +828,35 @@ fn emit_launch_error_if_current(app_handle: &AppHandle, generation: u64, reason:
     }
 }
 
+fn publish_launch_failure(
+    state: &AppState,
+    generation: u64,
+    desired: &EffectiveSettings,
+    kind: RuntimeDiagnosticKind,
+    attempted_port: Option<u16>,
+    message: String,
+) {
+    state.runtime.publish_failed(
+        RuntimeDiagnostic {
+            kind,
+            preferred_port: desired.preferred_port,
+            attempted_port,
+            message,
+        },
+        generation,
+    );
+}
+
 /// The full node-free boot, runnable from initial setup, Refresh, and Retry.
 /// Resolves workspace + zfb binary + `~/.claude`, runs `generate()`
 /// once, starts `watch()`, spawns `zfb dev`, polls readiness, then navigates.
 ///
-/// `launch_gen` guards against restart races, while `launch_lock` prevents two
-/// generations from interleaving watcher/sidecar replacement.
-fn launch(app_handle: &AppHandle, my_gen: u64) {
+/// The runtime coordinator's generation guards against stale terminal work,
+/// while its serialized apply lease prevents interleaved replacement.
+fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow_recovery: bool) {
     let log_path = log_path(app_handle);
     let sidecar_arc = app_handle.state::<AppState>().sidecar.clone();
     let state = app_handle.state::<AppState>();
-    let _launch_guard = state.launch_lock.lock().unwrap();
 
     if !launch_is_current(app_handle, my_gen) {
         log_to(
@@ -966,6 +876,14 @@ fn launch(app_handle: &AppHandle, my_gen: u64) {
                 &log_path,
                 &format!("launch: workspace resolution failed: {e}"),
             );
+            publish_launch_failure(
+                &state,
+                my_gen,
+                &desired,
+                RuntimeDiagnosticKind::WorkspaceUnavailable,
+                None,
+                e,
+            );
             emit_launch_error_if_current(app_handle, my_gen, "workspace_unavailable");
             return;
         }
@@ -976,30 +894,77 @@ fn launch(app_handle: &AppHandle, my_gen: u64) {
         Ok(b) => b,
         Err(e) => {
             log_to(&log_path, &format!("launch: zfb binary unresolved: {e}"));
+            publish_launch_failure(
+                &state,
+                my_gen,
+                &desired,
+                RuntimeDiagnosticKind::ZfbBinaryMissing,
+                None,
+                e,
+            );
             emit_launch_error_if_current(app_handle, my_gen, "zfb_binary_missing");
             return;
         }
     };
 
-    // 3. Resolve absolute ~/.claude (HOME unset or dir missing → error UI).
-    let claude = match claude_dir() {
-        Some(c) => c,
-        None => {
-            log_to(&log_path, "launch: $HOME unset — cannot resolve ~/.claude");
-            emit_launch_error_if_current(app_handle, my_gen, "home_unavailable");
-            return;
-        }
-    };
+    // 3. Use the normalized source from the typed settings snapshot.
+    let claude = desired.claude_dir.clone();
     if !claude.exists() {
-        log_to(
-            &log_path,
-            &format!("launch: ~/.claude missing at {}", claude.display()),
+        let message = format!("source directory is unavailable: {}", claude.display());
+        log_to(&log_path, &format!("launch: {message}"));
+        publish_launch_failure(
+            &state,
+            my_gen,
+            &desired,
+            RuntimeDiagnosticKind::SourceUnavailable,
+            None,
+            message,
         );
         emit_launch_error_if_current(app_handle, my_gen, "claude_dir_missing");
         return;
     }
 
-    // 4. Boot the Wave 2 generator once, then start the watcher in-process.
+    // Select before disturbing the previous working runtime whenever the
+    // requested port is not the port owned by that runtime.
+    let previous = state.runtime.snapshot().active;
+    let mut ports = SystemPortBoundary;
+    let initial_choice = if previous
+        .as_ref()
+        .is_some_and(|active| active.effective_port == desired.preferred_port)
+    {
+        Ok(PortChoice {
+            preferred_port: desired.preferred_port,
+            effective_port: desired.preferred_port,
+            fallback_used: false,
+        })
+    } else {
+        runtime::choose_port(
+            &mut ports,
+            desired.preferred_port,
+            desired.fallback_to_free_port,
+        )
+    };
+    let mut choice = match initial_choice {
+        Ok(choice) => choice,
+        Err(error) => {
+            let diagnostic = RuntimeDiagnostic {
+                kind: if matches!(error, runtime::PortError::PreferredOccupied { .. }) {
+                    RuntimeDiagnosticKind::PreferredPortOccupied
+                } else {
+                    RuntimeDiagnosticKind::SpawnFailed
+                },
+                preferred_port: desired.preferred_port,
+                attempted_port: Some(desired.preferred_port),
+                message: error.to_string(),
+            };
+            state.runtime.publish_failed(diagnostic, my_gen);
+            emit_launch_error_if_current(app_handle, my_gen, "preferred_port_occupied");
+            return;
+        }
+    };
+
+    // 4. Boot the Wave 2 generator once. The old watcher/server remain alive
+    // until this succeeds, preserving the previous working runtime.
     //    docs_dir is the workspace's zudo-doc content root.
     let gen_config = GenConfig {
         claude_dir: claude.clone(),
@@ -1017,6 +982,15 @@ fn launch(app_handle: &AppHandle, my_gen: u64) {
         ),
         Err(e) => {
             log_to(&log_path, &format!("launch: generate failed: {e}"));
+            state.runtime.publish_failed(
+                RuntimeDiagnostic {
+                    kind: RuntimeDiagnosticKind::GenerateFailed,
+                    preferred_port: desired.preferred_port,
+                    attempted_port: None,
+                    message: e.to_string(),
+                },
+                my_gen,
+            );
             emit_launch_error_if_current(app_handle, my_gen, "generate_failed");
             return;
         }
@@ -1030,17 +1004,18 @@ fn launch(app_handle: &AppHandle, my_gen: u64) {
         return;
     }
 
+    // The replacement transition begins here. Drop only app-owned resources;
+    // no port-owner discovery or signalling is permitted.
+    let _ = state.watch_handle.lock().unwrap().take();
+    let mut old_sidecar = sidecar_arc.lock().unwrap().take();
+    if let Some(ref mut old) = old_sidecar {
+        kill_sidecar(old, &log_path);
+    }
+    state.effective_port.store(0, Ordering::SeqCst);
+
     // Start the watcher; keep its handle in AppState so it lives for the
-    // process lifetime (dropping it stops the watch). On retry, drop the old
-    // watcher FIRST (before constructing the new one) so two watchers never
-    // run concurrently on ~/.claude.
+    // process lifetime.
     {
-        let _ = app_handle
-            .state::<AppState>()
-            .watch_handle
-            .lock()
-            .unwrap()
-            .take();
         let watch_log = log_path.clone();
         match ccresdoc_claude_md::watch(gen_config, DEFAULT_DEBOUNCE, move |event| match event {
             WatchEvent::Regenerated(report) => log_to(
@@ -1054,7 +1029,21 @@ fn launch(app_handle: &AppHandle, my_gen: u64) {
         }) {
             Ok(handle) => {
                 let state = app_handle.state::<AppState>();
-                *state.watch_handle.lock().unwrap() = Some(handle);
+                let mut slot = state.watch_handle.lock().unwrap();
+                if !resource_publication_allowed(
+                    state.shutting_down.load(Ordering::SeqCst),
+                    state.runtime.generation().load(Ordering::SeqCst),
+                    my_gen,
+                ) {
+                    drop(slot);
+                    drop(handle);
+                    log_to(
+                        &log_path,
+                        "launch: dropping watcher created after shutdown or supersession",
+                    );
+                    return;
+                }
+                *slot = Some(handle);
                 log_to(&log_path, "launch: watcher started");
             }
             Err(e) => {
@@ -1073,37 +1062,89 @@ fn launch(app_handle: &AppHandle, my_gen: u64) {
             &log_path,
             &format!("launch[{my_gen}]: superseded after watcher setup"),
         );
+        stop_owned_runtime_resources(app_handle, &sidecar_arc, &log_path);
         return;
     }
 
-    // 5. Clear any stale port holder, then (re)spawn zfb dev.
-    {
-        let mut guard = sidecar_arc.lock().unwrap();
-        if let Some(mut old) = guard.take() {
-            kill_sidecar(&mut old, &log_path);
-        }
-    }
-    kill_port(&log_path);
-    {
-        let mut guard = sidecar_arc.lock().unwrap();
-        match spawn_zfb_dev(&zfb_bin, &workspace, &log_path) {
-            Ok(s) => *guard = Some(s),
-            Err(e) => {
-                drop(guard);
-                log_to(&log_path, &format!("launch: spawn failed: {e}"));
-                emit_launch_error_if_current(app_handle, my_gen, "spawn_failed");
-                return;
+    // 5/6. Spawn and probe. If the released preflight socket was stolen,
+    // retry with a fresh OS-assigned loopback candidate, boundedly.
+    let mut result = ReadyResult::Timeout;
+    let mut bind_retry_exhausted = false;
+    for attempt in 0..runtime::MAX_BIND_ATTEMPTS {
+        if attempt > 0 {
+            match runtime::choose_port(&mut ports, desired.preferred_port, true) {
+                Ok(next) if next.effective_port != desired.preferred_port => choice = next,
+                Ok(_) => match ports.fallback_candidate() {
+                    Ok(port) => {
+                        choice = PortChoice {
+                            preferred_port: desired.preferred_port,
+                            effective_port: port,
+                            fallback_used: true,
+                        }
+                    }
+                    Err(error) => {
+                        log_to(&log_path, &format!("fallback allocation failed: {error}"));
+                        break;
+                    }
+                },
+                Err(error) => {
+                    log_to(&log_path, &format!("fallback allocation failed: {error}"));
+                    break;
+                }
             }
         }
+        match spawn_zfb_dev(&zfb_bin, &workspace, choice.effective_port, &log_path) {
+            Ok(mut sidecar) => {
+                let mut slot = sidecar_arc.lock().unwrap();
+                if !resource_publication_allowed(
+                    state.shutting_down.load(Ordering::SeqCst),
+                    state.runtime.generation().load(Ordering::SeqCst),
+                    my_gen,
+                ) {
+                    drop(slot);
+                    kill_sidecar(&mut sidecar, &log_path);
+                    let _ = state.watch_handle.lock().unwrap().take();
+                    return;
+                }
+                *slot = Some(sidecar);
+            }
+            Err(error) => {
+                log_to(&log_path, &format!("launch: spawn failed: {error}"));
+                result = ReadyResult::SidecarExited { code: None };
+                break;
+            }
+        }
+        result = runtime::wait_for_ready(
+            choice.effective_port,
+            READY_TIMEOUT,
+            (state.runtime.generation(), my_gen),
+            || {
+                let mut guard = sidecar_arc.lock().unwrap();
+                guard
+                    .as_mut()
+                    .and_then(|sidecar| match sidecar.child.try_wait() {
+                        Ok(Some(status)) => Some(status.code()),
+                        _ => None,
+                    })
+            },
+            |port| match runtime::probe_docs(port, Duration::from_secs(1)) {
+                Ok((status, body)) => runtime::classify_readiness(status, &body),
+                Err(_) => runtime::ReadinessState::HttpUnavailable,
+            },
+        );
+        if result != (ReadyResult::SidecarExited { code: None })
+            && !matches!(result, ReadyResult::SidecarExited { .. })
+        {
+            break;
+        }
+        let _ = sidecar_arc.lock().unwrap().take();
+        if !desired.fallback_to_free_port
+            || ports.is_available(choice.effective_port).unwrap_or(true)
+        {
+            break;
+        }
+        bind_retry_exhausted = attempt + 1 == runtime::MAX_BIND_ATTEMPTS;
     }
-
-    // 6. Poll semantic readiness on /docs/ (scaled for the cold first build).
-    let result = wait_for_ready(
-        READY_TIMEOUT,
-        &sidecar_arc,
-        &log_path,
-        (&state.launch_gen, my_gen),
-    );
 
     // 7. Skip navigate/emit if a newer launch superseded this one.
     if !launch_is_current(app_handle, my_gen) {
@@ -1111,12 +1152,45 @@ fn launch(app_handle: &AppHandle, my_gen: u64) {
             &log_path,
             "launch: superseded by a newer launch — skipping navigate/emit",
         );
+        stop_owned_runtime_resources(app_handle, &sidecar_arc, &log_path);
         return;
     }
 
     match result {
-        ReadyResult::Ready => navigate_to_docs(app_handle),
+        ReadyResult::Ready => {
+            state
+                .effective_port
+                .store(choice.effective_port, Ordering::SeqCst);
+            state.runtime.publish_ready(desired, choice, my_gen);
+            navigate_to_docs(app_handle)
+        }
         ReadyResult::Timeout | ReadyResult::SidecarExited { .. } => {
+            let kind = if bind_retry_exhausted {
+                RuntimeDiagnosticKind::BindRetryExhausted
+            } else if matches!(result, ReadyResult::Timeout) {
+                RuntimeDiagnosticKind::Timeout
+            } else {
+                RuntimeDiagnosticKind::SidecarExited
+            };
+            let diagnostic = RuntimeDiagnostic {
+                kind,
+                preferred_port: desired.preferred_port,
+                attempted_port: Some(choice.effective_port),
+                message: format!("{result:?}"),
+            };
+            // A failure after replacement began has stopped the previous
+            // process. Restore that exact effective runtime when possible;
+            // then re-publish the new authored settings as saved-not-active.
+            if let Some(previous) = previous.filter(|_| allow_recovery) {
+                log_to(&log_path, "launch: attempting previous-runtime recovery");
+                launch(app_handle, my_gen, previous, false);
+                if state.runtime.snapshot().phase != RuntimePhase::Ready {
+                    state.runtime.clear_active(my_gen);
+                }
+            } else if !allow_recovery {
+                state.runtime.clear_active(my_gen);
+            }
+            state.runtime.publish_failed(diagnostic, my_gen);
             emit_launch_error(app_handle, &result);
         }
         ReadyResult::Superseded => {}
@@ -1124,9 +1198,19 @@ fn launch(app_handle: &AppHandle, my_gen: u64) {
 }
 
 fn start_launch(app_handle: &AppHandle) {
-    let generation = claim_launch_generation(app_handle);
+    let state = app_handle.state::<AppState>();
+    if state.shutting_down.load(Ordering::SeqCst) {
+        return;
+    }
+    let generation = state.runtime.claim_generation();
+    let authored = state.runtime.snapshot().authored;
+    let desired = authored.effective.clone();
+    state.runtime.publish_starting(authored, generation);
+    let coordinator = state.runtime.clone();
     let handle = app_handle.clone();
-    thread::spawn(move || launch(&handle, generation));
+    thread::spawn(move || {
+        coordinator.with_serialized_apply(|| launch(&handle, generation, desired, true))
+    });
 }
 
 /// The JS that applies a zoom level to the page body. Used both by `apply_zoom`
@@ -1157,58 +1241,97 @@ fn reapply_zoom(app_handle: &AppHandle) {
     }
 }
 
-/// Frontend-callable retry for the loading page's error panel. Spawned on a
-/// thread so the IPC call returns immediately. Re-runs the full `launch()`
-/// (which claims a new generation, tears down the old sidecar/watcher, and
-/// re-spawns) in both dev and prod — the host owns `zfb dev` in both modes.
-#[tauri::command]
-fn retry_launch(app_handle: AppHandle) {
-    log_to(
-        &log_path(&app_handle),
-        "retry_launch: invoked from frontend",
-    );
-    start_launch(&app_handle);
-}
-
 // ── Navigation filter ─────────────────────────────
 
 /// Allow in-window navigation only for the pinned doc-site origin
 /// (`localhost:PORT` / `127.0.0.1:PORT`), tauri/asset protocol URLs, and
 /// about:blank. Any other http(s) URL is opened in the OS browser and rejected
 /// for in-window navigation.
-fn allow_navigation(url: &tauri::Url) -> bool {
-    match url.scheme() {
-        "tauri" | "asset" | "about" => true,
-        "http" | "https" => {
-            let is_local = matches!(url.host_str(), Some("localhost") | Some("127.0.0.1"))
-                && url.port() == Some(PORT);
-            if !is_local {
-                if let Err(e) = open::that(url.as_str()) {
-                    eprintln!("allow_navigation: failed to open {url} in OS browser: {e}");
-                }
+fn allow_navigation(url: &tauri::Url, effective_port: u16) -> bool {
+    match runtime::navigation_decision(url, (effective_port != 0).then_some(effective_port)) {
+        NavigationDecision::Allow => true,
+        NavigationDecision::OpenExternal => {
+            if let Err(e) = open::that(url.as_str()) {
+                eprintln!("allow_navigation: failed to open {url} in OS browser: {e}");
             }
-            is_local
+            false
         }
-        _ => false,
+        NavigationDecision::Reject => false,
     }
+}
+
+fn create_main_window(
+    app: &AppHandle,
+    navigation_port: Arc<AtomicU16>,
+    appearance_seed: appearance::BootstrapSeed,
+) -> Result<(), tauri::Error> {
+    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("CCResDoc")
+        .inner_size(1200.0, 800.0)
+        .initialization_script(appearance::initialization_script(&appearance_seed))
+        .on_navigation(move |url| allow_navigation(url, navigation_port.load(Ordering::SeqCst)))
+        .on_page_load(|window, payload| {
+            if let tauri::webview::PageLoadEvent::Finished = payload.event() {
+                reapply_zoom(window.app_handle());
+            }
+        });
+    if ephemeral_webview_enabled() {
+        builder = builder.incognito(true);
+    }
+    builder.build()?;
+    Ok(())
 }
 
 // ── Main ──────────────────────────────────────────
 
 fn main() {
+    let home = match home_dir() {
+        Some(home) => PathBuf::from(home),
+        None => PathBuf::from("/"),
+    };
+    let config_path = settings::resolve_config_path()
+        .unwrap_or_else(|_| home.join(".config/ccresdoc/config.toml"));
+    let settings_store =
+        SettingsStore::with_theme_packs(config_path, home, settings::bundled_theme_pack_slugs());
+    let settings_snapshot = settings_store.load();
+    let appearance_seed =
+        appearance::bootstrap_seed(&settings_snapshot, settings_store.available_theme_packs());
+    let runtime = Arc::new(runtime::ApplyCoordinator::new(settings_snapshot));
+    let effective_port = Arc::new(AtomicU16::new(0));
     let app_state = AppState {
         sidecar: Arc::new(Mutex::new(None)),
         watch_handle: Mutex::new(None),
         zoom: Mutex::new(1.0),
         log_path: Mutex::new(String::new()),
-        launch_gen: AtomicU64::new(0),
-        launch_lock: Mutex::new(()),
+        runtime,
+        settings_store,
+        appearance: appearance::AppearanceState::default(),
+        effective_port: effective_port.clone(),
+        shutting_down: AtomicBool::new(false),
     };
     let sidecar_for_exit = app_state.sidecar.clone();
+    let navigation_port = effective_port.clone();
+    #[cfg(target_os = "macos")]
+    let reopen_navigation_port = navigation_port.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
-        .invoke_handler(tauri::generate_handler![retry_launch])
+        .invoke_handler(tauri::generate_handler![
+            settings_commands::retry_launch,
+            settings_commands::open_settings_window,
+            settings_commands::get_settings_snapshot,
+            settings_commands::update_appearance,
+            settings_commands::preview_appearance,
+            settings_commands::clear_appearance_preview,
+            settings_commands::validate_settings_draft,
+            settings_commands::save_and_apply_settings,
+            settings_commands::rebase_stale_settings,
+            settings_commands::replace_malformed_settings,
+            settings_commands::pick_source_directory,
+            settings_commands::open_config_file,
+            settings_commands::reveal_config_file,
+        ])
         .setup(move |app| {
             // Resolve the log path under the app-data dir (always writable).
             let app_data = app
@@ -1226,6 +1349,12 @@ fn main() {
             // ── Menu ──
             let app_menu = SubmenuBuilder::new(app, "CCResDoc")
                 .about(None)
+                .separator()
+                .item(
+                    &MenuItemBuilder::with_id(SETTINGS_MENU_ID, "Settings…")
+                        .accelerator(SETTINGS_ACCELERATOR)
+                        .build(app)?,
+                )
                 .separator()
                 .quit()
                 .build()?;
@@ -1278,6 +1407,14 @@ fn main() {
             app.set_menu(menu)?;
 
             app.on_menu_event(|app_handle, event| match event.id().as_ref() {
+                SETTINGS_MENU_ID => {
+                    if let Err(error) = open_or_focus_settings(app_handle) {
+                        log_to(
+                            &self::log_path(app_handle),
+                            &format!("open Settings failed: {error}"),
+                        );
+                    }
+                }
                 "refresh" => {
                     navigate_to_loading(app_handle);
                     start_launch(app_handle);
@@ -1313,19 +1450,11 @@ fn main() {
             // (:4892) and would show connection-refused before zfb dev binds.
             // The host owns `zfb dev` in BOTH dev and prod, so the loading page
             // + readiness-navigate flow must run in both modes.
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("CCResDoc")
-                .inner_size(1200.0, 800.0)
-                .on_navigation(allow_navigation)
-                // Re-apply the stored zoom once each page finishes loading:
-                // `document.body.style.zoom` is page-scoped, so navigating
-                // (Refresh / launch / retry) would otherwise reset it to 1.0.
-                .on_page_load(|window, payload| {
-                    if let tauri::webview::PageLoadEvent::Finished = payload.event() {
-                        reapply_zoom(window.app_handle());
-                    }
-                })
-                .build()?;
+            create_main_window(
+                app.handle(),
+                navigation_port.clone(),
+                appearance_seed.clone(),
+            )?;
 
             start_launch(app.handle());
 
@@ -1334,33 +1463,91 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |app_handle, event| {
-            // Tear down on EVERY exit path. Window close fires
-            // `WindowEvent::Destroyed`; an app-level Quit (Cmd+Q, Dock → Quit,
-            // `osascript` quit) fires `ExitRequested` (before exit) then `Exit`
-            // (last) but NOT necessarily `Destroyed` — handling all three (and
-            // relying on `teardown`'s take-once idempotency) guarantees the
-            // sidecar process group is killed exactly once regardless of which
-            // event the platform delivers, so nothing is orphaned on 4892.
-            let is_window_destroyed = matches!(
-                &event,
-                tauri::RunEvent::WindowEvent {
-                    event: tauri::WindowEvent::Destroyed,
-                    ..
+            // Main-window destruction stops owned runtime resources but leaves
+            // the macOS app available for Dock reopen. Settings close is
+            // intercepted and hidden. App-level Quit still tears down through
+            // ExitRequested/Exit; take-once cleanup makes repeated events safe.
+            let action = match &event {
+                tauri::RunEvent::WindowEvent { label, event, .. } => {
+                    let kind = match event {
+                        tauri::WindowEvent::CloseRequested { .. } => "close_requested",
+                        tauri::WindowEvent::Destroyed => "destroyed",
+                        _ => "other",
+                    };
+                    lifecycle_action(kind, Some(label))
                 }
-            );
-            let is_app_exit = matches!(
-                &event,
-                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
-            );
-            if is_window_destroyed || is_app_exit {
-                let log_path = log_path(app_handle);
-                teardown(app_handle, &sidecar_for_exit, &log_path);
-                // Closing the last window keeps the event loop alive on macOS,
-                // so the window-close path explicitly exits; the app-quit paths
-                // (ExitRequested/Exit) are already exiting and must not re-enter.
-                if is_window_destroyed {
-                    app_handle.exit(0);
+                tauri::RunEvent::ExitRequested { .. } => lifecycle_action("exit_requested", None),
+                tauri::RunEvent::Exit => lifecycle_action("exit", None),
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => lifecycle_action("reopen", None),
+                _ => LifecycleAction::Ignore,
+            };
+            match action {
+                LifecycleAction::HideSettings => {
+                    if let tauri::RunEvent::WindowEvent {
+                        event: tauri::WindowEvent::CloseRequested { api, .. },
+                        ..
+                    } = &event
+                    {
+                        api.prevent_close();
+                        let state = app_handle.state::<AppState>();
+                        state.appearance.clear_preview();
+                        let authoritative = state.settings_store.load();
+                        let _ = app_handle.emit(
+                            appearance::APPEARANCE_EVENT,
+                            state.appearance.envelope(&authoritative),
+                        );
+                        if let Some(window) = app_handle.get_webview_window(SETTINGS_WINDOW_LABEL) {
+                            let _ = window.eval(
+                                "window.dispatchEvent(new Event('ccresdoc-settings-native-close'))",
+                            );
+                            let _ = window.hide();
+                        }
+                        if let Some(main) = app_handle.get_webview_window("main") {
+                            let _ = main.set_focus();
+                        }
+                    }
                 }
+                LifecycleAction::StopForMainClose => {
+                    let log_path = log_path(app_handle);
+                    teardown(app_handle, &sidecar_for_exit, &log_path, false);
+                }
+                LifecycleAction::Shutdown => {
+                    let log_path = log_path(app_handle);
+                    teardown(app_handle, &sidecar_for_exit, &log_path, true);
+                }
+                LifecycleAction::ReopenMain => {
+                    #[cfg(target_os = "macos")]
+                    if let Some(main) = app_handle.get_webview_window("main") {
+                        let _ = main.show();
+                        if main.is_minimized().unwrap_or(false) {
+                            let _ = main.unminimize();
+                        }
+                        let _ = main.set_focus();
+                    } else {
+                        let state = app_handle.state::<AppState>();
+                        let seed = appearance::bootstrap_seed(
+                            &state.settings_store.load(),
+                            state.settings_store.available_theme_packs(),
+                        );
+                        match create_main_window(app_handle, reopen_navigation_port.clone(), seed) {
+                            Ok(()) => {
+                                if app_handle.state::<AppState>().runtime.snapshot().phase
+                                    == RuntimePhase::Ready
+                                {
+                                    navigate_fresh_main_to_docs(app_handle);
+                                } else {
+                                    start_launch(app_handle);
+                                }
+                            }
+                            Err(error) => log_to(
+                                &log_path(app_handle),
+                                &format!("reopen main window failed: {error}"),
+                            ),
+                        }
+                    }
+                }
+                LifecycleAction::Ignore => {}
             }
         });
 }
@@ -1379,39 +1566,60 @@ mod tests {
 
     #[test]
     fn docs_path_starts_with_slash() {
-        assert!(DOCS_PATH.starts_with('/'), "DOCS_PATH must start with /");
+        assert!(
+            runtime::DOCS_PATH.starts_with('/'),
+            "DOCS_PATH must start with /"
+        );
+    }
+
+    #[test]
+    fn stale_or_shutdown_launches_cannot_publish_owned_resources() {
+        assert!(resource_publication_allowed(false, 7, 7));
+        assert!(!resource_publication_allowed(false, 8, 7));
+        assert!(!resource_publication_allowed(true, 7, 7));
+    }
+
+    #[test]
+    fn ephemeral_webview_is_explicitly_opted_in() {
+        assert!(!ephemeral_webview_enabled_value(None));
+        assert!(!ephemeral_webview_enabled_value(Some("true")));
+        assert!(ephemeral_webview_enabled_value(Some("1")));
     }
 
     #[test]
     fn docs_url_is_canonical_docs_shell_on_port() {
-        assert_eq!(DOCS_PATH, "/docs/");
-        assert_eq!(docs_url(), format!("http://localhost:{PORT}/docs/"));
-        let url: Result<tauri::Url, _> = docs_url().parse();
-        assert!(url.is_ok(), "docs_url should parse: {}", docs_url());
+        assert_eq!(runtime::DOCS_PATH, "/docs/");
+        let docs_url = runtime::docs_url(settings::DEFAULT_PORT);
+        assert_eq!(
+            docs_url,
+            format!("http://localhost:{}/docs/", settings::DEFAULT_PORT)
+        );
+        let url: Result<tauri::Url, _> = docs_url.parse();
+        assert!(url.is_ok(), "docs_url should parse: {docs_url}");
     }
 
     #[test]
-    fn readiness_classifier_rejects_non_200_and_stale_200() {
-        assert_eq!(
-            classify_readiness("503", READINESS_MARKER),
-            ReadinessState::HttpUnavailable
-        );
-        assert_eq!(
-            classify_readiness("200", "checked-in shell without generated navigation"),
-            ReadinessState::StaleContent
-        );
-        assert_eq!(
-            classify_readiness(
-                "200",
-                &format!("<nav><span>{READINESS_MARKER}</span></nav>")
-            ),
-            ReadinessState::Ready
-        );
+    fn appearance_bootstrap_is_document_start_not_page_load_eval() {
+        let source = include_str!("main.rs");
+        assert!(source.contains(".initialization_script(appearance::initialization_script"));
+        assert!(source.contains("appearance::window_name_script"));
+        let page_load = source
+            .split(".on_page_load")
+            .nth(1)
+            .and_then(|tail| tail.split(".build()?").next())
+            .unwrap();
+        assert!(page_load.contains("reapply_zoom"));
+        assert!(!page_load.contains("appearance"));
     }
 
     #[test]
     fn zfb_command_removes_inherited_boot_lazy() {
-        let command = zfb_dev_command(Path::new("/tmp/native-zfb"), Path::new("/tmp/app"));
+        let command = zfb_dev_command(Path::new("/tmp/native-zfb"), Path::new("/tmp/app"), 53003);
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args, ["dev", "--host", "127.0.0.1", "--port", "53003"]);
         let boot_lazy = command
             .get_envs()
             .find(|(key, _)| *key == "ZFB_DEV_BOOT_LAZY");
@@ -1422,17 +1630,8 @@ mod tests {
     }
 
     #[test]
-    fn newer_generation_supersedes_every_older_terminal_result() {
-        let generation = AtomicU64::new(1);
-        assert!(is_current_generation(&generation, 1));
-        generation.store(2, Ordering::SeqCst);
-        assert!(!is_current_generation(&generation, 1));
-        assert!(is_current_generation(&generation, 2));
-    }
-
-    #[test]
     fn claude_dir_is_absolute_and_not_home() {
-        let c = claude_dir().expect("claude_dir should resolve when HOME is set");
+        let c = PathBuf::from(home_dir().expect("HOME should resolve")).join(".claude");
         assert!(c.is_absolute(), "claude_dir must be absolute");
         assert!(
             c.ends_with(".claude"),
@@ -1524,10 +1723,10 @@ mod tests {
         let ok: tauri::Url = "http://localhost:4892/docs/".parse().unwrap();
         let loop_ok: tauri::Url = "http://127.0.0.1:4892/".parse().unwrap();
         let external: tauri::Url = "https://example.com/".parse().unwrap();
-        assert!(allow_navigation(&ok));
-        assert!(allow_navigation(&loop_ok));
+        assert!(allow_navigation(&ok, 4892));
+        assert!(allow_navigation(&loop_ok, 4892));
         assert!(
-            !allow_navigation(&external),
+            !allow_navigation(&external, 4892),
             "external links must open in OS browser"
         );
     }
@@ -1542,7 +1741,7 @@ mod tests {
             .expect("devUrl must be a string");
         assert_eq!(
             dev_url,
-            docs_url(),
+            runtime::docs_url(settings::DEFAULT_PORT),
             "devUrl should equal the canonical docs URL"
         );
     }
@@ -1689,19 +1888,219 @@ mod tests {
         assert_eq!(second, None, "second take is a no-op");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn owned_process_group_teardown_reaps_the_group() {
+        use std::os::unix::process::CommandExt;
+
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "sleep 30 & wait"]).process_group(0);
+        let child = command.spawn().expect("spawn owned process group");
+        let pgid = i32::try_from(child.id()).unwrap();
+        let mut sidecar = Sidecar { child };
+        kill_sidecar(&mut sidecar, "");
+        // SAFETY: signal 0 only checks existence; the negative id addresses
+        // precisely the process group created above.
+        let rc = unsafe { libc::kill(-pgid, 0) };
+        assert_eq!(rc, -1, "the app-owned process group must be gone");
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+
     #[test]
     fn loading_page_wires_launch_error_and_retry_launch() {
         let html_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("frontend")
             .join("index.html");
         let html = std::fs::read_to_string(&html_path).expect("Failed to read frontend/index.html");
+        let adapter = std::fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("frontend")
+                .join("settings-backend.mjs"),
+        )
+        .expect("Failed to read settings backend adapter");
         assert!(
             html.contains("\"launch-error\""),
             "frontend/index.html should listen for the launch-error event"
         );
         assert!(
-            html.contains("\"retry_launch\""),
-            "frontend/index.html should invoke the retry_launch command"
+            adapter.contains("\"retry_launch\""),
+            "the centralized adapter should invoke retry_launch"
         );
+        assert!(
+            html.contains("openSettings") && html.matches("Settings…").count() >= 2,
+            "loading and error states should expose the Settings recovery action"
+        );
+        assert!(
+            html.contains("settings-backend.mjs"),
+            "bundled pages must use the centralized backend adapter"
+        );
+    }
+
+    #[test]
+    fn settings_menu_contract_is_native_and_stable() {
+        assert_eq!(settings_window::SETTINGS_MENU_ID, "open_settings");
+        assert_eq!(settings_window::SETTINGS_ACCELERATOR, "CmdOrCtrl+,");
+    }
+
+    #[test]
+    fn every_custom_command_has_generated_acl_and_per_window_grants() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let build = std::fs::read_to_string(root.join("build.rs")).unwrap();
+        let main: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("capabilities/default.json")).unwrap(),
+        )
+        .unwrap();
+        let settings: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("capabilities/settings.json")).unwrap(),
+        )
+        .unwrap();
+        let commands = [
+            "retry_launch",
+            "open_settings_window",
+            "get_settings_snapshot",
+            "update_appearance",
+            "preview_appearance",
+            "clear_appearance_preview",
+            "validate_settings_draft",
+            "save_and_apply_settings",
+            "rebase_stale_settings",
+            "replace_malformed_settings",
+            "pick_source_directory",
+            "open_config_file",
+            "reveal_config_file",
+        ];
+        for command in commands {
+            assert!(
+                build.contains(&format!("\"{command}\"")),
+                "missing {command}"
+            );
+            let permission = std::fs::read_to_string(
+                root.join("permissions")
+                    .join("autogenerated")
+                    .join(format!("{command}.toml")),
+            )
+            .unwrap_or_else(|_| panic!("generated permission missing for {command}"));
+            let dashed = command.replace('_', "-");
+            assert!(permission.contains(&format!("allow-{dashed}")));
+            assert!(permission.contains(&format!("deny-{dashed}")));
+            assert!(permission.contains(&format!("commands.allow = [\"{command}\"]")));
+        }
+        assert!(build.contains("AppManifest::new().commands(COMMANDS)"));
+
+        assert_eq!(main["windows"], serde_json::json!(["main"]));
+        assert_eq!(settings["windows"], serde_json::json!(["settings"]));
+        let main_permissions = main["permissions"].as_array().unwrap();
+        let settings_permissions = settings["permissions"].as_array().unwrap();
+        assert!(main_permissions.contains(&serde_json::json!("allow-open-settings-window")));
+        assert!(main_permissions.contains(&serde_json::json!("allow-retry-launch")));
+        assert!(main_permissions.contains(&serde_json::json!("allow-update-appearance")));
+        for privileged in [
+            "allow-get-settings-snapshot",
+            "allow-preview-appearance",
+            "allow-clear-appearance-preview",
+            "allow-save-and-apply-settings",
+            "allow-rebase-stale-settings",
+            "allow-replace-malformed-settings",
+            "allow-pick-source-directory",
+            "allow-open-config-file",
+            "allow-reveal-config-file",
+        ] {
+            assert!(!main_permissions.contains(&serde_json::json!(privileged)));
+            assert!(settings_permissions.contains(&serde_json::json!(privileged)));
+        }
+        assert!(!settings_permissions.contains(&serde_json::json!("allow-update-appearance")));
+        assert!(settings_permissions.contains(&serde_json::json!("core:event:allow-listen")));
+        assert!(settings_permissions.contains(&serde_json::json!("core:event:allow-unlisten")));
+        assert!(!settings_permissions.contains(&serde_json::json!("core:event:default")));
+        assert!(!settings_permissions.contains(&serde_json::json!("core:event:allow-emit")));
+        assert!(!settings.to_string().contains('*'));
+        assert!(!settings.to_string().to_ascii_lowercase().contains("test"));
+    }
+
+    #[test]
+    fn production_manifests_exclude_settings_test_identity_drivers_and_fixtures() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut files = vec![
+            root.join("tauri.conf.json"),
+            root.join("capabilities/default.json"),
+            root.join("capabilities/settings.json"),
+            root.join("build.rs"),
+        ];
+        files.extend(
+            std::fs::read_dir(root.join("permissions/autogenerated"))
+                .unwrap()
+                .map(|entry| entry.unwrap().path()),
+        );
+        for file in files {
+            let source = std::fs::read_to_string(&file).unwrap();
+            for forbidden in [
+                "test-bundle",
+                "ccresdoc.settings-test",
+                "CCRESDOC_TEST",
+                "settings-test",
+                "test-macos-settings",
+                "test-driver",
+                "native-driver",
+                "computer-use",
+                "fixture-claude",
+                "/tmp/ccresdoc-settings-smoke",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "test-only marker {forbidden:?} leaked into {}",
+                    file.display()
+                );
+            }
+        }
+        let conf = read_tauri_conf();
+        assert_eq!(conf["identifier"], "com.takazudo.ccresdoc");
+        assert_eq!(conf["app"]["windows"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn csp_and_remote_capability_are_dynamic_loopback_only() {
+        let conf = read_tauri_conf();
+        let csp = conf["app"]["security"]["csp"]
+            .as_str()
+            .expect("CSP must be non-null");
+        assert!(csp.contains("http://localhost:*"));
+        assert!(csp.contains("http://127.0.0.1:*"));
+        assert!(csp.contains("ws://localhost:*"));
+        assert!(!csp.contains("0.0.0.0") && !csp.contains("*://"));
+
+        let capability: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("capabilities/default.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        for pattern in capability["remote"]["urls"].as_array().unwrap() {
+            let pattern = pattern.as_str().unwrap();
+            assert!(
+                pattern.starts_with("http://localhost:")
+                    || pattern.starts_with("http://127.0.0.1:")
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_settings_shell_has_loading_and_fatal_states() {
+        let frontend = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("frontend");
+        let html = std::fs::read_to_string(frontend.join("settings.html")).unwrap();
+        let css = std::fs::read_to_string(frontend.join("settings.css")).unwrap();
+        assert!(html.contains("settings-loading") && html.contains("settings-fatal"));
+        assert!(html.contains("role=\"alert\"") && html.contains("aria-live=\"polite\""));
+        assert!(css.contains("button:focus-visible"));
+        assert!(css.contains("@media (hover: hover)"));
+
+        let index = std::fs::read_to_string(frontend.join("index.html")).unwrap();
+        let shell = std::fs::read_to_string(frontend.join("settings-shell.mjs")).unwrap();
+        let adapter = std::fs::read_to_string(frontend.join("settings-backend.mjs")).unwrap();
+        assert!(!index.contains("core.invoke") && !shell.contains("core.invoke"));
+        assert_eq!(adapter.matches("invoke(command, args)").count(), 1);
     }
 }

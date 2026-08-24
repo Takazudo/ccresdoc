@@ -15,13 +15,15 @@ have a marketing home or a `Claude` header-navigation item.
   stale checked-in shell cannot release the loading page.
 - Initial launch, Retry, and the View → Refresh menu all use the same
   generation-guarded boot path: resolve a writable workspace, generate from
-  the absolute `$HOME/.claude` directory, start the Rust watcher, spawn the
+  the canonical settings-selected source (default `$HOME/.claude`), start the Rust watcher, spawn the
   native zfb binary, wait for semantic readiness, then navigate to `/docs/`.
   A failed attempt emits the loading-page error state; a subsequent attempt
-  tears down the old sidecar and can reclaim port 4892.
+  tears down only its tracked sidecar and selects the preferred or fallback
+  loopback port without touching a foreign listener.
 - `$HOME` is never passed as the generator project root. The generator is
-  scoped to `$HOME/.claude`, and an unset or empty home is an explicit launch
-  error. `ZFB_DEV_BOOT_LAZY` is removed from the sidecar environment.
+  scoped to the validated configured source. An unset or empty home is an
+  explicit launch error when no absolute source override is available.
+  `ZFB_DEV_BOOT_LAZY` is removed from the sidecar environment.
 
 The host contract is exercised by `src-tauri` unit tests and by the staged and
 packaged probes. The packaged probe creates a unique, valid-frontmatter fake
@@ -72,6 +74,38 @@ shell and browse-all loads the current catalog lazily.
   package-root carrier `node_modules/@takazudo/zfb-<platform>/zfb` directly,
   never `node_modules/.bin/zfb`, and excludes development tools, non-host
   binaries, and disabled plugin-host dependencies.
+
+## Settings and isolation
+
+The settings store resolves `CCRESDOC_CONFIG`, then
+`XDG_CONFIG_HOME/ccresdoc/config.toml`, then `HOME/.config/ccresdoc/config.toml`.
+Missing files use schema-version-1 defaults without creating TOML. Authored
+source/preferred-port values are reported separately from canonical effective
+source/active-port values; an occupied preferred loopback port uses a free
+fallback only when `fallback_to_free_port` is true. Strict mode, malformed TOML,
+semantic diagnostics, unsupported future versions, SHA-256 revision conflicts,
+appearance authority, and saved-not-active restart failures retain Settings
+recovery and never overwrite or signal foreign state.
+
+The bounded fixture gate is deterministic and isolated:
+
+```sh
+bash scripts/test-macos-settings.sh --fixtures-only
+CCRESDOC_SETTINGS_APP=/path/to/CCResDoc.app pnpm run test:macos-settings
+```
+
+Package mode passes a unique temporary `HOME`, `TMPDIR`, `XDG_CONFIG_HOME`, and
+`CCRESDOC_CONFIG` through LaunchServices, creates a temporary source tree and
+one exact foreign listener, and verifies docs readiness across relaunches,
+fallback/effective ports, strict and bad-source recovery, malformed-byte
+preservation, and app-owned child cleanup while the foreign listener remains
+alive. It uses nonpersistent WebViews and refuses to run beside a preexisting
+CCResDoc process. Production capabilities, generated permissions, bundle identity, native
+driver hooks, and
+fixture paths are statically guarded against test-only leakage. The manager's
+packaged Computer Use pass verifies Settings focus/close/reopen,
+picker/save/relaunch, appearance preview/cancel/persistence, external-edit
+Reload/Reapply, caller/navigation denial, and visual no-flash behavior.
 
 ## Automated gates
 

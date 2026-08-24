@@ -15,11 +15,21 @@ import {
   type SidebarToggleProps,
 } from "@takazudo/zudo-doc/sidebar-toggle-island";
 import { routeContext } from "./_route-context";
+import { SettingsHeaderButton } from "./_settings-button";
+import { AppearanceBridge } from "@/appearance/bridge";
+
+export { openSettingsFromDocs, SettingsHeaderButton } from "./_settings-button";
+
+function SettingsHeaderButtonIsland() {
+  return Island({ when: "load", children: h(SettingsHeaderButton, {}) });
+}
 
 const PackageHeader = createHeaderWithDefaults({
   ...routeContext,
   components: {},
-  hostBindings: {},
+  hostBindings: {
+    headerRightComponents: { "ccresdoc-settings": SettingsHeaderButtonIsland },
+  },
   withBase: (path: string) =>
     routeContext.withBase(path === "/" ? "/docs/" : path),
 });
@@ -58,6 +68,10 @@ function DocsLandingHeader(props: HeaderWithDefaultsProps): VNode {
   return cloneElement(header, { sidebarToggle });
 }
 
+function AppearanceBodyEnd() {
+  return Island({ when: "load", children: h(AppearanceBridge, {}) });
+}
+
 export const {
   BodyEndIslands,
   FooterWithDefaults,
@@ -66,4 +80,8 @@ export const {
   SidebarWithDefaults,
   composeMetaTitle,
   renderDocPage,
-} = createChrome(routeContext, { Header: DocsLandingHeader });
+} = createChrome(routeContext, {
+  Header: DocsLandingHeader,
+  BodyEndIslands: AppearanceBodyEnd,
+  headerRightComponents: { "ccresdoc-settings": SettingsHeaderButtonIsland },
+});
