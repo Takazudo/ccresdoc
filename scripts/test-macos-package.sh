@@ -16,6 +16,15 @@ elif (( $# != 0 )); then
   exit 2
 fi
 
+app_running() {
+  [[ "$(/usr/bin/osascript -e 'application id "com.takazudo.ccresdoc" is running' 2>/dev/null || true)" == "true" ]]
+}
+
+if app_running; then
+  echo "Refusing to run beside an existing CCResDoc instance." >&2
+  exit 1
+fi
+
 PROBE_DIR="$(mktemp -d /tmp/ccresdoc-macos-package.XXXXXX)"
 PROBE_HOME="$PROBE_DIR/home"
 SENTINEL_DIR="$PROBE_DIR/bin"
@@ -39,8 +48,21 @@ DARWIN_SHA256=""
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
-  if [[ -n "$APP_PID" ]] && kill -0 "$APP_PID" 2>/dev/null; then
-    kill -TERM "$APP_PID" 2>/dev/null || true
+  if [[ -n "$APP_PID" ]]; then
+    if app_running; then
+      /usr/bin/osascript -e 'tell application id "com.takazudo.ccresdoc" to quit' >/dev/null 2>&1 || true
+      for _ in $(seq 1 80); do
+        app_running || break
+        sleep 0.25
+      done
+      if app_running; then
+        echo "Packaged CCResDoc did not quit during probe cleanup." >&2
+        status=1
+      fi
+    fi
+    if kill -0 "$APP_PID" 2>/dev/null; then
+      kill -TERM "$APP_PID" 2>/dev/null || true
+    fi
     wait "$APP_PID" 2>/dev/null || true
   fi
   case "$PROBE_DIR" in

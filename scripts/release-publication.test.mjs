@@ -154,8 +154,8 @@ test("workflow structure is Ubuntu-only, pinned, permission-split, and guarded",
   assert.match(workflow, /cancel-in-progress: false/);
   assert.equal((workflow.match(/runs-on: ubuntu-latest/g) ?? []).length, 2);
   assert.doesNotMatch(workflow, /macos-|cargo tauri build|xcodebuild|hdiutil/);
-  assert.match(workflow, /validate:[\s\S]*?permissions:\n\s+contents: read/);
-  assert.match(workflow, /publish:[\s\S]*?if:.*inputs\.validation_only == false[\s\S]*?permissions:\n\s+contents: write/);
+  assert.match(workflow, /validate:[\s\S]*?permissions:\n\s+actions: read\n\s+contents: read/);
+  assert.match(workflow, /publish:[\s\S]*?if:.*inputs\.validation_only == false[\s\S]*?permissions:\n\s+actions: read\n\s+contents: write/);
   assert.equal((workflow.match(/actions\/workflows\/ci\.yml\/runs/g) ?? []).length, 3);
   assert.equal((workflow.match(/--method PATCH/g) ?? []).length, 1);
   assert.ok(workflow.indexOf("publish:") < workflow.indexOf("--method PATCH"));

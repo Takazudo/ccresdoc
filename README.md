@@ -245,9 +245,9 @@ crates/          Rust workspace crates
   ccresdoc-claude-md/   ~/.claude→MDX generator + watcher (the live engine)
 src-tauri/       Tauri host (main.rs, tauri.conf.json, loading page)
 app/             zfb frontend project (zudo-doc consumer, port 4892)
-scripts/         run-b4push.sh, rebuild-local-app.sh, test-launch.sh, test-macos-settings.sh
-.github/         GitHub Actions CI workflow
-.claude/skills/  l-build skill (local build + verified /Applications install)
+scripts/         local build, verification, release-contract, and release-producer commands
+.github/         GitHub Actions CI and guarded release-publication workflows
+.claude/skills/  local build/install and release-orchestration skills
 ```
 
 See per-directory CLAUDE.md files for detailed architecture notes.

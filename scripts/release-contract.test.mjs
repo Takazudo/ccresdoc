@@ -102,12 +102,14 @@ afterEach(() => {
   for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-test("the real repository exposes the synchronized 0.1.0 contract read-only", () => {
+test("the real repository exposes a synchronized stable contract read-only", () => {
   const before = snapshotFiles(repositoryRoot, [
     ...Object.values(APPLICATION_VERSION_FILES),
     "package.json",
   ]);
-  assertContract(readReleaseContract({ rootDir: repositoryRoot }));
+  const contract = readReleaseContract({ rootDir: repositoryRoot });
+  assert.match(contract.version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
+  assertContract(contract, contract.version);
   assert.deepEqual(changedFiles(before, repositoryRoot), []);
 });
 

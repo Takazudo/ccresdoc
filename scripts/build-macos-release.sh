@@ -101,6 +101,9 @@ for tool in "${REQUIRED_TOOLS[@]}"; do
 done
 [[ -x /usr/libexec/PlistBuddy ]] || fail "required tool not found: /usr/libexec/PlistBuddy"
 [[ -f "$PACKAGE_FACTS" ]] || fail "package facts not found: $PACKAGE_FACTS"
+if [[ "$(/usr/bin/osascript -e 'application id "com.takazudo.ccresdoc" is running' 2>/dev/null || true)" == "true" ]]; then
+  fail "quit the existing CCResDoc instance before building a release artifact"
+fi
 
 CONTRACT_JSON="$(node "$SCRIPT_DIR/release-contract.mjs" check --root "$REPO_ROOT" --json)" ||
   fail "release contract is missing, malformed, or unsynchronized"
@@ -123,6 +126,16 @@ fi
 HEAD_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)" || fail "cannot resolve the current commit"
 [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "current commit is not a full lowercase Git SHA"
 RELEASE_DATABASE_ID=""
+
+assert_upload_source() {
+  local phase="$1"
+  [[ "$(git -C "$REPO_ROOT" branch --show-current)" == "main" ]] ||
+    fail "$phase: upload requires the main branch"
+  [[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$HEAD_SHA" ]] ||
+    fail "$phase: checked-out commit changed during the release build"
+  [[ -z "$(git -C "$REPO_ROOT" status --porcelain=v1 --untracked-files=normal)" ]] ||
+    fail "$phase: upload requires a clean working tree"
+}
 
 release_json() {
   gh release view "$EXPECTED_TAG" --json databaseId,isDraft,isPrerelease,tagName,targetCommitish,assets 2>/dev/null
@@ -201,6 +214,7 @@ validate_uploaded_assets() {
 }
 
 if [[ -n "$UPLOAD_TAG" ]]; then
+  assert_upload_source "before build"
   BEFORE_RELEASE_JSON="$(release_json)" ||
     fail "existing draft Release $EXPECTED_TAG was not found or could not be read"
   BEFORE_ASSETS="$(validate_release "$BEFORE_RELEASE_JSON" "before build")"
@@ -298,6 +312,7 @@ printf '%s  %s\n' "$ARTIFACT_SHA256" "$ARTIFACT_NAME" > "$CHECKSUM_PATH"
 PAIR_COMPLETE=1
 
 if [[ -n "$UPLOAD_TAG" ]]; then
+  assert_upload_source "immediately before upload"
   PRE_UPLOAD_RELEASE_JSON="$(release_json)" || fail "draft Release disappeared before upload"
   PRE_UPLOAD_ASSETS="$(validate_release "$PRE_UPLOAD_RELEASE_JSON" "immediately before upload" "$RELEASE_DATABASE_ID")"
   validate_managed_inventory "$PRE_UPLOAD_ASSETS" "immediately before upload"

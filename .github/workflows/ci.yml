@@ -35,6 +35,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
 
+      - name: Release flow contract tests
+        run: pnpm run test:release-contract && pnpm run test:release-publication && pnpm run test:release-flow
+
       - name: Install app dependencies (frozen)
         run: pnpm --dir app install --frozen-lockfile
 

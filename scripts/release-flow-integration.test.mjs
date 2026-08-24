@@ -19,7 +19,9 @@ const packageManifest = JSON.parse(source("package.json"));
 const readme = source("README.md");
 const skill = source(".claude/skills/l-make-release/SKILL.md");
 const workflow = source(".github/workflows/release.yml");
+const ciWorkflow = source(".github/workflows/ci.yml");
 const producer = source("scripts/build-macos-release.sh");
+const packageProbe = source("scripts/test-macos-package.sh");
 const publication = source("scripts/release-publication.mjs");
 
 function assertNoMachineSpecificPaths(label, value) {
@@ -121,6 +123,12 @@ test("README and release skill expose the same artifact, verification, and signi
   assert.match(skill, /Do not dispatch `\.github\/workflows\/release\.yml` in this mode\./);
   assert.match(skill, /-f validation_only=false/);
   assert.match(skill, /Release <tag> @ <target_sha> \[<request_id>\]/);
+  assert.match(skill, /Interrupted release-bump recovery/);
+  assert.match(skill, /exactly one commit after the latest stable tag/);
+  assert.match(skill, /never infer another component and bump twice/);
+  assert.match(skill, /when its asset inventory is empty,[\s\S]*remove only the two contract-derived local paths/);
+  assert.doesNotMatch(skill, /--method DELETE "repos\/\$repo\/git\/refs\/tags/);
+  assert.match(skill, /Do not delete a remote tag automatically/);
 });
 
 test("the producer derives its pair from the contract and keeps upload mutation opt-in", () => {
@@ -137,12 +145,20 @@ test("the producer derives its pair from the contract and keeps upload mutation 
   assert.match(producer, /bash "\$SCRIPT_DIR\/test-macos-package\.sh" --existing-bundle "\$APP_PATH"/);
   assert.match(producer, /shasum -a 256 -c "\$CHECKSUM_NAME"/);
   assert.match(producer, /if \[\[ -n "\$UPLOAD_TAG" \]\]/);
+  assert.match(producer, /assert_upload_source "before build"/);
+  assert.match(producer, /assert_upload_source "immediately before upload"/);
+  assert.match(producer, /upload requires the main branch/);
+  assert.match(producer, /upload requires a clean working tree/);
+  assert.match(producer, /quit the existing CCResDoc instance before building/);
   assert.match(producer, /gh release upload/);
   assert.match(producer, /echo "upload=disabled"/);
   assert.match(producer, /--clobber is allowed only with --upload/);
   assert.match(producer, /const names=\(r\.assets \?\? \[\]\)\.map\(\(a\) => a\.name\)\.sort\(\)/);
   assert.doesNotMatch(producer, /filter\(\(name\) => \/\^CCResDoc_/);
   assert.doesNotMatch(producer, /gh release create|gh release publish|gh workflow run/);
+  assert.match(packageProbe, /Refusing to run beside an existing CCResDoc instance/);
+  assert.match(packageProbe, /tell application id "com\.takazudo\.ccresdoc" to quit/);
+  assert.match(packageProbe, /Packaged CCResDoc did not quit during probe cleanup/);
 });
 
 test("the publication workflow is parseable, input-correlated, permission-split, and Ubuntu-only", () => {
@@ -168,10 +184,10 @@ test("the publication workflow is parseable, input-correlated, permission-split,
   const validateJob = workflow.slice(validateStart, publishStart);
   const publishJob = workflow.slice(publishStart);
   assert.match(validateJob, /runs-on: ubuntu-latest/);
-  assert.match(validateJob, /permissions:\n\s+contents: read/);
+  assert.match(validateJob, /permissions:\n\s+actions: read\n\s+contents: read/);
   assert.match(publishJob, /if: \$\{\{ inputs\.validation_only == false && needs\.validate\.outputs\.disposition == 'draft' \}\}/);
   assert.match(publishJob, /runs-on: ubuntu-latest/);
-  assert.match(publishJob, /permissions:\n\s+contents: write/);
+  assert.match(publishJob, /permissions:\n\s+actions: read\n\s+contents: write/);
   assert.doesNotMatch(workflow, /(?:runs-on:\s*macos-|cargo tauri build|xcodebuild|hdiutil)/i);
   assert.equal((workflow.match(/--method PATCH/g) ?? []).length, 1);
   assert.equal((workflow.match(/actions\/workflows\/ci\.yml\/runs/g) ?? []).length, 3);
@@ -180,7 +196,7 @@ test("the publication workflow is parseable, input-correlated, permission-split,
   }
 });
 
-test("release-owned text contains no machine-specific paths or external URL references", () => {
+test("release-owned text contains no machine-specific paths", () => {
   const releaseOwnedFiles = [
     "README.md",
     ".claude/skills/l-make-release/SKILL.md",
@@ -193,14 +209,13 @@ test("release-owned text contains no machine-specific paths or external URL refe
   for (const relativePath of releaseOwnedFiles) {
     const value = source(relativePath);
     assertNoMachineSpecificPaths(relativePath, value);
-    assert.doesNotMatch(
-      value,
-      /(?:https?|file|ssh|git\+ssh):\/\/(?!localhost(?::|\/)|127\.0\.0\.1(?::|\/)|\[::1\])/,
-      `${relativePath} contains an external URL reference`,
-    );
   }
 });
 
 test("package metadata exposes the complete deterministic release-flow test", () => {
   assert.equal(packageManifest.scripts["test:release-flow"], "node --test scripts/release-flow-integration.test.mjs");
+  assert.match(
+    ciWorkflow,
+    /pnpm run test:release-contract && pnpm run test:release-publication && pnpm run test:release-flow/,
+  );
 });

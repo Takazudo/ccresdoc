@@ -32,8 +32,9 @@ invocation recognizes the exact matching draft and resumes from it; it does not
 try to infer a new release from the now-empty tag range.
 
 `cancel` is the only invocation that removes state. It can remove only a
-verified unpublished matching draft and its still-unpublished tag. It never
-deletes a published Release or tag and never rewrites shared history.
+verified unpublished matching draft. It never guesses that an existing tag was
+created by that draft, never deletes a tag automatically, never deletes a
+published Release, and never rewrites shared history.
 
 ## Authorities and invariants
 
@@ -115,21 +116,24 @@ release-artifacts/<those exact names>
 ```
 
 Do not stage or carry an old local pair into a new build. If either exact path
-already exists, keep it until the corresponding draft state is inspected; on a
-verified retry, remove only those two contract-derived paths, never a glob or
+already exists, keep it until the corresponding draft and remote asset state is
+inspected. Once the exact draft is verified: when its asset inventory is empty,
+remove only the two contract-derived local paths before a fresh build; when the
+draft already has the exact remote pair, first download and verify that pair,
+then remove only the two local paths before an intentional `--clobber` rebuild.
+Any partial or unexpected remote inventory stops. Never use a glob or delete
 the whole `release-artifacts/` directory.
 
-Before a bump, run the focused tests while the repository is still at its
-current version:
+Before a bump, run all deterministic release-flow tests while the repository
+is still at its current version:
 
 ```bash
-node --test scripts/release-contract.test.mjs scripts/release-publication.test.mjs
+node --test scripts/release-contract.test.mjs scripts/release-publication.test.mjs scripts/release-flow-integration.test.mjs
 ```
 
-After any version change, run the contract check again and at least the
-publication tests. The contract test contains a real-repository initial-version
-assertion, so do not claim that it passes after changing the real version just
-because its fixture tests pass.
+After any version change, run the contract check and the same complete test set
+again. The real-repository assertion derives the synchronized stable version,
+so a valid release bump must keep every release-flow test green.
 
 ## 2. Enumerate only stable tags and Releases
 
@@ -179,6 +183,31 @@ target mismatch stops.
 
 If no resumable Release exists, use the following cases.
 
+### Interrupted release-bump recovery
+
+Before inferring another version, compare the synchronized current version with
+the highest retained stable tag. If the current version is numerically greater,
+resume it only when all of these facts prove an interrupted release run:
+
+- there is no published or draft Release for the current contract tag;
+- the current tag is absent or peels to the current `main` history;
+- exactly one commit after the latest stable tag has subject
+  `chore: release v<current-version>` and changes exactly `Cargo.lock`,
+  `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`;
+- reading each of those three files at that commit yields the current version;
+  and
+- no later commit changes any application-version authority.
+
+When every condition holds, the target version/tag remain the synchronized
+current contract, the target SHA is current `main`, the notes range is
+`<latest-stable-tag>..<current-main-sha>`, and the workflow skips `set-version`
+and a second bump commit. Continue at exact push CI. This also covers ordinary
+CI-fix commits added after the bump. A missing, duplicated, malformed, or
+unprovable bump stops; never infer another component and bump twice.
+
+If the synchronized version is lower than the highest stable tag, or equals it
+without a resumable current-tag Release, use the normal new-release rules below.
+
 ### Initial release
 
 When there is no retained stable tag and no retained stable Release, the
@@ -194,9 +223,10 @@ ordering.
 
 Choose the highest retained stable semver tag by numeric semver ordering. If a
 stable Release exists without its corresponding remote tag, stop as an
-inconsistent state. The synchronized current version must equal the latest tag
-version before a new bump; otherwise stop rather than guessing which version
-is authoritative. Define the non-empty range explicitly as:
+inconsistent state. Outside the proven interrupted-bump recovery above, the
+synchronized current version must equal the latest tag version before a new
+bump; otherwise stop rather than guessing which version is authoritative.
+Define the non-empty range explicitly as:
 
 ```text
 <latest-stable-tag>..<current-main-sha>
@@ -284,8 +314,9 @@ test "$changed_paths" = "Cargo.lock src-tauri/Cargo.toml src-tauri/tauri.conf.js
 test -z "$(git ls-files --others --exclude-standard)"
 ```
 
-Run `git diff --check` and the focused publication tests. Commit those three
-files together with a clear release-bump message, then record the full SHA:
+Run `git diff --check` and all three release-flow test files. Commit those three
+version files together with a clear release-bump message, then record the full
+SHA:
 
 ```bash
 git add Cargo.lock src-tauri/Cargo.toml src-tauri/tauri.conf.json
@@ -510,29 +541,28 @@ cleanup command.
    `tagName`, exact target SHA, and an unambiguous tag peel (absent or exact
    target as permitted by the state matrix). Record the Release database ID.
 4. Delete only that verified draft by its recorded Release ID, then verify the
-   Release is gone. Remove its tag only when the tag was verified to belong to
-   that unpublished draft and is still not associated with a published
-   Release; use narrowly targeted operations, never a wildcard:
+   Release is gone. Do not delete a remote tag automatically: a separate cancel
+   invocation cannot prove whether an existing exact tag predated the draft.
+   If a tag remains, report its peeled SHA for explicit manual review:
 
    ```bash
    gh api --method DELETE "repos/$repo/releases/$release_id"
-   # Only when the verified exact tag is present and safe to remove:
-   gh api --method DELETE "repos/$repo/git/refs/tags/$tag"
+   git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}"
    ```
 
-   Re-query the Release between these operations and stop if it is not absent
-   or if any published association appears.
-5. If the release bump commit is still `HEAD` and there are no commits above
-   it, prove this from the commit's exact three changed version paths and the
-   current contract before reverting. Create a new revert commit with
+   Re-query the Release after deletion and stop if it is not absent or if any
+   published association appears.
+5. Only when the remote release tag is absent, if the release bump commit is
+   still `HEAD` and there are no commits above it, prove this from the commit's
+   exact three changed version paths and the current contract before reverting.
+   Create a new revert commit with
    `git revert --no-edit <bump-sha>`, push it with ordinary `git push origin
    main`, and verify remote `main`. Never reset, amend, or force-push.
-6. If any later commit exists above the bump, leave history and version files
-   intact for the next release. Report that only the verified draft was
-   canceled; do not revert someone else's later work.
+6. If the exact tag remains or any later commit exists above the bump, leave
+   history and version files intact. Report that only the verified draft was
+   canceled; do not delete an ambiguously owned tag or revert later work.
 
 If deletion or the guarded revert push fails, stop and report the exact state
 for manual recovery. A local revert commit is not permission to force-push.
 After cancel, verify there is no matching draft and no accidentally published
-Release; if a tag cannot be proven safe to remove, leave it and report it
-instead of deleting it.
+Release; leave and report any exact remaining tag instead of deleting it.
