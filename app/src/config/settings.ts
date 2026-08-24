@@ -18,7 +18,7 @@ export const themePackSlugs = [...runtimeThemePackSlugs];
 export const settings = {
   ...DEFAULT_SETTINGS,
   siteName: "CCResDoc",
-  siteDescription: "Browse Claude Code resources from your local ~/.claude/",
+  siteDescription: "Browse local Claude and Codex resources.",
   base: "/",
   trailingSlash: true,
   docsDir: "src/content/docs",
@@ -67,9 +67,13 @@ export const settings = {
     links: [] as Array<{ title: string; items: Array<{ label: string; href: string }> }>,
     copyright: `Copyright © ${new Date().getFullYear()} CCResDoc`,
   },
-  // The resource tree belongs in the unscoped sidebar; the logo is the only
-  // primary navigation entry and points directly at the canonical doc shell.
-  headerNav: [],
+  // Keep the two native resource families as stable top-level sections. The
+  // prefix match deliberately groups satellite categories (claude-* and
+  // codex-*) under their corresponding header tab.
+  headerNav: [
+    { label: "Claude", path: "/docs/claude", categoryMatch: "claude", versioned: false },
+    { label: "Codex", path: "/docs/codex", categoryMatch: "codex", versioned: false },
+  ],
   headerRightItems: [
     { type: "component", component: "ccresdoc-settings" },
     { type: "component", component: "theme-toggle" },
