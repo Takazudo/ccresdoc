@@ -47,16 +47,23 @@ export function createSettingsEditor({ document, window, backend }) {
   async function replaceMalformed() { if (!window.confirm("Replace the malformed config file with defaults? The current file contents will be overwritten.")) return; await performApply(() => backend.replaceMalformed(cloneDraft(state.snapshot.defaults), state.snapshot.settings.revision)); }
   async function reloadDraft() { if (state.dirty.size && !window.confirm("Reload settings from disk and discard this draft?")) return; try { const envelope = await backend.clearAppearancePreview(); showAppearance(envelope.appearance); } catch {} state.previewKey = ""; await load({ focus: true }); }
   async function backendAction(action) { try { await action(); } catch (error) { announce(decodeBackendError(error).message, { error: true, focus: true }); } }
-  function discardDraft() { writeDraft(state.baseline); state.dirty.clear(); state.conflict = false; state.conflictCanRebase = null; state.previewKey = ""; announce(""); }
-  function cancel() { if (state.busy) return; discardDraft(); void backend.clearAppearancePreview().then((envelope) => showAppearance(envelope.appearance)).catch(() => {}); window.close(); }
+  function discardDraft() { writeDraft(state.baseline); state.dirty.clear(); state.conflict = false; state.conflictCanRebase = null; state.previewKey = ""; announce(""); render(); }
+  async function cancel() {
+    if (state.busy) return;
+    discardDraft();
+    try { const envelope = await backend.clearAppearancePreview(); showAppearance(envelope.appearance); } catch {}
+    const currentWindow = window.__TAURI__?.window?.getCurrentWindow?.();
+    if (typeof currentWindow?.hide === "function") await currentWindow.hide();
+    else window.close();
+  }
 
   document.querySelectorAll('input[name="appearance-mode"], #theme-pack, #claude-dir, #preferred-port, #fallback-port').forEach((control) => control.addEventListener("change", changed)); el("claude-dir").addEventListener("input", changed); el("preferred-port").addEventListener("input", changed);
   void backend.listenAppearance?.((envelope) => showAppearance(envelope.appearance));
   appearanceRoot.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (state.displayAppearance.mode === "system") showAppearance(state.displayAppearance); });
   el("settings-form").addEventListener("submit", submit);
   el("pick-source").addEventListener("click", async () => { try { const selected = await backend.pickSourceDirectory(); if (selected === null) return; el("claude-dir").value = selected; await changed(); el("claude-dir").focus(); } catch (error) { announce(decodeBackendError(error).message, { error: true, focus: true }); } });
-  el("reset-defaults").addEventListener("click", async () => { writeDraft(state.snapshot.defaults); await changed(); }); el("reload-draft").addEventListener("click", reloadDraft); el("reload-conflict").addEventListener("click", () => load({ focus: true })); el("reapply").addEventListener("click", reapply); el("replace-malformed").addEventListener("click", replaceMalformed); el("open-config").addEventListener("click", () => backendAction(() => backend.openConfigFile())); el("reveal-config").addEventListener("click", () => backendAction(() => backend.revealConfigFile())); el("cancel-settings").addEventListener("click", cancel); el("reload-settings").addEventListener("click", () => load({ focus: true }));
-  document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !state.busy) { event.preventDefault(); cancel(); } }); window.addEventListener("focus", () => { if (state.snapshot && !state.busy) load({ detectConflict: true }); }); window.addEventListener("ccresdoc-settings-native-close", () => { discardDraft(); void backend.clearAppearancePreview().catch(() => {}); });
+  el("reset-defaults").addEventListener("click", async () => { writeDraft(state.snapshot.defaults); await changed(); }); el("reload-draft").addEventListener("click", reloadDraft); el("reload-conflict").addEventListener("click", () => load({ focus: true })); el("reapply").addEventListener("click", reapply); el("replace-malformed").addEventListener("click", replaceMalformed); el("open-config").addEventListener("click", () => backendAction(() => backend.openConfigFile())); el("reveal-config").addEventListener("click", () => backendAction(() => backend.revealConfigFile())); el("cancel-settings").addEventListener("click", () => { void cancel(); }); el("reload-settings").addEventListener("click", () => load({ focus: true }));
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !state.busy) { event.preventDefault(); void cancel(); } }); window.addEventListener("focus", () => { if (state.snapshot && !state.busy) load({ detectConflict: true }); }); window.addEventListener("ccresdoc-settings-native-close", () => { discardDraft(); void backend.clearAppearancePreview().catch(() => {}); });
   return Object.freeze({ state, load, submit, reapply, replaceMalformed, cancel });
 }
 

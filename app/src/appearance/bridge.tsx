@@ -103,7 +103,9 @@ export function AppearanceBridge() {
       const mode = effectiveMode(value.mode);
       document.documentElement.dataset.theme = mode;
       document.documentElement.style.colorScheme = mode;
-      const project = source === "authoritative" || source === "preview";
+      // Preview is display-only. Persisting it to origin storage would let an
+      // app crash turn an unsaved draft into a future legacy-import candidate.
+      const project = source === "authoritative";
       if (project) {
         if (value.mode === "system") localStorage.removeItem("zudo-doc-theme");
         else localStorage.setItem("zudo-doc-theme", value.mode);

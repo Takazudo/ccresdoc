@@ -102,6 +102,9 @@ static_guards() {
       fi
     done
   done
+  grep -Fq 'CCRESDOC_EPHEMERAL_WEBVIEW' "$REPO_ROOT/src-tauri/src/main.rs"
+  grep -Fq '.incognito(true)' "$REPO_ROOT/src-tauri/src/main.rs"
+  grep -Fq '.incognito(true)' "$REPO_ROOT/src-tauri/src/settings_window.rs"
   echo "PASS static no-production-leak guards"
 }
 
@@ -171,9 +174,15 @@ quit_app() {
 
 cleanup() {
   local status=$?
-  quit_app || true
-  stop_foreign
-  rm -rf "$PROBE_DIR"
+  local cleanup_failed=0
+  trap - EXIT INT TERM
+  if ! quit_app; then cleanup_failed=1; fi
+  if ! stop_foreign; then cleanup_failed=1; fi
+  case "$PROBE_DIR" in
+    "$tmp_root"/ccresdoc-settings-smoke.*) rm -rf "$PROBE_DIR" ;;
+    *) echo "error: refusing to remove unexpected probe path: $PROBE_DIR" >&2; cleanup_failed=1 ;;
+  esac
+  if [[ "$status" -eq 0 && "$cleanup_failed" -ne 0 ]]; then status=1; fi
   exit "$status"
 }
 trap cleanup EXIT INT TERM
@@ -212,6 +221,10 @@ make_fixtures
 static_guards
 bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Contents/Info.plist")"
 test "$bundle_id" = com.takazudo.ccresdoc
+if [[ "$(osascript -e 'application id "com.takazudo.ccresdoc" is running' 2>/dev/null || true)" = true ]]; then
+  echo "error: quit the existing CCResDoc instance before the isolated package smoke" >&2
+  exit 1
+fi
 if find "$APP_PATH/Contents/Resources" -type f \( -name test-macos-settings.sh -o -name '*fixture-claude*' \) -print -quit | grep -q .; then
   echo "production bundle contains test fixture" >&2
   exit 1
@@ -236,6 +249,7 @@ launch_app() {
   open -n -W \
     --env "HOME=$PROBE_HOME" --env "TMPDIR=$PROBE_DIR" \
     --env "XDG_CONFIG_HOME=$XDG_CONFIG_HOME" --env "CCRESDOC_CONFIG=$CONFIG_PATH" \
+    --env "CCRESDOC_EPHEMERAL_WEBVIEW=1" \
     "$APP_PATH" >/dev/null 2>&1 &
   APP_OPEN_PID=$!
 }
@@ -244,11 +258,13 @@ new_port() {
 }
 wait_ready() {
   local port="$1" slug="$2" marker="$3"
+  local docs_snapshot="$PROBE_DIR/wait-ready-docs.html"
+  local fixture_snapshot="$PROBE_DIR/wait-ready-fixture.html"
   for _ in $(seq 1 300); do
-    if curl -fsS --max-time 2 "http://127.0.0.1:$port/docs/" 2>/dev/null |
-      grep -Fq 'Claude Resources' &&
-      curl -fsS --max-time 2 "http://127.0.0.1:$port/docs/claude-skills/$slug/" 2>/dev/null |
-      grep -Fq "$marker"; then return 0; fi
+    if curl -fsS --max-time 2 -o "$docs_snapshot" "http://127.0.0.1:$port/docs/" 2>/dev/null &&
+      grep -Fq 'Claude Resources' "$docs_snapshot" &&
+      curl -fsS --max-time 2 -o "$fixture_snapshot" "http://127.0.0.1:$port/docs/claude-skills/$slug/" 2>/dev/null &&
+      grep -Fq "$marker" "$fixture_snapshot"; then return 0; fi
     if [[ -n "$APP_OPEN_PID" ]] && ! kill -0 "$APP_OPEN_PID" 2>/dev/null; then return 1; fi
     sleep 1
   done
@@ -320,10 +336,10 @@ quit_app
 write_config "$PROBE_DIR/missing-source" "$FOREIGN_PORT" true
 bad_hash="$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')"
 launch_app
-wait_reason claude_dir_missing
+wait_ready 4892 "$default_slug" "Default settings source fixture."
 test "$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')" = "$bad_hash"
 foreign_alive
-quit_app
+quit_released 4892
 
 printf 'schema_version = 1\n[server\npreferred_port = 4892\n' > "$CONFIG_PATH"
 malformed_hash="$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')"
@@ -333,11 +349,11 @@ test "$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')" = "$malformed_hash"
 quit_released 4892
 foreign_alive
 
-node --input-type=module - "$CONFIG_PATH" "$AUTHORED_SOURCE" "$FOREIGN_PORT" "$FALLBACK_EFFECTIVE" "$SECOND_EFFECTIVE" <<'NODE'
-const [configPath, source, preferred, effective, secondEffective] = process.argv.slice(2);
+node --input-type=module - "$CONFIG_PATH" "$AUTHORED_SOURCE" "$PROBE_HOME" "$PROBE_DIR" "$XDG_CONFIG_HOME" "$FOREIGN_PORT" "$FALLBACK_EFFECTIVE" "$SECOND_EFFECTIVE" <<'NODE'
+const [configPath, source, home, tempDir, xdgConfigHome, preferred, effective, secondEffective] = process.argv.slice(2);
 console.log(JSON.stringify({
   status: "passed",
-  isolation: { configPath, source, home: process.env.HOME, tempDir: process.env.TMPDIR },
+  isolation: { configPath, source, home, tempDir, xdgConfigHome, ephemeralWebView: true },
   settings: { preferredPort: Number(preferred), effectivePort: Number(effective), secondEffectivePort: Number(secondEffective), fallbackUsed: Number(preferred) !== Number(effective), missingConfigUsesDefaults: true, malformedBytesPreserved: true },
   runtime: { ready: true, relaunch: true, ownedChildCleanup: true, foreignListenerSurvived: true },
   production: { bundleIdentity: "com.takazudo.ccresdoc", testFixturesPackaged: false },

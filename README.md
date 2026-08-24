@@ -12,8 +12,8 @@ The app is a thin Tauri host around a **node-free sidecar architecture**: at lau
      ▼  Rust watcher (ccresdoc-claude-md crate, in-process)
 app/src/content/docs/claude*/   ← generated MDX (gitignored)
      │
-     ▼  zfb dev (native binary, default preferred port 4892, node-free at runtime)
-WebView → http://localhost:4892/docs/
+     ▼  zfb dev (native binary, settings-selected loopback port, node-free at runtime)
+WebView → http://localhost:<effective-port>/docs/
 ```
 
 Key facts:
@@ -80,15 +80,17 @@ menu, `Cmd+,`, or the loading/error page's Settings action. All of these focus
 one native Settings window; closing it hides the window and leaves the docs
 runtime alive. Draft edits are validated by Rust, Reset restores the defaults in
 the draft, Cancel discards the draft and clears the appearance preview, and
-Save persists then applies the draft without closing the window.
+then hides Settings; Save persists then applies the draft without closing the
+window.
 Appearance-only changes update the active page without restarting the server;
 source, preferred-port, and fallback changes restart the runtime once. A
 restart failure is reported as saved-but-not-active and leaves recovery open.
 
 External edits are guarded by a SHA-256 content revision. Save refuses a stale
 revision. Reload discards the local draft; Reapply copies only the explicitly
-dirty fields onto the latest valid document, retries boundedly, and refuses a
-second racing edit rather than blindly overwriting it. Quick appearance
+dirty fields onto the latest valid document, checks that latest revision again
+immediately before replacement, and refuses a second racing edit rather than
+blindly overwriting it. Quick appearance
 controls use the same TOML authority: a missing file may accept a valid legacy
 browser preference as a first-save candidate, while any existing document
 (including malformed or invalid TOML) blocks legacy import. Appearance is
@@ -130,7 +132,9 @@ the foreign fixture listener remains alive. It does not use a broad process kill
 the tester's real `~/.claude`. The packaged Computer Use walkthrough remains a
 manager/release step for Settings window focus, picker/save/relaunch,
 appearance preview/cancel/persistence, external-edit rebase, and visual
-first-paint confirmation.
+first-paint confirmation. Package smoke also opts both WebViews into Tauri's
+nonpersistent data store and refuses to run while another CCResDoc instance is
+open, so it cannot reuse or terminate a developer session.
 
 
 ## Prerequisites (development only)

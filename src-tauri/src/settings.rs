@@ -918,7 +918,8 @@ fn normalize_source(raw: &str, home: &Path) -> Result<PathBuf, (DiagnosticKind, 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o500 == 0 {
+        let mode = metadata.permissions().mode();
+        if mode & 0o444 == 0 || mode & 0o111 == 0 {
             return Err((
                 DiagnosticKind::UnreadableSourcePath,
                 "source directory is not readable/searchable".into(),

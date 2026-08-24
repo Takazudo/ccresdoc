@@ -182,6 +182,12 @@ describe("host-owned package route adapters", () => {
 
     const shell = document.createElement("div");
     shell.innerHTML = html;
+    const settingsIsland = shell.querySelector<HTMLElement>(
+      '[data-zfb-island="SettingsHeaderButton"]',
+    );
+    expect(settingsIsland).not.toBeNull();
+    expect(settingsIsland?.getAttribute("data-when")).toBe("load");
+    expect(settingsIsland?.querySelector('button[aria-label="Open Settings"]')).not.toBeNull();
     const mobileToggle = shell.querySelector<HTMLElement>(
       '[data-zfb-island="SidebarToggle"]',
     );

@@ -62,6 +62,9 @@ impl RuntimeSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeDiagnosticKind {
+    WorkspaceUnavailable,
+    ZfbBinaryMissing,
+    SourceUnavailable,
     PreferredPortOccupied,
     BindRetryExhausted,
     GenerateFailed,

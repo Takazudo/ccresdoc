@@ -58,6 +58,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(300);
 /// completes. Its presence + matching version token is what marks the
 /// workspace "ready"; a partial/interrupted copy lacks it and is re-copied.
 const WORKSPACE_READY_FILE: &str = ".ccresdoc-workspace-ready";
+const EPHEMERAL_WEBVIEW_ENV: &str = "CCRESDOC_EPHEMERAL_WEBVIEW";
 
 /// Maps `std::env::consts::OS`-`ARCH` to the zfb platform package name.
 /// Mirrors `@takazudo/zfb/bin/zfb.mjs` exactly (biome's pattern). The native
@@ -117,6 +118,18 @@ struct AppState {
 /// failure, not a crash).
 fn home_dir() -> Option<String> {
     env::var("HOME").ok().filter(|h| !h.is_empty())
+}
+
+fn ephemeral_webview_enabled_value(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+pub(crate) fn ephemeral_webview_enabled() -> bool {
+    ephemeral_webview_enabled_value(env::var(EPHEMERAL_WEBVIEW_ENV).ok().as_deref())
+}
+
+fn resource_publication_allowed(shutting_down: bool, current: u64, expected: u64) -> bool {
+    !shutting_down && current == expected
 }
 
 /// The log path resolved in setup(), read out of shared state.
@@ -646,18 +659,7 @@ fn teardown(
     }
     let stopped_generation = state.runtime.claim_generation();
     state.runtime.publish_stopped(stopped_generation);
-    state.effective_port.store(0, Ordering::SeqCst);
-    let _ = app_handle
-        .state::<AppState>()
-        .watch_handle
-        .lock()
-        .unwrap()
-        .take();
-    if let Ok(mut g) = sidecar.lock() {
-        if let Some(mut s) = g.take() {
-            kill_sidecar(&mut s, log_path);
-        }
-    }
+    stop_owned_runtime_resources(app_handle, sidecar, log_path);
 }
 
 /// `libc::kill(target, sig)` with its return value checked and logged on
@@ -756,6 +758,21 @@ fn kill_sidecar(sidecar: &mut Sidecar, log_path: &str) {
     }
 }
 
+fn stop_owned_runtime_resources(
+    app_handle: &AppHandle,
+    sidecar: &Arc<Mutex<Option<Sidecar>>>,
+    log_path: &str,
+) {
+    let state = app_handle.state::<AppState>();
+    let _ = state.watch_handle.lock().unwrap().take();
+    if let Ok(mut slot) = sidecar.lock() {
+        if let Some(mut owned) = slot.take() {
+            kill_sidecar(&mut owned, log_path);
+        }
+    }
+    state.effective_port.store(0, Ordering::SeqCst);
+}
+
 // ── Error emission ────────────────────────────────
 
 fn emit_launch_error_str(app_handle: &AppHandle, reason: &str) {
@@ -811,6 +828,25 @@ fn emit_launch_error_if_current(app_handle: &AppHandle, generation: u64, reason:
     }
 }
 
+fn publish_launch_failure(
+    state: &AppState,
+    generation: u64,
+    desired: &EffectiveSettings,
+    kind: RuntimeDiagnosticKind,
+    attempted_port: Option<u16>,
+    message: String,
+) {
+    state.runtime.publish_failed(
+        RuntimeDiagnostic {
+            kind,
+            preferred_port: desired.preferred_port,
+            attempted_port,
+            message,
+        },
+        generation,
+    );
+}
+
 /// The full node-free boot, runnable from initial setup, Refresh, and Retry.
 /// Resolves workspace + zfb binary + `~/.claude`, runs `generate()`
 /// once, starts `watch()`, spawns `zfb dev`, polls readiness, then navigates.
@@ -840,6 +876,14 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
                 &log_path,
                 &format!("launch: workspace resolution failed: {e}"),
             );
+            publish_launch_failure(
+                &state,
+                my_gen,
+                &desired,
+                RuntimeDiagnosticKind::WorkspaceUnavailable,
+                None,
+                e,
+            );
             emit_launch_error_if_current(app_handle, my_gen, "workspace_unavailable");
             return;
         }
@@ -850,6 +894,14 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
         Ok(b) => b,
         Err(e) => {
             log_to(&log_path, &format!("launch: zfb binary unresolved: {e}"));
+            publish_launch_failure(
+                &state,
+                my_gen,
+                &desired,
+                RuntimeDiagnosticKind::ZfbBinaryMissing,
+                None,
+                e,
+            );
             emit_launch_error_if_current(app_handle, my_gen, "zfb_binary_missing");
             return;
         }
@@ -858,9 +910,15 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
     // 3. Use the normalized source from the typed settings snapshot.
     let claude = desired.claude_dir.clone();
     if !claude.exists() {
-        log_to(
-            &log_path,
-            &format!("launch: ~/.claude missing at {}", claude.display()),
+        let message = format!("source directory is unavailable: {}", claude.display());
+        log_to(&log_path, &format!("launch: {message}"));
+        publish_launch_failure(
+            &state,
+            my_gen,
+            &desired,
+            RuntimeDiagnosticKind::SourceUnavailable,
+            None,
+            message,
         );
         emit_launch_error_if_current(app_handle, my_gen, "claude_dir_missing");
         return;
@@ -972,12 +1030,16 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
             Ok(handle) => {
                 let state = app_handle.state::<AppState>();
                 let mut slot = state.watch_handle.lock().unwrap();
-                if state.shutting_down.load(Ordering::SeqCst) {
+                if !resource_publication_allowed(
+                    state.shutting_down.load(Ordering::SeqCst),
+                    state.runtime.generation().load(Ordering::SeqCst),
+                    my_gen,
+                ) {
                     drop(slot);
                     drop(handle);
                     log_to(
                         &log_path,
-                        "launch: dropping watcher created during shutdown",
+                        "launch: dropping watcher created after shutdown or supersession",
                     );
                     return;
                 }
@@ -1000,6 +1062,7 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
             &log_path,
             &format!("launch[{my_gen}]: superseded after watcher setup"),
         );
+        stop_owned_runtime_resources(app_handle, &sidecar_arc, &log_path);
         return;
     }
 
@@ -1033,9 +1096,14 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
         match spawn_zfb_dev(&zfb_bin, &workspace, choice.effective_port, &log_path) {
             Ok(mut sidecar) => {
                 let mut slot = sidecar_arc.lock().unwrap();
-                if state.shutting_down.load(Ordering::SeqCst) {
+                if !resource_publication_allowed(
+                    state.shutting_down.load(Ordering::SeqCst),
+                    state.runtime.generation().load(Ordering::SeqCst),
+                    my_gen,
+                ) {
                     drop(slot);
                     kill_sidecar(&mut sidecar, &log_path);
+                    let _ = state.watch_handle.lock().unwrap().take();
                     return;
                 }
                 *slot = Some(sidecar);
@@ -1084,6 +1152,7 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings, allow
             &log_path,
             "launch: superseded by a newer launch — skipping navigate/emit",
         );
+        stop_owned_runtime_resources(app_handle, &sidecar_arc, &log_path);
         return;
     }
 
@@ -1196,7 +1265,7 @@ fn create_main_window(
     navigation_port: Arc<AtomicU16>,
     appearance_seed: appearance::BootstrapSeed,
 ) -> Result<(), tauri::Error> {
-    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("CCResDoc")
         .inner_size(1200.0, 800.0)
         .initialization_script(appearance::initialization_script(&appearance_seed))
@@ -1205,8 +1274,11 @@ fn create_main_window(
             if let tauri::webview::PageLoadEvent::Finished = payload.event() {
                 reapply_zoom(window.app_handle());
             }
-        })
-        .build()?;
+        });
+    if ephemeral_webview_enabled() {
+        builder = builder.incognito(true);
+    }
+    builder.build()?;
     Ok(())
 }
 
@@ -1418,6 +1490,13 @@ fn main() {
                     } = &event
                     {
                         api.prevent_close();
+                        let state = app_handle.state::<AppState>();
+                        state.appearance.clear_preview();
+                        let authoritative = state.settings_store.load();
+                        let _ = app_handle.emit(
+                            appearance::APPEARANCE_EVENT,
+                            state.appearance.envelope(&authoritative),
+                        );
                         if let Some(window) = app_handle.get_webview_window(SETTINGS_WINDOW_LABEL) {
                             let _ = window.eval(
                                 "window.dispatchEvent(new Event('ccresdoc-settings-native-close'))",
@@ -1491,6 +1570,20 @@ mod tests {
             runtime::DOCS_PATH.starts_with('/'),
             "DOCS_PATH must start with /"
         );
+    }
+
+    #[test]
+    fn stale_or_shutdown_launches_cannot_publish_owned_resources() {
+        assert!(resource_publication_allowed(false, 7, 7));
+        assert!(!resource_publication_allowed(false, 8, 7));
+        assert!(!resource_publication_allowed(true, 7, 7));
+    }
+
+    #[test]
+    fn ephemeral_webview_is_explicitly_opted_in() {
+        assert!(!ephemeral_webview_enabled_value(None));
+        assert!(!ephemeral_webview_enabled_value(Some("true")));
+        assert!(ephemeral_webview_enabled_value(Some("1")));
     }
 
     #[test]

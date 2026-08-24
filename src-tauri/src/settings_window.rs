@@ -68,7 +68,7 @@ impl WindowBoundary for TauriWindowBoundary<'_> {
     fn create(&mut self) -> Result<(), Self::Error> {
         let state = self.app.state::<AppState>();
         let appearance = appearance::value_from_snapshot(&state.settings_store.load());
-        WebviewWindowBuilder::new(
+        let mut builder = WebviewWindowBuilder::new(
             self.app,
             SETTINGS_WINDOW_LABEL,
             WebviewUrl::App("settings.html".into()),
@@ -79,8 +79,11 @@ impl WindowBoundary for TauriWindowBoundary<'_> {
         .min_inner_size(520.0, 420.0)
         .on_navigation(|url| {
             matches!(url.scheme(), "tauri" | "asset") || url.as_str() == "about:blank"
-        })
-        .build()?;
+        });
+        if crate::ephemeral_webview_enabled() {
+            builder = builder.incognito(true);
+        }
+        builder.build()?;
         Ok(())
     }
 

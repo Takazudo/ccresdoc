@@ -24,7 +24,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
   return { ...base, ...overrides } as any;
 }
 
-function setup(initial = snapshot()) {
+function setup(initial = snapshot(), withNativeHide = false) {
   document.body.innerHTML = shellHtml;
   let current = initial;
   const calls: Array<[string, ...unknown[]]> = [];
@@ -40,8 +40,10 @@ function setup(initial = snapshot()) {
     pickSourceDirectory: vi.fn(async (): Promise<string | null> => null), openConfigFile: vi.fn(async () => {}), revealConfigFile: vi.fn(async () => {}),
   };
   const close = vi.fn();
-  const editor = createSettingsEditor({ document, window: { addEventListener: window.addEventListener.bind(window), close, confirm: vi.fn(() => true) }, backend });
-  return { editor, backend, calls, close, setSnapshot(value: any) { current = value; } };
+  const hide = vi.fn(async () => {});
+  const editorWindow = { addEventListener: window.addEventListener.bind(window), close, confirm: vi.fn(() => true), ...(withNativeHide ? { __TAURI__: { window: { getCurrentWindow: () => ({ hide }) } } } : {}) } as any;
+  const editor = createSettingsEditor({ document, window: editorWindow, backend });
+  return { editor, backend, calls, close, hide, setSnapshot(value: any) { current = value; } };
 }
 
 describe("bundled Settings editor", () => {
@@ -105,7 +107,7 @@ describe("bundled Settings editor", () => {
     (document.querySelector("#pick-source") as HTMLButtonElement).click(); await flush(); expect(source.value).toBe("~/.claude");
     backend.pickSourceDirectory.mockResolvedValueOnce("/safe/resources"); (document.querySelector("#pick-source") as HTMLButtonElement).click(); await flush(); expect(source.value).toBe("/safe/resources"); expect(backend.saveAndApply).not.toHaveBeenCalled();
     (document.querySelector("#reset-defaults") as HTMLButtonElement).click(); await flush(); expect(source.value).toBe("~/.claude"); expect(backend.saveAndApply).not.toHaveBeenCalled();
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); expect(close).toHaveBeenCalledOnce();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await flush(); expect(close).toHaveBeenCalledOnce();
   });
 
   it("keeps failed saves open and distinguishes saved-not-active", async () => {
@@ -120,16 +122,18 @@ describe("bundled Settings editor", () => {
   });
 
   it("previews appearance live and Cancel resolves the backend's latest authority", async () => {
-    const current = setup(); await current.editor.load(); await flush();
+    const current = setup(snapshot(), true); await current.editor.load(); await flush();
     const dark = document.querySelector('[name="appearance-mode"][value="dark"]') as HTMLInputElement;
     dark.checked = true; dark.dispatchEvent(new Event("change", { bubbles: true })); await flush();
     expect(current.backend.previewAppearance).toHaveBeenCalledWith("dark", "default");
     expect(document.documentElement.dataset.theme).toBe("dark");
     current.backend.clearAppearancePreview.mockResolvedValueOnce({ appearance: { mode: "light", themePack: "default" } });
-    current.editor.cancel(); await flush();
+    await current.editor.cancel(); await flush();
     expect(current.backend.clearAppearancePreview).toHaveBeenCalled();
     expect(document.documentElement.dataset.theme).toBe("light");
-    expect(current.close).toHaveBeenCalled();
+    expect(current.hide).toHaveBeenCalledOnce();
+    expect(current.close).not.toHaveBeenCalled();
+    expect((document.querySelector("#save-settings") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("enforces malformed replacement, future read-only, unavailable theme, and stale rebase recovery", async () => {

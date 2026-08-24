@@ -10,6 +10,42 @@ describe("docs appearance bridge", () => {
     delete (globalThis as any).__TAURI__;
     delete (globalThis as any).__CCRESDOC_APPEARANCE__;
     delete (globalThis as any).__zudoDocThemePacks;
+    localStorage.clear();
+    delete document.documentElement.dataset.theme;
+    delete document.documentElement.dataset.themePack;
+  });
+
+  it("keeps preview payloads out of persistent origin storage", async () => {
+    let appearanceListener: ((event: any) => void) | undefined;
+    localStorage.setItem("zudo-doc-theme", "light");
+    localStorage.setItem("zudo-doc-theme-pack", "paper");
+    document.documentElement.dataset.themePack = "paper";
+    (globalThis as any).__CCRESDOC_APPEARANCE__ = {
+      mode: "light", themePack: "paper", effectiveMode: "light",
+      revision: "sha256:one", source: "authoritative", origin: location.origin,
+    };
+    (globalThis as any).__zudoDocThemePacks = { base: "/", packs: { default: "1", paper: "2" } };
+    (globalThis as any).__TAURI__ = {
+      core: { invoke: vi.fn() },
+      event: { listen: vi.fn(async (_name, handler) => { appearanceListener = handler; return () => {}; }) },
+    };
+    const mount = document.createElement("div");
+    document.body.append(mount);
+    act(() => render(<AppearanceBridge />, mount));
+    await flush();
+
+    appearanceListener?.({ payload: {
+      appearance: { mode: "dark", themePack: "default" },
+      authoritative: { mode: "light", themePack: "paper" },
+      revision: "sha256:one", source: "preview", authoritativeSource: "authoritative",
+    } });
+    await flush();
+
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("zudo-doc-theme")).toBe("light");
+    expect(localStorage.getItem("zudo-doc-theme-pack")).toBe("paper");
+    act(() => render(null, mount));
+    mount.remove();
   });
 
   it("serializes a quick toggle once and suppresses authoritative echo writes", async () => {
