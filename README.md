@@ -202,6 +202,28 @@ pnpm rebuild:local-app
 See `.claude/skills/l-build/SKILL.md` for `/l-build`, including its
 same-session `SKIP_APP_BUILD=1` fast reinstall.
 
+## Install a release
+
+GitHub Releases is the canonical direct download for end users. The current
+artifact is Apple Silicon (`aarch64`) and is effectively macOS 11+:
+`CCResDoc_<version>_aarch64.dmg` with its matching
+`CCResDoc_<version>_aarch64.dmg.sha256` file.
+
+Download both files, verify the DMG from the directory containing them, then
+open the DMG and drag `CCResDoc.app` to Applications:
+
+```bash
+shasum -a 256 -c CCResDoc_<version>_aarch64.dmg.sha256
+```
+
+The current build is ad-hoc signed but not notarized. On first launch,
+right-click `CCResDoc.app` and choose **Open**, or explicitly approve it in
+**System Settings → Privacy & Security**. Full Developer ID signing,
+notarization, and additional architectures are future improvements, not
+current distribution claims. The local macOS build is a product and
+architecture choice; standard public-repository GitHub-hosted runner billing
+is not the reason for it.
+
 ## Project structure
 
 ```
