@@ -130,6 +130,8 @@ test("the producer derives its pair from the contract and keeps upload mutation 
   assert.match(producer, /CHECKSUM_PATH="\$REPO_ROOT\/\$CHECKSUM_RELATIVE_PATH"/);
   assert.match(producer, /BUILT_DMG="\$TARGET_DIR\/release\/bundle\/dmg\/\$ARTIFACT_NAME"/);
   assert.match(producer, /APPLE_SIGNING_IDENTITY=- cargo tauri build --bundles dmg/);
+  assert.doesNotMatch(producer, /codesign[^\n]+\|\s*grep\s+-q/);
+  assert.match(producer, /grep -q '\^Signature=adhoc\$' <<<"\$SIGNATURE_DETAILS"/);
   assert.match(producer, /hdiutil verify "\$BUILT_DMG"/);
   assert.match(producer, /hdiutil attach -readonly -nobrowse -mountpoint/);
   assert.match(producer, /bash "\$SCRIPT_DIR\/test-macos-package\.sh" --existing-bundle "\$APP_PATH"/);

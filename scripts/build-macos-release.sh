@@ -260,7 +260,9 @@ for executable in "$APP_BINARY" "$ZFB_BIN"; do
   [[ -x "$executable" ]] || fail "required executable is missing or not executable: $executable"
   [[ "$(lipo -archs "$executable")" == "arm64" ]] || fail "required executable is not arm64-only: $executable"
   codesign --verify --strict "$executable" || fail "invalid executable signature: $executable"
-  codesign -d --verbose=4 "$executable" 2>&1 | grep -q '^Signature=adhoc$' ||
+  SIGNATURE_DETAILS="$(codesign -d --verbose=4 "$executable" 2>&1)" ||
+    fail "could not inspect executable signature: $executable"
+  grep -q '^Signature=adhoc$' <<<"$SIGNATURE_DETAILS" ||
     fail "required executable does not have the intended ad-hoc signature: $executable"
 done
 [[ "$(stat -f%z "$ZFB_BIN")" == "$DARWIN_SIZE" ]] || fail "native runtime carrier size does not match package facts"
@@ -275,7 +277,9 @@ done
 NODE_LEAK="$(find "$RUNTIME_ROOT" -type f \( -name node -o -name node.exe \) -print -quit 2>/dev/null || true)"
 [[ -z "$NODE_LEAK" ]] || fail "Node runtime leaked into mounted app: $NODE_LEAK"
 codesign --verify --strict --deep "$APP_PATH" || fail "strict/deep verification failed for mounted app"
-codesign -d --verbose=4 "$APP_PATH" 2>&1 | grep -q '^Signature=adhoc$' ||
+SIGNATURE_DETAILS="$(codesign -d --verbose=4 "$APP_PATH" 2>&1)" ||
+  fail "could not inspect mounted outer app signature"
+grep -q '^Signature=adhoc$' <<<"$SIGNATURE_DETAILS" ||
   fail "mounted outer app does not have the intended ad-hoc signature"
 
 echo "==> [3/4] Run packaged WebView/runtime launch gate"
