@@ -178,7 +178,7 @@ cd app && pnpm exec zfb build
 ## Build the .app
 
 ```bash
-cargo tauri build
+cargo tauri build --bundles app
 ```
 
 `beforeBuildCommand` performs a frozen install/build and stages only the
@@ -189,9 +189,18 @@ dependencies. Validate it with `pnpm run probe:runtime-package`; on macOS arm64,
 run `scripts/test-macos-package.sh` for the separately mandatory packaged
 app/WebView counterpart. Tauri runs build hooks from the project root, and no
 global `zfb` on PATH is required.
-Output: `src-tauri/target/release/bundle/macos/CCResDoc.app`.
+Cargo's target directory may be configured outside the repository; resolve it
+with `cargo metadata` instead of assuming `src-tauri/target/`.
 
-See `.claude/skills/ccresdoc-build/SKILL.md` for the full install workflow (clean → build → verify → kill → install → launch).
+To build, verify, install to `/Applications/CCResDoc.app`, launch, and confirm
+semantic readiness in one command:
+
+```bash
+pnpm rebuild:local-app
+```
+
+See `.claude/skills/l-build/SKILL.md` for `/l-build`, including its
+same-session `SKIP_APP_BUILD=1` fast reinstall.
 
 ## Project structure
 
@@ -200,9 +209,9 @@ crates/          Rust workspace crates
   ccresdoc-claude-md/   ~/.claude→MDX generator + watcher (the live engine)
 src-tauri/       Tauri host (main.rs, tauri.conf.json, loading page)
 app/             zfb frontend project (zudo-doc consumer, port 4892)
-scripts/         run-b4push.sh, test-launch.sh, test-macos-settings.sh
+scripts/         run-b4push.sh, rebuild-local-app.sh, test-launch.sh, test-macos-settings.sh
 .github/         GitHub Actions CI workflow
-.claude/skills/  ccresdoc-build skill (local build + install steps)
+.claude/skills/  l-build skill (local build + verified /Applications install)
 ```
 
 See per-directory CLAUDE.md files for detailed architecture notes.

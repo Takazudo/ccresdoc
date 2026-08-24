@@ -12,6 +12,7 @@
     "build": "pnpm -C app run build",
     "app:dev": "cargo tauri dev",
     "app:build": "cargo tauri build",
+    "rebuild:local-app": "bash scripts/rebuild-local-app.sh",
     "b4push": "./scripts/run-b4push.sh",
     "check:dependencies": "bash scripts/check-zfb-pin.sh && pnpm -C app run validate:dependencies",
     "check:types": "pnpm -C app run typecheck",
