@@ -18,6 +18,18 @@
 @source "src/utils/**/*.{tsx,ts,jsx,js}";
 @source "pages/**/*.{tsx,ts,jsx,js}";
 
+/* zfb does not expose a post-mount island marker, so the AppearanceBridge
+ * removes this pending treatment after the synchronous load-island pass.
+ * This is visual and pointer affordance only: CSS cannot provide true
+ * aria-disabled/inert keyboard semantics. Keep non-JS links usable. */
+html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="ThemeToggle"] button,
+html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="ThemePackSwitcher"] button,
+html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="SettingsHeaderButton"] button {
+  cursor: default;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 /* CCResDoc-specific Tauri/WebView accessibility hardening. */
 @media (forced-colors: active) {
   :focus-visible {
@@ -33,5 +45,12 @@
 
   .find-match-active {
     outline-color: HighlightText;
+  }
+
+  html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="ThemeToggle"] button,
+  html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="ThemePackSwitcher"] button,
+  html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="SettingsHeaderButton"] button {
+    border-color: GrayText;
+    color: GrayText;
   }
 }

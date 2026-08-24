@@ -37,6 +37,9 @@ function effectiveMode(mode: Mode): "light" | "dark" {
 
 export function AppearanceBridge() {
   useEffect(() => {
+    const loadControlsReadyFrame = window.requestAnimationFrame(() => {
+      document.documentElement.setAttribute("data-ccresdoc-load-controls-ready", "");
+    });
     const root = globalThis as TauriRoot;
     const invoke = root.__TAURI__?.core?.invoke;
     let applying = false;
@@ -181,6 +184,8 @@ export function AppearanceBridge() {
     if (listen) void listen(EVENT, (event) => { void accept(event.payload); }).then((stop) => { unlisten = stop; });
 
     return () => {
+      window.cancelAnimationFrame(loadControlsReadyFrame);
+      document.documentElement.removeAttribute("data-ccresdoc-load-controls-ready");
       disposed = true;
       unlisten?.();
       window.removeEventListener("color-scheme-changed", colorChanged);
