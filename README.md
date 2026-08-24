@@ -1,16 +1,17 @@
 # CCResDoc
 
-A macOS documentation viewer for `$HOME/.claude/` by default — renders CLAUDE.md hierarchies, skills, commands, and agent definitions as a browsable local web app inside a native Tauri window.
+A macOS documentation viewer for selected local Claude and Codex resources — Claude is enabled by default and Codex is opt-in. It renders instruction files, skills, commands, agents, hooks, rules, and configuration as a browsable local web app inside a native Tauri window.
 
-The app is a thin Tauri host around a **node-free sidecar architecture**: at launch it spawns the native `zfb` binary on the settings-selected loopback port and a Rust watcher that generates MDX from the configured source (`~/.claude/` by default). No Node.js or external runtime dependencies are required once the `.app` is built.
+The app is a thin Tauri host around a **node-free sidecar architecture**: at launch it spawns the native `zfb` binary on the settings-selected loopback port and Rust generators/watchers that emit MDX from enabled configured sources (`~/.claude/` on, `~/.codex/` off by default). No Node.js or external runtime dependencies are required once the `.app` is built.
 
 ## Architecture
 
 ```
-~/.claude/           ← source of truth (CLAUDE.md files, skills/, commands/, agents/)
+~/.claude/ + ~/.codex/  ← selected source roots (Claude and Codex formats)
      │
-     ▼  Rust watcher (ccresdoc-claude-md crate, in-process)
-app/src/content/docs/claude*/   ← generated MDX (gitignored)
+     ▼  Rust coordinators/watchers (ccresdoc-claude-md crate, in-process)
+app/src/content/docs/claude/ + codex/      ← permanent generic landings (tracked)
+app/src/content/docs/claude-* + codex-*   ← selected detail MDX (gitignored)
      │
      ▼  zfb dev (native binary, settings-selected loopback port, node-free at runtime)
 WebView → http://localhost:<effective-port>/docs/
@@ -19,17 +20,21 @@ WebView → http://localhost:<effective-port>/docs/
 Key facts:
 - **Published toolchain**: the `@takazudo/zfb*` family and all five native
   carrier packages are pinned to `2.10.1`; `@takazudo/zudo-doc` is pinned to
-  `5.12.0`. The app and compatibility fixture use independent frozen lockfiles.
+  `5.12.1`. The app and compatibility fixture use independent frozen lockfiles.
 - **Node-free at runtime**: `zfb dev` with zero `.mjs` plugins spawns no Node host. The native `@takazudo/zfb-<platform>/zfb` binary is bundled in `node_modules` (populated at build/setup time via `pnpm install --frozen-lockfile`, Node at setup only).
 - **Host-owned routes**: `app/` owns the route adapters because the selected
   zfb configuration ends with `plugins: []`; package route/plugin entrypoints
   are not enabled.
 - **Port 4892**: the default preferred port in the authored settings schema; the active runtime may use a loopback fallback when that port is occupied.
 - **Semantic readiness**: the host polls `GET /docs/` until the response is
-  successful and contains the generator-owned `Claude Resources` marker; a
-  generic `200` is not sufficient. `/` is the exact server-rendered alias.
-- **Writable workspace**: a pruned, lockfile-faithful runtime tree is copied to `<app_data_dir>/app-workspace/` on first launch. A SHA-256 tree digest covers the staged app, theme assets, and staging/digest implementation; its refresh token gates the `.ccresdoc-workspace-ready` sentinel. Dev mode uses the repo `app/` directly.
-- **Rust generator** (`crates/ccresdoc-claude-md`): `generate()` + `watch()` walk the authored source (default `~/.claude/`) and emit zudo-doc-compatible MDX. `zfb dev` content-watch HMRs the result.
+  successful and contains the current `CCResDoc` shell plus matching Claude
+  and Codex selection markers; a generic `200` is not sufficient. `/` is the
+  exact server-rendered alias.
+- **Writable workspace**: a pruned, lockfile-faithful runtime tree is copied to `<app_data_dir>/app-workspace/` on first launch. Staging admits only explicit routes/config/landing inputs and generated theme assets; it omits build `dist` and all runtime-generated Claude/Codex detail/status content. A SHA-256 tree digest covers the staged app, theme assets, and staging/digest implementation; its refresh token gates the `.ccresdoc-workspace-ready` sentinel. Dev mode uses the repo `app/` directly.
+- **Rust selected-resource engine** (`crates/ccresdoc-claude-md`): enabled
+  Claude and Codex sources generate into disjoint MDX namespaces. The
+  coordinator owns overview/status pages and transactional rollback; each
+  enabled source owns one watcher, and `zfb dev` content-watch HMRs the result.
 
 ## Settings contract
 
@@ -44,8 +49,13 @@ Reading a missing file never creates it. The complete schema and defaults are:
 ```toml
 schema_version = 1
 
+[resources]
+claude = true
+codex = false
+
 [source]
 claude_dir = "~/.claude"
+codex_dir = "~/.codex"
 
 [appearance]
 mode = "system"       # system | light | dark
@@ -55,6 +65,16 @@ theme_pack = "default"
 preferred_port = 4892
 fallback_to_free_port = true
 ```
+
+The schema-v1 resource defaults are Claude on and Codex off. Any of the four
+selection states (Claude only, Codex only, both, or both off) is valid: the
+header keeps permanent Claude/Codex categories, while disabled detail
+namespaces are pruned and their overview reports a disabled marker. Claude
+detail positions are 900–903; Codex detail positions are 905–910, with the
+top-level headers at 899 and 904. Codex reads only `AGENTS.md`, `config.toml`,
+agent TOML, `hooks.json`, rules, and skill packages. Its only symlink exception
+is a direct link under the configured `skills/` directory; generated output
+and managed namespaces remain real paths under the docs root.
 
 The editor reports authored values separately from the effective/active runtime.
 The authored source and preferred port remain exactly what is in TOML; the
@@ -136,6 +156,19 @@ first-paint confirmation. Package smoke also opts both WebViews into Tauri's
 nonpersistent data store and refuses to run while another CCResDoc instance is
 open, so it cannot reuse or terminate a developer session.
 
+### Packaging privacy
+
+The package build never copies a live resource tree. The staging script admits
+an explicit list of app routes/configuration and the generated public theme
+catalog, omits `dist`, and rejects generated `claude-*`/`codex-*` detail/status
+paths plus `.ccresdoc-*` transition state. It audits staged text for synthetic
+fixture sentinels and checkout paths. `runtime-manifest.json` records the
+admitted files, exclusions, package facts, SHA-256 tree digest, and privacy
+audit; `scripts/verify-runtime-workspace.mjs` and the Linux two-launch probe
+recompute those facts and reject fixture/configured-root strings in rendered
+shell, 404, and HMR responses. The final macOS package script runs the same
+audit against the bundle before creating any temporary fixture source.
+
 
 ## Prerequisites (development only)
 
@@ -183,9 +216,11 @@ cargo tauri build --bundles app
 
 `beforeBuildCommand` performs a frozen install/build and stages only the
 lockfile-reachable runtime workspace automatically. The staged workspace keeps
-the direct package-root native carrier and the selected zero-plugin config. The `.app` does not bundle
-frontend test/build tooling, non-host zfb binaries, or disabled Node-plugin
-dependencies. Validate it with `pnpm run probe:runtime-package`; on macOS arm64,
+the direct package-root native carrier and the selected zero-plugin config,
+explicit generic Claude/Codex landing shells, and generated theme assets. It
+omits build `dist`, generated resource detail/status pages, frontend test/build
+tooling, non-host zfb binaries, and disabled Node-plugin dependencies. Validate
+it with `pnpm run probe:runtime-package`; on macOS arm64,
 run `scripts/test-macos-package.sh` for the separately mandatory packaged
 app/WebView counterpart. Tauri runs build hooks from the project root, and no
 global `zfb` on PATH is required.
@@ -242,7 +277,7 @@ is not the reason for it.
 
 ```
 crates/          Rust workspace crates
-  ccresdoc-claude-md/   ~/.claude→MDX generator + watcher (the live engine)
+  ccresdoc-claude-md/   selected Claude/Codex→MDX generators + watchers (the live engine)
 src-tauri/       Tauri host (main.rs, tauri.conf.json, loading page)
 app/             zfb frontend project (zudo-doc consumer, port 4892)
 scripts/         local build, verification, release-contract, and release-producer commands

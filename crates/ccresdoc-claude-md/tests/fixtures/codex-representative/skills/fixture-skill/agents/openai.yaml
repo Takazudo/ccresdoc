@@ -1,0 +1,5 @@
+interface:
+  display_name: Fixture Display
+  short_description: A compact description
+policy:
+  allow_implicit_invocation: false

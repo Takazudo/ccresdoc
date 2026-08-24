@@ -45,7 +45,7 @@ for RUN in $(seq 1 "$COUNT"); do
   for i in $(seq 1 100); do
     sleep 3
     HTTP=$(curl -s -o /tmp/ccresdoc-launch-docs.html -w "%{http_code}" http://localhost:4892/docs/ 2>/dev/null)
-    if [ "$HTTP" = "200" ] && grep -Fq "Claude Resources" /tmp/ccresdoc-launch-docs.html; then
+    if [ "$HTTP" = "200" ] && grep -Fq "CCResDoc Resources" /tmp/ccresdoc-launch-docs.html; then
       echo "  Run $RUN: PASS (ready at $((i*3))s)"
       OK=1
       PASS=$((PASS + 1))

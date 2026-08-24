@@ -12,6 +12,7 @@ use crate::settings::{
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
@@ -19,8 +20,212 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 pub const DOCS_PATH: &str = "/docs/";
-pub const READINESS_MARKER: &str = "Claude Resources";
+pub const SHELL_MARKER: &str = "CCResDoc";
+pub const CLAUDE_PATH: &str = "/docs/claude/";
+pub const CODEX_PATH: &str = "/docs/codex/";
 pub const MAX_BIND_ATTEMPTS: usize = 4;
+
+pub const CLAUDE_NAMESPACES: &[&str] = &[
+    "claude",
+    "claude-md",
+    "claude-commands",
+    "claude-skills",
+    "claude-agents",
+];
+pub const CODEX_NAMESPACES: &[&str] = &[
+    "codex",
+    "codex-agents-md",
+    "codex-config",
+    "codex-agents",
+    "codex-hooks",
+    "codex-rules",
+    "codex-skills",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceSelection {
+    pub claude: bool,
+    pub codex: bool,
+}
+
+impl ResourceSelection {
+    pub fn from_effective(settings: &EffectiveSettings) -> Self {
+        Self {
+            claude: settings.claude_resources,
+            codex: settings.codex_resources,
+        }
+    }
+
+    pub fn detail_namespaces(self) -> impl Iterator<Item = &'static str> {
+        CLAUDE_NAMESPACES[1..]
+            .iter()
+            .copied()
+            .filter(move |_| self.claude)
+            .chain(
+                CODEX_NAMESPACES[1..]
+                    .iter()
+                    .copied()
+                    .filter(move |_| self.codex),
+            )
+    }
+
+    pub fn watcher_count(self) -> usize {
+        usize::from(self.claude) + usize::from(self.codex)
+    }
+}
+
+pub fn transition_marker(generation: u64) -> std::io::Result<String> {
+    let mut random = [0_u8; 24];
+    fill_random(&mut random)?;
+    let random = random
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(format!("ccresdoc-generation-{generation}-{random}"))
+}
+
+#[cfg(unix)]
+fn fill_random(bytes: &mut [u8]) -> std::io::Result<()> {
+    std::fs::File::open("/dev/urandom")?.read_exact(bytes)
+}
+
+#[cfg(windows)]
+fn fill_random(bytes: &mut [u8]) -> std::io::Result<()> {
+    #[link(name = "bcrypt")]
+    extern "system" {
+        fn BCryptGenRandom(
+            algorithm: *mut std::ffi::c_void,
+            buffer: *mut u8,
+            length: u32,
+            flags: u32,
+        ) -> i32;
+    }
+    const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
+    let length = u32::try_from(bytes.len())
+        .map_err(|_| std::io::Error::other("random marker buffer is too large"))?;
+    // SAFETY: a valid writable buffer and its exact length are passed to the
+    // Windows system-preferred CSPRNG; a null algorithm handle is required by
+    // BCRYPT_USE_SYSTEM_PREFERRED_RNG.
+    let status = unsafe {
+        BCryptGenRandom(
+            std::ptr::null_mut(),
+            bytes.as_mut_ptr(),
+            length,
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        )
+    };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "BCryptGenRandom failed with NTSTATUS {status:#x}"
+        )))
+    }
+}
+
+pub fn overview_mdx(kind: &str, enabled: bool, categories: &[&str], marker: &str) -> String {
+    let title = if kind == "claude" {
+        "Claude Resources"
+    } else {
+        "Codex Resources"
+    };
+    let position = if kind == "claude" { 899 } else { 904 };
+    let state = if enabled { "enabled" } else { "disabled" };
+    let cards = if enabled && !categories.is_empty() {
+        format!(
+            "\n<CategoryNav categories={{{}}} />\n",
+            serde_json::to_string(categories).expect("static category names serialize")
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "---\ntitle: {title}\ndescription: {title} are {state}.\nsidebar_position: {position}\n---\n\n<div data-ccresdoc-resource=\"{kind}\" data-ccresdoc-state=\"{state}\" data-ccresdoc-generation=\"{marker}\">\n\n{title} are **{state}** in CCResDoc settings.\n{cards}\n</div>\n"
+    )
+}
+
+#[derive(Debug)]
+pub struct ManagedTreeJournal {
+    docs_dir: PathBuf,
+    backup_dir: PathBuf,
+    promoted: Vec<&'static str>,
+    backed_up: Vec<&'static str>,
+}
+
+impl ManagedTreeJournal {
+    pub fn promote(
+        docs_dir: &Path,
+        candidate_dir: &Path,
+        backup_dir: &Path,
+    ) -> std::io::Result<Self> {
+        std::fs::create_dir_all(docs_dir)?;
+        remove_exact(backup_dir)?;
+        std::fs::create_dir_all(backup_dir)?;
+        let mut journal = Self {
+            docs_dir: docs_dir.to_path_buf(),
+            backup_dir: backup_dir.to_path_buf(),
+            promoted: Vec::new(),
+            backed_up: Vec::new(),
+        };
+        let result = (|| {
+            for name in CLAUDE_NAMESPACES.iter().chain(CODEX_NAMESPACES) {
+                let live = docs_dir.join(name);
+                if live.exists() {
+                    std::fs::rename(&live, backup_dir.join(name))?;
+                    journal.backed_up.push(name);
+                }
+                let candidate = candidate_dir.join(name);
+                if candidate.exists() {
+                    std::fs::rename(&candidate, &live)?;
+                    journal.promoted.push(name);
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            let rollback = journal.rollback();
+            return Err(rollback.err().unwrap_or(error));
+        }
+        Ok(journal)
+    }
+
+    pub fn rollback(mut self) -> std::io::Result<()> {
+        let mut first_error = None;
+        for name in self.promoted.drain(..).rev() {
+            if let Err(error) = remove_exact(&self.docs_dir.join(name)) {
+                first_error.get_or_insert(error);
+            }
+        }
+        for name in self.backed_up.drain(..).rev() {
+            if let Err(error) =
+                std::fs::rename(self.backup_dir.join(name), self.docs_dir.join(name))
+            {
+                first_error.get_or_insert(error);
+            }
+        }
+        if first_error.is_none() {
+            if let Err(error) = remove_exact(&self.backup_dir) {
+                first_error.get_or_insert(error);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
+    pub fn commit(self) -> std::io::Result<()> {
+        remove_exact(&self.backup_dir)
+    }
+}
+
+pub fn remove_exact(path: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+            std::fs::remove_dir_all(path)
+        }
+        Ok(_) => std::fs::remove_file(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -40,6 +245,22 @@ pub struct RuntimeSnapshot {
     pub fallback_used: bool,
     pub generation: u64,
     pub diagnostic: Option<RuntimeDiagnostic>,
+    pub generated: Option<ResourceCounts>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceCounts {
+    pub claude_md: usize,
+    pub claude_commands: usize,
+    pub claude_skills: usize,
+    pub claude_agents: usize,
+    pub codex_agents_md: usize,
+    pub codex_config: usize,
+    pub codex_agents: usize,
+    pub codex_hooks: usize,
+    pub codex_rules: usize,
+    pub codex_skills: usize,
+    pub codex_warnings: usize,
 }
 
 impl RuntimeSnapshot {
@@ -51,6 +272,7 @@ impl RuntimeSnapshot {
             fallback_used: false,
             generation: 0,
             diagnostic: None,
+            generated: None,
         }
     }
 
@@ -68,10 +290,14 @@ pub enum RuntimeDiagnosticKind {
     PreferredPortOccupied,
     BindRetryExhausted,
     GenerateFailed,
+    PromotionFailed,
+    WatchFailed,
     SpawnFailed,
     SidecarExited,
     Timeout,
     Superseded,
+    RestoreFailed,
+    RelaunchFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,10 +468,10 @@ pub enum ReadinessState {
     Ready,
 }
 
-pub fn classify_readiness(status: u16, body: &str) -> ReadinessState {
+pub fn classify_readiness(status: u16, body: &str, marker: &str) -> ReadinessState {
     if status != 200 {
         ReadinessState::HttpUnavailable
-    } else if !body.contains(READINESS_MARKER) {
+    } else if !body.contains(marker) {
         ReadinessState::StaleContent
     } else {
         ReadinessState::Ready
@@ -255,13 +481,13 @@ pub fn classify_readiness(status: u16, body: &str) -> ReadinessState {
 /// Minimal in-process HTTP/1.0 probe.  The server is mandatory-loopback and
 /// the response is bounded, so this avoids a shell/curl dependency without
 /// introducing a general-purpose network client into the app.
-pub fn probe_docs(port: u16, io_timeout: Duration) -> std::io::Result<(u16, String)> {
+pub fn probe_path(port: u16, path: &str, io_timeout: Duration) -> std::io::Result<(u16, String)> {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let mut stream = TcpStream::connect_timeout(&addr, io_timeout)?;
     stream.set_read_timeout(Some(io_timeout))?;
     stream.set_write_timeout(Some(io_timeout))?;
     stream.write_all(
-        format!("GET {DOCS_PATH} HTTP/1.0\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n")
+        format!("GET {path} HTTP/1.0\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n")
             .as_bytes(),
     )?;
     let mut bytes = Vec::new();
@@ -275,6 +501,45 @@ pub fn probe_docs(port: u16, io_timeout: Duration) -> std::io::Result<(u16, Stri
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
     Ok((status, body.to_owned()))
+}
+
+pub fn probe_resource_readiness(
+    port: u16,
+    selection: ResourceSelection,
+    marker: &str,
+    io_timeout: Duration,
+) -> ReadinessState {
+    let Ok((shell_status, shell)) = probe_path(port, DOCS_PATH, io_timeout) else {
+        return ReadinessState::HttpUnavailable;
+    };
+    if shell_status != 200 || !shell.contains(SHELL_MARKER) {
+        return if shell_status == 200 {
+            ReadinessState::StaleContent
+        } else {
+            ReadinessState::HttpUnavailable
+        };
+    }
+    for (path, kind, enabled) in [
+        (CLAUDE_PATH, "claude", selection.claude),
+        (CODEX_PATH, "codex", selection.codex),
+    ] {
+        let Ok((status, body)) = probe_path(port, path, io_timeout) else {
+            return ReadinessState::HttpUnavailable;
+        };
+        let state = if enabled { "enabled" } else { "disabled" };
+        if status != 200
+            || !body.contains(&format!("data-ccresdoc-resource=\"{kind}\""))
+            || !body.contains(&format!("data-ccresdoc-state=\"{state}\""))
+            || !body.contains(marker)
+        {
+            return if status == 200 {
+                ReadinessState::StaleContent
+            } else {
+                ReadinessState::HttpUnavailable
+            };
+        }
+    }
+    ReadinessState::Ready
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -387,11 +652,19 @@ impl ApplyCoordinator {
         state.diagnostic = Some(diagnostic);
     }
 
+    pub fn publish_generated(&self, generated: ResourceCounts, generation: u64) {
+        let mut state = lock_unpoisoned(&self.state);
+        if state.generation == generation {
+            state.generated = Some(generated);
+        }
+    }
+
     pub fn clear_active(&self, generation: u64) {
         let mut state = lock_unpoisoned(&self.state);
         if state.generation == generation {
             state.active = None;
             state.fallback_used = false;
+            state.generated = None;
         }
     }
 
@@ -401,6 +674,7 @@ impl ApplyCoordinator {
         state.active = None;
         state.phase = RuntimePhase::Stopped;
         state.fallback_used = false;
+        state.generated = None;
     }
 
     pub fn with_serialized_apply<T>(&self, operation: impl FnOnce() -> T) -> T {
@@ -522,7 +796,10 @@ mod tests {
 
     fn settings(source: &str, port: u16) -> SettingsSnapshot {
         let effective = EffectiveSettings {
-            claude_dir: PathBuf::from(source),
+            claude_resources: true,
+            codex_resources: false,
+            claude_dir: Some(PathBuf::from(source)),
+            codex_dir: None,
             appearance_mode: AppearanceMode::System,
             theme_pack: "default".into(),
             preferred_port: port,
@@ -670,11 +947,11 @@ mod tests {
     #[test]
     fn readiness_rejects_stale_content_and_handles_terminal_states() {
         assert_eq!(
-            classify_readiness(200, "old shell"),
+            classify_readiness(200, "old shell", "current"),
             ReadinessState::StaleContent
         );
         assert_eq!(
-            classify_readiness(503, READINESS_MARKER),
+            classify_readiness(503, "current", "current"),
             ReadinessState::HttpUnavailable
         );
         let generation = AtomicU64::new(1);
@@ -712,6 +989,71 @@ mod tests {
     }
 
     #[test]
+    fn four_state_selection_prunes_every_disabled_detail_namespace() {
+        for (claude, codex) in [(false, false), (true, false), (false, true), (true, true)] {
+            let selection = ResourceSelection { claude, codex };
+            let names = selection.detail_namespaces().collect::<Vec<_>>();
+            assert_eq!(names.iter().any(|name| name.starts_with("claude-")), claude);
+            assert_eq!(names.iter().any(|name| name.starts_with("codex-")), codex);
+            assert!(!names.contains(&"claude"));
+            assert!(!names.contains(&"codex"));
+            assert_eq!(
+                selection.watcher_count(),
+                usize::from(claude) + usize::from(codex)
+            );
+        }
+    }
+
+    #[test]
+    fn transition_markers_are_generation_scoped_and_unique() {
+        let first = transition_marker(41).unwrap();
+        let second = transition_marker(41).unwrap();
+        let next = transition_marker(42).unwrap();
+        assert!(first.starts_with("ccresdoc-generation-41-"));
+        assert!(next.starts_with("ccresdoc-generation-42-"));
+        assert_ne!(first, second);
+        assert_ne!(first, next);
+    }
+
+    #[test]
+    fn coordinator_overview_has_selection_and_generation_markers() {
+        let enabled = overview_mdx("claude", true, &["claude-skills"], "generation-x");
+        assert!(enabled.contains("data-ccresdoc-state=\"enabled\""));
+        assert!(enabled.contains("data-ccresdoc-generation=\"generation-x\""));
+        assert!(enabled.contains("claude-skills"));
+        let disabled = overview_mdx("codex", false, &["codex-skills"], "generation-y");
+        assert!(disabled.contains("data-ccresdoc-state=\"disabled\""));
+        assert!(!disabled.contains("<CategoryNav"));
+    }
+
+    #[test]
+    fn managed_tree_journal_rolls_back_only_exact_owned_namespaces() {
+        let temp = TempDir::new().unwrap();
+        let docs = temp.path().join("docs");
+        let candidate = temp.path().join("candidate");
+        let backup = temp.path().join("backup");
+        std::fs::create_dir_all(docs.join("claude-skills")).unwrap();
+        std::fs::write(docs.join("claude-skills/old.mdx"), "old").unwrap();
+        std::fs::create_dir_all(docs.join("foreign")).unwrap();
+        std::fs::write(docs.join("foreign/keep"), "foreign").unwrap();
+        std::fs::create_dir_all(candidate.join("claude-skills")).unwrap();
+        std::fs::write(candidate.join("claude-skills/new.mdx"), "new").unwrap();
+        std::fs::create_dir_all(candidate.join("claude")).unwrap();
+        std::fs::write(candidate.join("claude/index.mdx"), "candidate").unwrap();
+        std::fs::create_dir_all(candidate.join("codex")).unwrap();
+        std::fs::write(candidate.join("codex/index.mdx"), "disabled").unwrap();
+
+        let journal = ManagedTreeJournal::promote(&docs, &candidate, &backup).unwrap();
+        assert!(docs.join("claude-skills/new.mdx").exists());
+        assert!(docs.join("foreign/keep").exists());
+        journal.rollback().unwrap();
+        assert!(docs.join("claude-skills/old.mdx").exists());
+        assert!(!docs.join("claude-skills/new.mdx").exists());
+        assert!(docs.join("foreign/keep").exists());
+        assert!(!backup.exists());
+    }
+
+    #[test]
     fn in_process_probe_targets_dynamic_loopback_docs_path() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -721,7 +1063,7 @@ mod tests {
             let count = stream.read(&mut request).unwrap();
             let request = String::from_utf8_lossy(&request[..count]);
             assert!(request.starts_with("GET /docs/ HTTP/1.0\r\n"));
-            let body = format!("<nav>{READINESS_MARKER}</nav>");
+            let body = "<nav>current</nav>";
             write!(
                 stream,
                 "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{}",
@@ -730,9 +1072,75 @@ mod tests {
             )
             .unwrap();
         });
-        let (status, body) = probe_docs(port, Duration::from_secs(1)).unwrap();
+        let (status, body) = probe_path(port, DOCS_PATH, Duration::from_secs(1)).unwrap();
         server.join().unwrap();
-        assert_eq!(classify_readiness(status, &body), ReadinessState::Ready);
+        assert_eq!(
+            classify_readiness(status, &body, "current"),
+            ReadinessState::Ready
+        );
+    }
+
+    #[test]
+    fn semantic_readiness_accepts_all_four_selection_states() {
+        for selection in [
+            ResourceSelection {
+                claude: false,
+                codex: false,
+            },
+            ResourceSelection {
+                claude: true,
+                codex: false,
+            },
+            ResourceSelection {
+                claude: false,
+                codex: true,
+            },
+            ResourceSelection {
+                claude: true,
+                codex: true,
+            },
+        ] {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = thread::spawn(move || {
+                for _ in 0..3 {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let mut request = [0_u8; 1024];
+                    let count = stream.read(&mut request).unwrap();
+                    let request = String::from_utf8_lossy(&request[..count]);
+                    let body = if request.starts_with("GET /docs/ HTTP") {
+                        SHELL_MARKER.to_string()
+                    } else if request.starts_with("GET /docs/claude/ HTTP") {
+                        format!(
+                            "data-ccresdoc-resource=\"claude\" data-ccresdoc-state=\"{}\" generation-current",
+                            if selection.claude { "enabled" } else { "disabled" }
+                        )
+                    } else {
+                        format!(
+                            "data-ccresdoc-resource=\"codex\" data-ccresdoc-state=\"{}\" generation-current",
+                            if selection.codex { "enabled" } else { "disabled" }
+                        )
+                    };
+                    write!(
+                        stream,
+                        "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .unwrap();
+                }
+            });
+            assert_eq!(
+                probe_resource_readiness(
+                    port,
+                    selection,
+                    "generation-current",
+                    Duration::from_secs(1)
+                ),
+                ReadinessState::Ready
+            );
+            server.join().unwrap();
+        }
     }
 
     #[test]
@@ -763,9 +1171,12 @@ mod tests {
         let snapshot = coordinator.snapshot();
         assert_eq!(
             snapshot.authored.effective.claude_dir,
-            PathBuf::from("/new")
+            Some(PathBuf::from("/new"))
         );
-        assert_eq!(snapshot.active.unwrap().claude_dir, PathBuf::from("/old"));
+        assert_eq!(
+            snapshot.active.unwrap().claude_dir,
+            Some(PathBuf::from("/old"))
+        );
         assert_eq!(snapshot.phase, RuntimePhase::SavedNotActive);
     }
 
@@ -796,7 +1207,7 @@ mod tests {
         coordinator.publish_authoritative_appearance(edited);
         let current = coordinator.snapshot();
         let active = current.active.unwrap();
-        assert_eq!(active.claude_dir, PathBuf::from("/old"));
+        assert_eq!(active.claude_dir, Some(PathBuf::from("/old")));
         assert_eq!(active.effective_port, 51000);
         assert_eq!(active.appearance_mode, AppearanceMode::Dark);
         assert_eq!(active.theme_pack, "paper");
@@ -895,7 +1306,7 @@ mod tests {
                     restarts.fetch_add(1, Ordering::SeqCst);
                     assert_eq!(
                         effective.claude_dir,
-                        std::fs::canonicalize(&source_b).unwrap()
+                        Some(std::fs::canonicalize(&source_b).unwrap())
                     );
                     Err(RuntimeDiagnostic {
                         kind: RuntimeDiagnosticKind::GenerateFailed,
@@ -910,7 +1321,7 @@ mod tests {
         assert_eq!(restarts.load(Ordering::SeqCst), 2);
         assert_eq!(
             third.snapshot.active.unwrap().claude_dir,
-            std::fs::canonicalize(&source_a).unwrap()
+            Some(std::fs::canonicalize(&source_a).unwrap())
         );
     }
 }

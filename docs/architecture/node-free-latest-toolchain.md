@@ -1,7 +1,7 @@
 # Node-free latest-toolchain compatibility decision
 
 Status: the integrated application contract is implemented and verified for zfb
-2.10.1 / zudo-doc 5.12.0. This document preserves the historical issue #93
+2.10.1 / zudo-doc 5.12.1. This document preserves the historical issue #93
 architecture decision and its reproducible evidence; the current acceptance
 commands and explicit host-only gaps are in
 [`verification-matrix.md`](verification-matrix.md).
@@ -10,7 +10,7 @@ commands and explicit host-only gaps are in
 
 - The published `@takazudo/zfb`, `@takazudo/zfb-runtime`,
   `@takazudo/zfb-md-wasm`, and five native carrier packages are pinned to
-  `2.10.1`; `@takazudo/zudo-doc` is pinned to `5.12.0`. The app and the
+  `2.10.1`; `@takazudo/zudo-doc` is pinned to `5.12.1`. The app and the
   compatibility fixture each use a frozen lockfile and independently validate
   the installed tree.
 - The host resolves the native package-root carrier at
@@ -19,8 +19,9 @@ commands and explicit host-only gaps are in
   `plugins: []`, so CCResDoc keeps its route adapters host-owned and does not
   start the package Node plugin host.
 - Readiness is semantic: the Tauri host accepts `GET /docs/` only when it is
-  successful and contains the generator-owned `Claude Resources` marker. `/`
-  is the exact server-rendered alias, not a separate marketing home.
+  successful and contains the current `CCResDoc` shell plus matching
+  Claude/Codex transition markers. `/` is the exact server-rendered alias, not
+  a separate marketing home.
 - The build stages a pruned, lockfile-faithful workspace at
   `src-tauri/runtime-workspace/app/`. Its refresh token is derived from a
   `sha256-tree-v1` digest covering staged bytes, generated theme assets, and the
@@ -35,6 +36,14 @@ commands and explicit host-only gaps are in
   staged probe proves HMR, zero plugin descriptors, zero Node-sentinel calls,
   process-group shutdown, and two serialized launches; it is not a macOS
   packaged WebView launch.
+
+The runtime package is privacy-scoped. Staging copies an explicit app
+allowlist and generated theme assets, omits `dist`, rejects generated
+`claude-*`/`codex-*` detail/status and `.ccresdoc-*` transition namespaces, and
+audits staged text for synthetic fixture sentinels and checkout paths. The
+manifest records admitted files, package exclusions, digest/token, and audit
+counts; the staged verifier, Linux two-launch probe, and macOS bundle script
+recompute the same checks.
 
 ## Decision
 
@@ -120,7 +129,7 @@ The selected native Linux probe served `/` and `/docs/probe/`, emitted the `Prob
 Pin first-party packages exactly for the current integrated contract:
 
 - `@takazudo/zfb`, `@takazudo/zfb-runtime`, and `@takazudo/zfb-md-wasm`: `2.10.1`.
-- `@takazudo/zudo-doc`: `5.12.0`.
+- `@takazudo/zudo-doc`: `5.12.1`.
 - Direct optional platform packages retained at `2.10.1`: `zfb-darwin-arm64`, `zfb-darwin-x64`, `zfb-linux-arm64-gnu`, `zfb-linux-x64-gnu`, `zfb-win32-x64-msvc`. pnpm installs only the matching host package, but explicit declarations keep the Tauri resolver and cross-platform package map stable.
 - Reachable peers: `preact@10.29.1`, `preact-render-to-string@6.6.7`, `zod@4.3.6`, and `katex@0.16.22`. KaTeX is reachable even with `math:false` because `createMdxComponents()` imports the package `MathBlock` implementation.
 - Build-only foundation: `tailwindcss@4.2.0`, `@tailwindcss/vite@4.2.0`, `typescript@5.9.2`. The downstream test harness uses `vitest@4.0.17` with `happy-dom@20.7.0`.

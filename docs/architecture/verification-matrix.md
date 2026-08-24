@@ -1,22 +1,25 @@
 # CCResDoc architecture and verification contract
 
 This is the consolidated integration record for the current `@takazudo/zfb`
-2.10.1 / `@takazudo/zudo-doc` 5.12.0 application. CCResDoc is a native viewer
-for Claude Code Resources. The generated `/docs/` document is the sole product
-landing surface; `/` is its exact server-rendered alias. The product does not
-have a marketing home or a `Claude` header-navigation item.
+2.10.1 / `@takazudo/zudo-doc` 5.12.1 application. CCResDoc is a native viewer
+for selected Claude and Codex resources. The generated `/docs/` document is the
+sole product landing surface; `/` is its exact server-rendered alias. The
+product keeps permanent Claude and Codex top-level header categories.
 
 ## Landing and readiness
 
 - `GET /` and `GET /docs/` return the same generated document shell. The logo
-  is a direct `href="/docs/"` link and the header navigation list is empty.
+  is a direct `href="/docs/"` link and the header navigation keeps the
+  permanent Claude and Codex category entries.
 - The Tauri loading page remains visible until `GET /docs/` is HTTP 200 and
-  contains the generator-owned `Claude Resources` marker. A generic 200 or a
-  stale checked-in shell cannot release the loading page.
+  contains the current `CCResDoc` shell marker plus Claude and Codex overview
+  markers for the same transition generation. A generic 200 or a stale
+  checked-in shell cannot release the loading page.
 - Initial launch, Retry, and the View → Refresh menu all use the same
   generation-guarded boot path: resolve a writable workspace, generate from
-  the canonical settings-selected source (default `$HOME/.claude`), start the Rust watcher, spawn the
-  native zfb binary, wait for semantic readiness, then navigate to `/docs/`.
+  the canonical settings-selected sources (Claude on at `~/.claude`, Codex off
+  at `~/.codex` by default), start the enabled Rust watcher(s), spawn the native
+  zfb binary, wait for semantic readiness, then navigate to `/docs/`.
   A failed attempt emits the loading-page error state; a subsequent attempt
   tears down only its tracked sidecar and selects the preferred or fallback
   loopback port without touching a foreign listener.
@@ -26,10 +29,11 @@ have a marketing home or a `Claude` header-navigation item.
   `ZFB_DEV_BOOT_LAZY` is removed from the sidecar environment.
 
 The host contract is exercised by `src-tauri` unit tests and by the staged and
-packaged probes. The packaged probe creates a unique, valid-frontmatter fake
-HOME fixture, waits for that fixture title in the *first accepted* `/docs/`
-response, requests its generated route, launches twice, and checks that quit
-frees port 4892.
+packaged probes. The packaged probe creates a unique, valid-frontmatter
+synthetic HOME fixture, waits for that fixture title in the *first accepted*
+`/docs/` response, requests its generated route, launches twice, and checks
+that quit frees port 4892. The fixture is created only after the bundle privacy
+audit has completed.
 
 ## Generated theme assets and catalog
 
@@ -63,9 +67,9 @@ shell and browse-all loads the current catalog lazily.
   owns a 16px hitbox, 192–448px clamp, separator ARIA state, pointer/keyboard
   feedback, and width persistence. CCResDoc does not fork package CSS or
   navigation behavior.
-- The Rust `ccresdoc-claude-md` generator/watcher owns Claude-resource
-  generation in-process. This is intentional: it avoids a Node plugin host and
-  keeps the packaged runtime node-free.
+- The Rust `ccresdoc-claude-md` generators/watchers own selected Claude- and
+  Codex-resource generation in-process. This is intentional: it avoids a Node
+  plugin host and keeps the packaged runtime node-free.
 - Tauri owns find-in-page through the WebView/native host contract. It is not
   replaced by a Node plugin. The zfb config ends with `plugins: []`; the host
   owns the three route adapters because package route plugins require virtual
@@ -107,6 +111,38 @@ packaged Computer Use pass verifies Settings focus/close/reopen,
 picker/save/relaunch, appearance preview/cancel/persistence, external-edit
 Reload/Reapply, caller/navigation denial, and visual no-flash behavior.
 
+## Resource selection, generation, and package privacy
+
+Schema version 1 has a `[resources]` table (`claude`, `codex`) and a `[source]`
+table (`claude_dir`, `codex_dir`). The compatibility defaults are Claude on and
+Codex off, but Claude-only, Codex-only, both-on, and both-off are all valid.
+The coordinator always keeps the permanent top-level headers at positions 899
+(Claude) and 904 (Codex). Claude details occupy 900–903 (`CLAUDE.md`, commands,
+skills, agents); Codex details occupy 905–910 (`AGENTS.md`, config, agents,
+hooks, rules, skills). Disabled sources publish a stable disabled overview and
+prune their detail namespaces.
+
+The Codex parser accepts root/project `AGENTS.md`, `config.toml`, agent TOML,
+`hooks.json`, rules, and skill packages. It refuses broad roots, does not follow
+arbitrary links, and permits only a direct symlink entry under `skills/` to
+escape its configured directory. Managed output directories are real, scoped
+directories under the docs root. Claude and Codex use disjoint detail
+namespaces; the coordinator owns overview/status pages, candidate promotion,
+rollback, stale-output pruning, and the readiness handshake. Each enabled
+source owns one debounced watcher, and a transition is visible only when the
+neutral shell and both overview markers agree on the current generation.
+
+The runtime stage is a privacy boundary, not a copy of the developer checkout.
+`scripts/stage-runtime-workspace.mjs` admits an explicit file-level source
+allowlist, the generated theme catalog/assets, and no build `dist` tree. It
+rejects every `claude-*`/`codex-*` detail/status namespace and `.ccresdoc-*`
+transition namespace before copying; staged text is audited for synthetic
+fixture sentinels and checkout/configured-root paths. The manifest records the
+admitted inventory, excluded Node-only packages, direct native carrier, tree
+digest/token, and privacy audit. The verifier, Linux native probe (including
+rendered shell/404/HMR responses), and final macOS package script assert the
+same contract over staged/final artifacts.
+
 ## Automated gates
 
 Run the focused current-toolchain gates with:
@@ -121,6 +157,7 @@ pnpm --dir app run test:run
 pnpm --dir app run test:theme-packs
 pnpm --dir app exec zfb build
 pnpm run test:runtime-digest
+pnpm run test:runtime-files
 pnpm run probe:runtime-package
 pnpm --dir compatibility/node-free-latest install --frozen-lockfile
 pnpm --dir compatibility/node-free-latest run evidence:check

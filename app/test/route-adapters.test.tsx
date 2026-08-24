@@ -22,12 +22,42 @@ const content = vi.hoisted(() => {
       data: {
         title: "Claude Resources",
         sidebar_position: 10,
-        category_no_page: true,
-        generated: true,
+        description: "Browse selected Claude resources.",
       },
-      body: '<CategoryNav categories={["claude-md"]} />',
+      body: '<CategoryNav categories={["claude-md", "claude-absent"]} />',
       module_specifier: "mdx://docs/claude/index.mdx",
-      Content: () => <p>Category metadata must never render as a page.</p>,
+      Content: ({ components }: { components?: Components }) => {
+        const CategoryNav = components?.CategoryNav;
+        return (
+          <article data-resource-landing="claude">
+            <h1>Claude Resources</h1>
+            {CategoryNav ? (
+              <CategoryNav categories={["claude-md", "claude-absent"]} />
+            ) : null}
+          </article>
+        );
+      },
+    },
+    {
+      slug: "codex/index",
+      data: {
+        title: "Codex Resources",
+        sidebar_position: 20,
+        description: "Browse selected Codex resources.",
+      },
+      body: '<CategoryNav categories={["codex-agents-md", "codex-absent"]} />',
+      module_specifier: "mdx://docs/codex/index.mdx",
+      Content: ({ components }: { components?: Components }) => {
+        const CategoryNav = components?.CategoryNav;
+        return (
+          <article data-resource-landing="codex">
+            <h1>Codex Resources</h1>
+            {CategoryNav ? (
+              <CategoryNav categories={["codex-agents-md", "codex-absent"]} />
+            ) : null}
+          </article>
+        );
+      },
     },
     {
       slug: "claude-md/index",
@@ -40,6 +70,18 @@ const content = vi.hoisted(() => {
       },
       body: "",
       module_specifier: "mdx://docs/claude-md/index.mdx",
+      Content: () => null,
+    },
+    {
+      slug: "codex-agents-md/index",
+      data: {
+        title: "AGENTS.md",
+        sidebar_position: 21,
+        category_no_page: true,
+        generated: true,
+      },
+      body: "",
+      module_specifier: "mdx://docs/codex-agents-md/index.mdx",
       Content: () => null,
     },
     {
@@ -69,6 +111,18 @@ const content = vi.hoisted(() => {
           </article>
         );
       },
+    },
+    {
+      slug: "codex-agents-md/project-nested",
+      data: {
+        title: "Nested Codex instruction",
+        description: "A generated Codex instruction file",
+        sidebar_position: 22,
+        generated: true,
+      },
+      body: "Codex instruction content",
+      module_specifier: "mdx://docs/codex-agents-md/project-nested.mdx",
+      Content: () => <article data-generated-codex-resource>Codex detail</article>,
     },
     {
       slug: "private-draft",
@@ -121,14 +175,19 @@ describe("host-owned package route adapters", () => {
     // Unlisted entries keep a real route but do not manufacture a visible
     // category auto-index from an otherwise hidden branch.
     expect(routeParams).not.toContain("deep");
-    expect(routeParams).not.toContain("claude");
+    expect(routeParams).toContain("claude");
+    expect(routeParams).toContain("codex");
     expect(routeParams).not.toContain("claude-md");
+    expect(routeParams).not.toContain("codex-agents-md");
     expect(routeParams).not.toContain("private-draft");
 
     expect(routeContext.enumerateDocsRoutes("en")).toEqual(
       expect.arrayContaining([
         "/docs/",
+        "/docs/claude/",
+        "/docs/codex/",
         "/docs/claude-md/project-nested/",
+        "/docs/codex-agents-md/project-nested/",
         "/docs/deep/unlisted-resource/",
         "/docs/guides/visible-child/",
         "/docs/guides/",
@@ -155,6 +214,21 @@ describe("host-owned package route adapters", () => {
     expect(html).not.toContain("[zfb fallback render]");
   });
 
+  it("renders both generic resource landings and omits absent category cards", () => {
+    for (const slug of ["claude", "codex"]) {
+      const item = routeItems.find(
+        (candidate) => candidate.params.slug.join("/") === slug,
+      );
+      expect(item).toBeDefined();
+      const html = render(<DocsPage params={item!.params} {...item!.props} />);
+
+      expect(html).toContain(`data-resource-landing="${slug}"`);
+      expect(html).not.toContain("claude-absent");
+      expect(html).not.toContain("codex-absent");
+      expect(html).not.toContain("data-zfb-content-fallback");
+    }
+  });
+
   it("renders / as the exact canonical docs shell with no marketing cover", () => {
     const home = render(<HomePage />);
     const docsRoot = routeItems.find((item) => item.params.slug.length === 0);
@@ -168,8 +242,11 @@ describe("host-owned package route adapters", () => {
     expect(home).not.toContain("data-home-page");
   });
 
-  it("renders empty header navigation, a /docs/ logo, and full mobile resources", () => {
-    expect(routeContext.settings.headerNav).toEqual([]);
+  it("renders ordered desktop tabs and an ordered mobile root menu", () => {
+    expect(routeContext.settings.headerNav).toEqual([
+      { label: "Claude", path: "/docs/claude", categoryMatch: "claude", versioned: false },
+      { label: "Codex", path: "/docs/codex", categoryMatch: "codex", versioned: false },
+    ]);
 
     const docsRoot = routeItems.find((item) => item.params.slug.length === 0);
     expect(docsRoot).toBeDefined();
@@ -178,7 +255,9 @@ describe("host-owned package route adapters", () => {
     );
 
     expect(html).toMatch(/<a href="\/docs\/" data-header-logo="true"/);
-    expect(html).not.toContain(">Claude</a>");
+    expect(html).toContain('href="/docs/claude/"');
+    expect(html).toContain('href="/docs/codex/"');
+    expect(html.indexOf(">Claude</a>")).toBeLessThan(html.indexOf(">Codex</a>"));
 
     const shell = document.createElement("div");
     shell.innerHTML = html;
@@ -195,14 +274,44 @@ describe("host-owned package route adapters", () => {
     const mobileProps = JSON.parse(
       mobileToggle!.getAttribute("data-props") ?? "null",
     );
-    expect(mobileProps.nodes.length).toBeGreaterThan(0);
+    expect(mobileProps.nodes).toEqual([]);
+    expect(mobileProps.rootMenuItems).toEqual([
+      { label: "Claude", href: "/docs/claude/" },
+      { label: "Codex", href: "/docs/codex/" },
+    ]);
+    expect(mobileProps.backToMenuLabel).toBeDefined();
+  });
+
+  it("marks the current tab and scopes each landing sidebar by category prefix", () => {
+    const claude = routeItems.find(
+      (candidate) => candidate.params.slug.join("/") === "claude",
+    );
+    expect(claude).toBeDefined();
+    const claudeHtml = render(
+      <DocsPage params={claude!.params} {...claude!.props} />,
+    );
+    expect(claudeHtml).toContain('href="/docs/claude/" aria-current="page"');
+    expect(claudeHtml).not.toContain('href="/docs/codex/" aria-current="page"');
+
+    const shell = document.createElement("div");
+    shell.innerHTML = claudeHtml;
+    const mobileToggle = shell.querySelector<HTMLElement>(
+      '[data-zfb-island="SidebarToggle"]',
+    );
+    expect(mobileToggle).not.toBeNull();
+    const mobileProps = JSON.parse(
+      mobileToggle!.getAttribute("data-props") ?? "null",
+    );
     expect(mobileProps.nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ slug: "claude-md" }),
       ]),
     );
-    expect(mobileProps).not.toHaveProperty("rootMenuItems");
-    expect(mobileProps).not.toHaveProperty("backToMenuLabel");
+    expect(mobileProps.nodes).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ slug: "codex-agents-md" }),
+      ]),
+    );
   });
 
   it("SSR-bootstraps every catalog theme pack and serializes switcher order", () => {

@@ -289,7 +289,7 @@ fn agents_emit_with_model_badge() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn overview_index_lists_only_generated_categories() {
+fn generator_preserves_coordinator_owned_claude_overview() {
     let tmp = tempfile::TempDir::new().unwrap();
     let claude = tmp.path().join("dot-claude");
     let docs = tmp.path().join("docs");
@@ -301,12 +301,12 @@ fn overview_index_lists_only_generated_categories() {
     );
     // no commands, no skills
 
+    write(&docs, "claude/index.mdx", "coordinator-owned landing");
     generate(&config_for(&claude, &docs)).unwrap();
-    let overview = read(&docs.join("claude/index.mdx"));
-    assert!(overview.contains("sidebar_position: 899"));
-    assert!(overview.contains("category_no_page: true"));
-    // Only claude-md and claude-agents present; in contract order.
-    assert!(overview.contains(r#"<CategoryNav categories={["claude-md","claude-agents"]} />"#));
+    assert_eq!(
+        read(&docs.join("claude/index.mdx")),
+        "coordinator-owned landing"
+    );
 }
 
 #[test]
@@ -323,7 +323,6 @@ fn representative_fixture_matches_latest_zudo_doc_resource_contract() {
     // Category metadata is ordered and remains navigation-only. zudo-doc 5.6
     // excludes these entries from routes while retaining them in the nav tree.
     for (category, position) in [
-        ("claude", 899),
         ("claude-md", 900),
         ("claude-commands", 901),
         ("claude-skills", 902),
@@ -334,11 +333,6 @@ fn representative_fixture_matches_latest_zudo_doc_resource_contract() {
         assert!(index.contains("category_no_page: true"));
         assert!(index.contains("generated: true"));
     }
-
-    let overview = read(&out.path().join("claude/index.mdx"));
-    assert!(overview.contains(
-        r#"<CategoryNav categories={["claude-md","claude-commands","claude-skills","claude-agents"]} />"#
-    ));
 
     // Skill pages and their unlisted resources use the hierarchical on-disk
     // layout required by zfb's route-aware relative-link resolver.
@@ -514,26 +508,18 @@ fn exclude_dirs_are_not_walked() {
 }
 
 #[test]
-fn docs_dir_under_project_root_is_not_re_walked() {
-    // If docs_dir ever lands inside project_root, the generated claude*/ tree
-    // (which contains CLAUDE.md-derived MDX, not literal CLAUDE.md, but could in
-    // principle hold any file) must not feed back into the walk. Prove the
-    // walker excludes docs_dir even when nested under project_root.
+fn docs_dir_under_project_root_is_rejected() {
+    // Source/output ancestry is rejected before walking, preventing feedback
+    // and protecting a configured source tree from managed-output cleanup.
     let tmp = tempfile::TempDir::new().unwrap();
     let claude = tmp.path().join("dot-claude");
     // docs_dir nested INSIDE the project root being walked.
     let docs = claude.join("generated-docs");
     write(&claude, "CLAUDE.md", "root");
-    // A stray CLAUDE.md planted inside the docs output dir must be ignored.
-    write(&docs, "leftover/CLAUDE.md", "MUST NOT be walked");
-
-    let report = generate(&config_for(&claude, &docs)).unwrap();
-    assert_eq!(
-        report.claude_md, 1,
-        "only the root CLAUDE.md; the one under docs_dir must be excluded"
-    );
-    let global = read(&docs.join("claude-md/global.mdx"));
-    assert!(!global.contains("MUST NOT be walked"));
+    assert!(matches!(
+        generate(&config_for(&claude, &docs)),
+        Err(GenerateError::InvalidConfig(_))
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -602,7 +588,6 @@ fn regeneration_is_idempotent_for_unchanged_inputs() {
         docs.join("claude-commands/b.mdx"),
         docs.join("claude-commands/index.mdx"),
         docs.join("claude-agents/x.mdx"),
-        docs.join("claude/index.mdx"),
     ];
     let before: Vec<_> = tracked.iter().map(|p| mtime(p)).collect();
 

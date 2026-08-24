@@ -20,6 +20,7 @@
     "test:frontend": "pnpm -C app run test:run",
     "test:macos-settings": "bash scripts/test-macos-settings.sh",
     "test:runtime-digest": "node --test scripts/runtime-workspace-digest.test.mjs",
+    "test:runtime-files": "node --test scripts/runtime-workspace-files.test.mjs",
     "test:release-contract": "node --test scripts/release-contract.test.mjs",
     "test:release-publication": "node --test scripts/release-publication.test.mjs",
     "test:release-flow": "node --test scripts/release-flow-integration.test.mjs",
@@ -27,7 +28,7 @@
     "check:frontend": "pnpm -C app run check",
     "check:compatibility": "bash scripts/check-node-free-compatibility.sh",
     "stage:runtime": "node scripts/stage-runtime-workspace.mjs",
-    "check:runtime-package": "pnpm run test:runtime-digest && node scripts/stage-runtime-workspace.mjs && node scripts/verify-runtime-workspace.mjs",
+    "check:runtime-package": "pnpm run test:runtime-digest && pnpm run test:runtime-files && node scripts/stage-runtime-workspace.mjs && node scripts/verify-runtime-workspace.mjs",
     "probe:runtime-package": "pnpm run check:runtime-package && node scripts/probe-tauri-runtime.mjs"
   }
 }

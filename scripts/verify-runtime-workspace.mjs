@@ -6,6 +6,11 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  RUNTIME_APP_FILES,
+  assertAllowlistedInventory,
+  assertRuntimeWorkspacePrivacy,
+} from "./runtime-workspace-files.mjs";
+import {
   RUNTIME_WORKSPACE_DIGEST_ALGORITHM,
   refreshTokenFromWorkspaceDigest,
   runtimeWorkspaceDigest,
@@ -31,10 +36,25 @@ const expectedPlatformPackages = {
   "win32-x64": "@takazudo/zfb-win32-x64-msvc",
 };
 assert.deepEqual(manifest.platformPackages, expectedPlatformPackages, "five-platform native map drifted");
+assert.deepEqual(
+  manifest.admittedAppFiles.source,
+  RUNTIME_APP_FILES,
+  "runtime source inventory must match the checked-in allowlist",
+);
+assert.deepEqual(manifest.admittedAppFiles.dist, [], "runtime dist must remain omitted from the package");
+assert(manifest.admittedAppFiles.theme.length > 0, "runtime theme catalog/assets must be admitted explicitly");
 
 for (const entry of ["package.json", "pnpm-lock.yaml", "zfb.config.ts", "pages", "src", "node_modules"]) {
   assert(existsSync(join(stageApp, entry)), `runtime entry missing: ${entry}`);
 }
+assert(!existsSync(join(stageApp, "dist")), "runtime dist must not be copied from the build checkout");
+assertAllowlistedInventory(stageApp);
+const privacyAudit = assertRuntimeWorkspacePrivacy(stageApp, {
+  forbiddenPaths: [repoRoot, join(repoRoot, "app")],
+});
+assert.equal(manifest.privacy.audit, "staged-app-surfaces");
+assert.equal(manifest.privacy.filesChecked, privacyAudit.filesChecked);
+assert.equal(manifest.privacy.sentinelsChecked, privacyAudit.sentinelsChecked);
 for (const entry of manifest.excluded.appEntries) {
   assert(!existsSync(join(stageApp, entry)), `excluded app entry was staged: ${entry}`);
 }
@@ -99,6 +119,10 @@ const workspaceDigest = runtimeWorkspaceDigest(stageApp, {
     {
       label: "scripts/stage-runtime-workspace.mjs",
       path: fileURLToPath(new URL("./stage-runtime-workspace.mjs", import.meta.url)),
+    },
+    {
+      label: "scripts/runtime-workspace-files.mjs",
+      path: fileURLToPath(new URL("./runtime-workspace-files.mjs", import.meta.url)),
     },
   ],
 });

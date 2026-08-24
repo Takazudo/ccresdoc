@@ -12,7 +12,7 @@
 //!
 //! ```text
 //! <docs_dir>/
-//!   claude/index.mdx            overview (sidebar_position 899, category_no_page, <CategoryNav/>)
+//!   claude/index.mdx            coordinator-owned overview (never modified here)
 //!   claude-md/index.mdx         category header (900)
 //!   claude-md/global.mdx        ~/.claude/CLAUDE.md
 //!   claude-md/project-<slug>.mdx  nested CLAUDE.md files
@@ -63,6 +63,8 @@
 //! - `fn watch<F>(config: Config, debounce: Duration, on_change: F) -> Result<WatchHandle, GenerateError>`
 //!   where `F: Fn(WatchEvent) + Send + 'static`
 //! - `struct Config { claude_dir: PathBuf, project_root: PathBuf, docs_dir: PathBuf }`
+//! - `fn generate_codex(&CodexConfig) -> Result<CodexGenerateReport, GenerateError>`
+//! - `fn watch_codex(CodexConfig, Duration, Fn(CodexWatchEvent)) -> Result<CodexWatchHandle, GenerateError>`
 //! - `struct GenerateReport { claude_md: usize, commands: usize, skills: usize, agents: usize }`
 //! - `enum WatchEvent { Regenerated(GenerateReport), Error(GenerateError) }`
 //! - `struct WatchHandle` — keeps the watch alive; `stop(self)` or `Drop` ends it
@@ -76,6 +78,7 @@
 //! Symlinks are NOT followed during the CLAUDE.md walk (skills contain
 //! symlinks that could point back into the tree or out to a slow mount).
 
+mod codex;
 mod error;
 mod escape;
 mod generate;
@@ -84,6 +87,10 @@ mod watch;
 
 use std::path::PathBuf;
 
+pub use codex::{
+    generate_codex, watch_codex, CodexConfig, CodexGenerateReport, CodexSource, CodexWatchEvent,
+    CodexWatchHandle, GenerateWarning,
+};
 pub use error::{GenerateError, Result};
 pub use generate::GenerateReport;
 pub use watch::{watch, WatchEvent, WatchHandle, DEFAULT_DEBOUNCE};
@@ -161,8 +168,30 @@ impl Config {
                 ));
             }
         }
+
+        validate_no_overlap("claude_dir", &self.claude_dir, &self.docs_dir)?;
+        validate_no_overlap("project_root", &self.project_root, &self.docs_dir)?;
         Ok(())
     }
+}
+
+pub(crate) fn canonical_or_absolute(path: &std::path::Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+pub(crate) fn validate_no_overlap(
+    source_label: &str,
+    source: &std::path::Path,
+    output: &std::path::Path,
+) -> Result<()> {
+    let source = canonical_or_absolute(source);
+    let output = canonical_or_absolute(output);
+    if source == output || source.starts_with(&output) || output.starts_with(&source) {
+        return Err(GenerateError::InvalidConfig(format!(
+            "{source_label} and docs_dir must not be equal or ancestor/descendant paths: {source:?}, {output:?}"
+        )));
+    }
+    Ok(())
 }
 
 /// Generate the full MDX tree once (used at boot).

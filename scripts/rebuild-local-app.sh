@@ -85,8 +85,9 @@ echo "==> [2/4] Verify the release bundle"
   exit 1
 }
 [[ -x "$APP_BINARY" ]] || { echo "Bundled executable is missing or not executable." >&2; exit 1; }
-[[ -d "$RUNTIME_ROOT/dist" ]] || { echo "Bundled runtime dist directory is missing." >&2; exit 1; }
+[[ ! -e "$RUNTIME_ROOT/dist" ]] || { echo "Build dist must not be copied into the packaged runtime workspace." >&2; exit 1; }
 [[ -s "$TOKEN_FILE" ]] || { echo "Bundled runtime refresh token is missing." >&2; exit 1; }
+node "$REPO_ROOT/scripts/audit-runtime-workspace.mjs" "$RUNTIME_ROOT" "$HOME"
 ZFB_BIN="$(find "$RUNTIME_ROOT/node_modules/@takazudo" -mindepth 2 -maxdepth 2 -type f -name zfb -print -quit 2>/dev/null || true)"
 [[ -n "$ZFB_BIN" && -x "$ZFB_BIN" ]] || { echo "Bundled native zfb carrier is missing or not executable." >&2; exit 1; }
 [[ ! -e "$RUNTIME_ROOT/node_modules/.bin/zfb" ]] || { echo "Node wrapper leaked into the packaged runtime." >&2; exit 1; }
@@ -152,7 +153,7 @@ for _ in $(seq 1 300); do
   fi
   if [[ "$EFFECTIVE_PORT" =~ ^[0-9]+$ ]] &&
     curl -fsS --max-time 2 -o "$PROBE_HTML" "http://127.0.0.1:$EFFECTIVE_PORT/docs/" 2>/dev/null &&
-    grep -Fq "Claude Resources" "$PROBE_HTML"; then
+    grep -Fq "CCResDoc Resources" "$PROBE_HTML"; then
     READY=1
     break
   fi
