@@ -23,6 +23,15 @@ use crate::generate::{downgrade_repo_relative_links, rewrite_skill_links};
 use crate::{canonical_or_absolute, validate_no_overlap};
 
 const EXCLUDED_DIRS: &[&str] = &[
+    // Codex runtime state can be large, high-churn, and may contain captured
+    // repository/session material. It is never an instruction discovery root.
+    "sessions",
+    "archived_sessions",
+    "shell_snapshots",
+    "history",
+    "log",
+    "logs",
+    "tmp",
     "node_modules",
     "worktrees",
     "dist",

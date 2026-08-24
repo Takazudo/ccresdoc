@@ -26,7 +26,7 @@ pub mod settings_window;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, thread};
@@ -159,6 +159,29 @@ pub(crate) fn ephemeral_webview_enabled() -> bool {
 
 fn resource_publication_allowed(shutting_down: bool, current: u64, expected: u64) -> bool {
     !shutting_down && current == expected
+}
+
+/// Atomically recheck the launch lease and install an owned runtime relative
+/// to teardown's resource slot. Teardown sets `shutting_down`/generation before
+/// taking this same lock, so either it sees and stops the published value or a
+/// stale publisher receives its value back for local rollback.
+fn publish_owned_resource_if_current<T>(
+    slot: &Mutex<Option<T>>,
+    shutting_down: &AtomicBool,
+    generation: &AtomicU64,
+    expected: u64,
+    value: T,
+) -> Result<(), T> {
+    let mut slot = slot.lock().unwrap();
+    if !resource_publication_allowed(
+        shutting_down.load(Ordering::SeqCst),
+        generation.load(Ordering::SeqCst),
+        expected,
+    ) {
+        return Err(value);
+    }
+    *slot = Some(value);
+    Ok(())
 }
 
 fn watcher_publication_allowed(app_handle: &AppHandle, expected: u64) -> bool {
@@ -1347,19 +1370,23 @@ fn recover_previous_runtime(
     let active = previous.effective.clone();
     let counts = previous.counts.clone();
     let (runtime, choice) = relaunch_previous_runtime(app_handle, previous, generation, log_path)?;
-    app_handle
-        .state::<AppState>()
+    let state = app_handle.state::<AppState>();
+    if let Err(mut unpublished) = publish_owned_resource_if_current(
+        resources,
+        &state.shutting_down,
+        state.runtime.generation(),
+        generation,
+        runtime,
+    ) {
+        drop(unpublished.watchers);
+        kill_sidecar(&mut unpublished.sidecar, log_path);
+        return Err("restored runtime superseded before publication".to_string());
+    }
+    state
         .effective_port
         .store(choice.effective_port, Ordering::SeqCst);
-    *resources.lock().unwrap() = Some(runtime);
-    app_handle
-        .state::<AppState>()
-        .runtime
-        .publish_ready(active, choice, generation);
-    app_handle
-        .state::<AppState>()
-        .runtime
-        .publish_generated(counts, generation);
+    state.runtime.publish_ready(active, choice, generation);
+    state.runtime.publish_generated(counts, generation);
     Ok(())
 }
 
@@ -1703,21 +1730,10 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
     match result {
         ReadyResult::Ready => {
             let sidecar = candidate_sidecar.expect("ready sidecar remains owned");
-            if !resource_publication_allowed(
-                state.shutting_down.load(Ordering::SeqCst),
-                state.runtime.generation().load(Ordering::SeqCst),
-                my_gen,
-            ) {
-                drop(watchers);
-                let mut sidecar = sidecar;
-                kill_sidecar(&mut sidecar, &log_path);
-                let _ = journal.rollback();
-                return;
-            }
             let marker = candidate.marker.clone();
             let mut active_effective = desired.clone();
             active_effective.effective_port = choice.effective_port;
-            *resources_arc.lock().unwrap() = Some(ResourceRuntime {
+            let ready_runtime = ResourceRuntime {
                 generation: my_gen,
                 marker,
                 selection: candidate.selection,
@@ -1726,7 +1742,42 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
                 workspace: workspace.clone(),
                 sidecar,
                 watchers,
-            });
+            };
+            if let Err(mut unpublished) = publish_owned_resource_if_current(
+                &resources_arc,
+                &state.shutting_down,
+                state.runtime.generation(),
+                my_gen,
+                ready_runtime,
+            ) {
+                let shutting_down = state.shutting_down.load(Ordering::SeqCst);
+                let handoff_generation = state.runtime.generation().load(Ordering::SeqCst);
+                drop(unpublished.watchers);
+                kill_sidecar(&mut unpublished.sidecar, &log_path);
+                match journal.rollback() {
+                    Err(error) => log_to(
+                        &log_path,
+                        &format!("launch: publication restore failed: {error}"),
+                    ),
+                    Ok(()) if !shutting_down && previous_metadata.is_some() => {
+                        if let Err(error) = recover_previous_runtime(
+                            app_handle,
+                            &resources_arc,
+                            previous_metadata,
+                            handoff_generation,
+                            &log_path,
+                        ) {
+                            log_to(
+                                &log_path,
+                                &format!("launch: publication relaunch failed: {error}"),
+                            );
+                            state.runtime.clear_active(handoff_generation);
+                        }
+                    }
+                    Ok(()) => {}
+                }
+                return;
+            }
             state
                 .effective_port
                 .store(choice.effective_port, Ordering::SeqCst);
@@ -2179,6 +2230,33 @@ mod tests {
         assert!(resource_publication_allowed(false, 7, 7));
         assert!(!resource_publication_allowed(false, 8, 7));
         assert!(!resource_publication_allowed(true, 7, 7));
+    }
+
+    #[test]
+    fn owned_resource_publication_rechecks_the_lease_inside_the_slot_lock() {
+        let slot = Mutex::new(None);
+        let shutting_down = AtomicBool::new(false);
+        let generation = AtomicU64::new(7);
+
+        assert_eq!(
+            publish_owned_resource_if_current(&slot, &shutting_down, &generation, 6, "stale",),
+            Err("stale")
+        );
+        assert!(slot.lock().unwrap().is_none());
+
+        shutting_down.store(true, Ordering::SeqCst);
+        assert_eq!(
+            publish_owned_resource_if_current(&slot, &shutting_down, &generation, 7, "shutdown",),
+            Err("shutdown")
+        );
+        assert!(slot.lock().unwrap().is_none());
+
+        shutting_down.store(false, Ordering::SeqCst);
+        assert_eq!(
+            publish_owned_resource_if_current(&slot, &shutting_down, &generation, 7, "current",),
+            Ok(())
+        );
+        assert_eq!(*slot.lock().unwrap(), Some("current"));
     }
 
     #[test]

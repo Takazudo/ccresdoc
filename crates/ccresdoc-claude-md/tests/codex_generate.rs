@@ -151,6 +151,34 @@ fn malformed_sources_warn_and_are_skipped() {
 }
 
 #[test]
+fn instruction_walk_excludes_codex_runtime_state_directories() {
+    let source = tempfile::TempDir::new().unwrap();
+    let output = tempfile::TempDir::new().unwrap();
+    write(source.path(), "AGENTS.md", "root instructions");
+    for directory in [
+        "sessions",
+        "archived_sessions",
+        "shell_snapshots",
+        "history",
+        "log",
+        "logs",
+        "tmp",
+    ] {
+        write(
+            source.path(),
+            &format!("{directory}/captured/AGENTS.md"),
+            "private session instructions",
+        );
+    }
+
+    let report = generate_codex(&config(source.path(), output.path())).unwrap();
+    assert_eq!(report.agents_md, 1);
+    let page = read(output.path().join("codex-agents-md/root.mdx"));
+    assert!(page.contains("root instructions"));
+    assert!(!page.contains("private session instructions"));
+}
+
+#[test]
 fn regeneration_is_idempotent_prunes_stale_and_preserves_overview() {
     let source = tempfile::TempDir::new().unwrap();
     let output = tempfile::TempDir::new().unwrap();
