@@ -2,8 +2,8 @@
 
 Tauri v2 macOS app that opens the CCResDoc doc viewer in a native window. The
 runtime is **node-free**: the host spawns the **native `zfb` binary** (`zfb dev`)
-as a sidecar and runs the Wave 2 Rust generator/watcher **in-process**. No
-Node.js is required at the user's launch time.
+as a sidecar and runs the selected Claude/Codex Rust generators/watchers
+**in-process**. No Node.js is required at the user's launch time.
 
 ## Quick start
 
@@ -25,19 +25,21 @@ main() ──► setup()
               └─ spawn launch() thread:
                    1. resolve_workspace()  →  writable app-project root
                    2. resolve_zfb_binary() →  native zfb (NOT .bin/zfb wrapper)
-                   3. settings snapshot   →  canonical configured source (default ~/.claude)
-                   4. ccresdoc_claude_md::generate(&config)   one-shot MDX
-                      ccresdoc_claude_md::watch(config, …)     live regenerate
+                   3. settings snapshot   →  canonical selected sources (Claude on, Codex off)
+                   4. generate enabled Claude/Codex sources into disjoint MDX
+                      namespaces; start one watcher per enabled source
                    5. choose preferred/fallback loopback port and spawn `zfb dev`
                       (process group, cwd=workspace)
-                   6. wait_for_ready(/docs/ + generated marker, 300s)
+                   6. wait_for_ready(/docs/ + shell/overview markers, 300s)
                    7. navigate WebView → http://localhost:<effective>/docs/
 on main Destroyed ──► drop WatchHandle + SIGTERM→SIGKILL sidecar group
 ```
 
-The Rust watcher writes MDX into the workspace's `src/content/docs/claude*/`;
-`zfb dev`'s content-watch HMRs the result. (`zfb`'s `extraWatchPaths` does NOT
-re-run `preBuild`, so generation + watch live in Rust, per Wave 2.)
+The Rust generators write selected MDX into disjoint `src/content/docs/claude*/`
+and `codex*/` namespaces; the coordinator owns permanent overviews and
+transactional publication. `zfb dev`'s content-watch HMRs the result. (`zfb`'s
+`extraWatchPaths` does NOT re-run `preBuild`, so generation + watch live in
+Rust.)
 
 ## Key files
 
@@ -54,7 +56,7 @@ re-run `preBuild`, so generation + watch live in Rust, per Wave 2.)
 ## Writable workspace resolution
 
 `.app` Resources are read-only, but `zfb dev` writes `dist/`, `.zfb/`,
-`.zfb-build/`, and the generated `claude*/` MDX. So:
+`.zfb-build/`, and selected generated `claude*/`/`codex*/` MDX. So:
 
 | Context | Workspace root |
 | --- | --- |
@@ -63,9 +65,13 @@ re-run `preBuild`, so generation + watch live in Rust, per Wave 2.)
 
 The build hook runs `scripts/stage-runtime-workspace.mjs`. Tauri stages its
 output at `Contents/Resources/runtime-workspace/app/`. The generated tree is
-lockfile-faithful and contains app routes/content/config plus the dependency
-closure reached by native `zfb dev`; it excludes test/build tools, `.bin`
-wrappers, non-host binaries, and zudo-doc's disabled Node plugin/CLI packages.
+lockfile-faithful and contains an explicit allowlist of app routes, config,
+permanent generic Claude/Codex landing shells, theme assets, plus the
+dependency closure reached by native `zfb dev`. It omits build `dist` and every
+generated detail/status namespace; the runtime sidecar rebuilds `dist` from
+the clean source tree. It also excludes test/build tools, `.bin` wrappers,
+non-host binaries, and zudo-doc's disabled Node plugin/CLI packages. The stage
+manifest records the admitted inventory and privacy audit.
 
 ### Versioned refresh (the token)
 
@@ -110,11 +116,13 @@ require Node at runtime, defeating the node-free goal.
 override, then `XDG_CONFIG_HOME/ccresdoc/config.toml`, then
 `HOME/.config/ccresdoc/config.toml`. A missing file is read as safe defaults and
 is never created by discovery. The effective source is canonicalized from the
-authored `source.claude_dir`; the generator receives that source as both
-`claude_dir` and `project_root` — **never `$HOME`**, since it rejects
-`project_root == $HOME` (`GenerateError::ProjectRootTooBroad`, scoped-walk
-safety, zudolab/zudo-doc#2115). The default source is `$HOME/.claude`, but an
-explicit temporary source is used by package verification.
+authored `source.claude_dir`/`source.codex_dir`; the enabled generator receives
+that source as both its source and `project_root` — **never `$HOME`**, since it
+rejects `project_root == $HOME` (`GenerateError::ProjectRootTooBroad`, scoped-
+walk safety). Schema-v1 defaults are `[resources] claude = true, codex = false`
+with `~/.claude` and `~/.codex` source paths. Both-off is valid and still
+publishes stable disabled overview markers. Explicit temporary sources are used
+by package verification.
 
 ## Sidecar lifecycle & restart-race guard
 
@@ -131,19 +139,41 @@ explicit temporary source is used by package verification.
 ## Readiness & cold first build
 
 Readiness polls `GET /docs/` (NOT the old `/___ready`) with a **300s** window and
-accepts only a 200 body containing the generator-owned `Claude Resources`
-navigation marker. This prevents a staged or boot-lazy response from releasing
-the loading screen before current generated resources are rendered. The
-cold first launch must walk + render ~135 skills (plus commands/agents/CLAUDE.md)
-and let `zfb dev` build the whole site once. The loading page stays informative
+accepts only a 200 body containing the current `CCResDoc` shell marker and the
+matching Claude/Codex overview transition markers. This prevents a staged or
+boot-lazy response from releasing the loading screen before current selected
+resources are rendered. The cold first launch must walk the enabled Claude and
+Codex sources and let `zfb dev` build the whole site once. The loading page stays informative
 (spinner; a "still building" hint appears after 20s). `wait_for_ready` also
 checks sidecar liveness each tick, so a crashed `zfb dev` surfaces an error in
 ~1s rather than burning the full timeout.
 
+### Selected resource contract
+
+Claude's permanent overview is position 899; its generated detail categories
+are 900–903. Codex's permanent overview is position 904; its generated detail
+categories are 905–910. The coordinator owns both overview/status pages and a
+single candidate-promotion journal. It starts exactly one debounced watcher per
+enabled source, prunes stale detail namespaces, and rolls back the previous
+published tree when generation, promotion, or watcher startup fails. Claude
+and Codex namespaces never overlap. Codex accepts `AGENTS.md`, `config.toml`,
+agent TOML, `hooks.json`, rules, and skills; only a direct symlink entry under
+the configured skills directory is allowed to resolve outside that directory.
+
+Packaging privacy is structural: `scripts/stage-runtime-workspace.mjs` copies
+only release-owned source files and generated theme assets, does not copy
+`dist`, and rejects `claude-*`/`codex-*` detail/status or `.ccresdoc-*`
+transition paths. It audits staged text for synthetic fixture sentinels and
+checkout paths. `scripts/verify-runtime-workspace.mjs`,
+`scripts/audit-runtime-workspace.mjs`, and the native probes inspect staged or
+final bundle surfaces before any temporary package fixture is created.
+
 ### Cold first-launch cost breakdown (issue #48)
 
-Cold first launch against the full `~/.claude` (~135 skills, 235 pages) reaches a
-rendered page in ~56s host-internal / ~70s user-perceived. The cost decomposes as:
+The historical Claude-only cold-launch benchmark against a full `~/.claude`
+(~135 skills, 235 pages) reaches a rendered page in ~56s host-internal / ~70s
+user-perceived. Codex and selection-specific costs vary with the enabled source
+trees. The benchmark decomposes as:
 
 | Phase | Cost | Notes |
 | --- | --- | --- |
@@ -174,8 +204,8 @@ Per-lever decision (none auto-fixable here; the items below need a human/release
 
 All failure paths emit the `launch-error` event (reason + log path) so the
 loading page shows its error panel with a Retry button. Reasons:
-`workspace_unavailable`, `zfb_binary_missing`, `claude_dir_missing`,
-`generate_failed`, `spawn_failed`, `timeout`, `sidecar_exited`. Retry re-runs the
+`workspace_unavailable`, `zfb_binary_missing`, `generate_failed`, `spawn_failed`,
+`timeout`, `sidecar_exited`. Retry re-runs the
 full `launch()` (new generation).
 
 ## Navigation filter
@@ -225,11 +255,12 @@ hydrates, while Cancel uses only the Settings window's narrow
 
 The config path is resolved as `CCRESDOC_CONFIG` (non-empty override), then
 `XDG_CONFIG_HOME/ccresdoc/config.toml`, then `HOME/.config/ccresdoc/config.toml`.
-The default document is schema version 1 with source `~/.claude`, system/default
-appearance, preferred port 4892, and `fallback_to_free_port = true`. A missing
-document is read as defaults and is never created by discovery. Authored source
-and preferred port are retained in the settings snapshot; effective source is
-canonicalized and the runtime's active port may be a loopback fallback.
+The default document is schema version 1 with Claude enabled at `~/.claude` and
+Codex disabled at `~/.codex`, system/default appearance, preferred port 4892,
+and `fallback_to_free_port = true`. A missing document is read as defaults and
+is never created by discovery. Authored source and preferred port are retained
+in the settings snapshot; effective sources are canonicalized and the runtime's
+active port may be a loopback fallback.
 Strict mode reports an occupied preferred port without touching the foreign
 listener. No code path performs a broad port-owner sweep.
 
@@ -289,7 +320,9 @@ quit with only app-owned children reaped.
 - **`version.txt`** is generated from the full staged runtime tree and gates
   refresh of the app-data copy.
 - **Bundling** includes only `runtime-workspace/**/*`; that directory is
-  ignored by Git and recreated for every package build.
+  ignored by Git and recreated for every package build. The staged manifest
+  records exact admitted files, excluded packages, digest/token, and privacy
+  audit counts; generated user pages and source/config paths are rejected.
 - **Verification**: `pnpm run probe:runtime-package` exercises the pruned copy
   on the Linux host, including serialized two-launch/HMR/sentinel checks.
   `scripts/test-macos-package.sh` is a separately mandatory host gate: it builds,

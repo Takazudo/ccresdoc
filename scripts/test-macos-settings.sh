@@ -262,7 +262,7 @@ wait_ready() {
   local fixture_snapshot="$PROBE_DIR/wait-ready-fixture.html"
   for _ in $(seq 1 300); do
     if curl -fsS --max-time 2 -o "$docs_snapshot" "http://127.0.0.1:$port/docs/" 2>/dev/null &&
-      grep -Fq 'Claude Resources' "$docs_snapshot" &&
+      grep -Fq 'CCResDoc Resources' "$docs_snapshot" &&
       curl -fsS --max-time 2 -o "$fixture_snapshot" "http://127.0.0.1:$port/docs/claude-skills/$slug/" 2>/dev/null &&
       grep -Fq "$marker" "$fixture_snapshot"; then return 0; fi
     if [[ -n "$APP_OPEN_PID" ]] && ! kill -0 "$APP_OPEN_PID" 2>/dev/null; then return 1; fi

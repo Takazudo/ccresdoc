@@ -24,6 +24,14 @@ app/src/content/docs/claude/*
 !app/src/content/docs/codex/
 app/src/content/docs/codex/*
 !app/src/content/docs/codex/index.mdx
+# Explicit detail/status and transition namespaces remain ignored even if the
+# parent patterns are changed later. Generic claude/ and codex/ landings above
+# are permanent checked-in coordinator inputs.
+app/src/content/docs/claude-*/
+app/src/content/docs/codex-*/
+app/src/content/docs/.ccresdoc-*/
+app/src/content/docs/.ccresdoc-resource-transitions/
+app/.ccresdoc-*/
 
 # Logs
 *.log
