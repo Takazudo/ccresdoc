@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -uo pipefail
 # Test script: launch CCResDoc.app via open (Finder simulation), verify docs load.
-# Usage: bash scripts/test-launch.sh [count]
+# Usage: bash scripts/test-launch.sh [--controls] [count]
 #   count — number of launch iterations (default 3, must be a positive integer)
+#   --controls — after the first ready /docs/ pass, use macOS accessibility to
+#                activate the hydrated header ThemeToggle and require its AX
+#                label to change. This is intentionally run after readiness,
+#                without waiting for a livereload rescue reload.
 # Exits 0 on success, 1 on failure.
 #
 # The --cold flag is intentionally absent: there are no Node.js deps in the
@@ -13,6 +17,15 @@ set -uo pipefail
 # merely a generic 200 and NOT /___ready.
 # The /___ready endpoint no longer exists in the sidecar architecture.
 
+CHECK_CONTROLS=0
+if [[ "${1:-}" == "--controls" ]]; then
+  CHECK_CONTROLS=1
+  shift
+fi
+if (( $# > 1 )); then
+  echo "usage: bash scripts/test-launch.sh [--controls] [count]" >&2
+  exit 1
+fi
 COUNT="${1:-3}"
 
 # Validate that COUNT is a positive integer
@@ -46,9 +59,20 @@ for RUN in $(seq 1 "$COUNT"); do
     sleep 3
     HTTP=$(curl -s -o /tmp/ccresdoc-launch-docs.html -w "%{http_code}" http://localhost:4892/docs/ 2>/dev/null)
     if [ "$HTTP" = "200" ] && grep -Fq "CCResDoc Resources" /tmp/ccresdoc-launch-docs.html; then
-      echo "  Run $RUN: PASS (ready at $((i*3))s)"
       OK=1
-      PASS=$((PASS + 1))
+      echo "  Run $RUN: PASS (ready at $((i*3))s)"
+      if [[ "$CHECK_CONTROLS" == "1" && "$RUN" == "1" ]]; then
+        if [[ "$(uname -s)" != "Darwin" ]]; then
+          echo "  Run $RUN: FAIL (--controls requires macOS WebKit accessibility)" >&2
+          OK=0
+        elif ! CONTROL_RESULT=$(osascript "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/assert-app-theme-toggle.applescript" 2>&1); then
+          echo "  Run $RUN: FAIL (ThemeToggle accessibility check: $CONTROL_RESULT)" >&2
+          OK=0
+        else
+          echo "  Run $RUN: PASS ($CONTROL_RESULT)"
+        fi
+      fi
+      if [[ "$OK" == "1" ]]; then PASS=$((PASS + 1)); fi
       break
     fi
   done

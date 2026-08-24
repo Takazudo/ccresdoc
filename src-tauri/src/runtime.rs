@@ -1780,4 +1780,92 @@ mod tests {
             Some(std::fs::canonicalize(&source_a).unwrap())
         );
     }
+
+    #[test]
+    fn apply_coordinator_launch_boundary_publishes_ready_only_after_module_probe() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let marker = "generation-apply-boundary";
+        let server = thread::spawn(move || {
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 4096];
+                let count = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..count]);
+                let path = request.split_whitespace().nth(1).unwrap_or_default();
+                let (status, body) = match path {
+                    DOCS_PATH => (
+                        200,
+                        format!(
+                            "{SHELL_MARKER}<div data-zfb-island><script type=module src=/assets/islands.js>"
+                        ),
+                    ),
+                    "/assets/islands.js" => (200, String::new()),
+                    CLAUDE_PATH => (
+                        200,
+                        format!(
+                            "data-ccresdoc-resource=\"claude\" data-ccresdoc-state=\"enabled\" {marker}"
+                        ),
+                    ),
+                    CODEX_PATH => (
+                        200,
+                        format!(
+                            "data-ccresdoc-resource=\"codex\" data-ccresdoc-state=\"disabled\" {marker}"
+                        ),
+                    ),
+                    _ => (404, String::new()),
+                };
+                write!(
+                    stream,
+                    "HTTP/1.0 {status} OK\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("claude");
+        std::fs::create_dir_all(&source).unwrap();
+        let store = SettingsStore::new(temp.path().join("config.toml"), temp.path().into());
+        let initial = store.load();
+        let coordinator = ApplyCoordinator::new(initial.clone());
+        let mut draft = initial.authored.clone();
+        draft.claude_dir = source.to_string_lossy().into_owned();
+        let probes = AtomicUsize::new(0);
+        // `main.rs::launch` supplies this restart boundary in production. The
+        // injected boundary keeps this test native and deterministic while
+        // exercising the same coordinator -> readiness -> Ready transition.
+        let result = coordinator
+            .apply_settings(
+                &store,
+                &draft,
+                initial.revision.as_ref(),
+                |generation, effective| {
+                    assert_eq!(generation, 1);
+                    probes.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(
+                        probe_resource_readiness(
+                            port,
+                            ResourceSelection::from_effective(effective),
+                            marker,
+                            Duration::from_secs(1),
+                        ),
+                        ReadinessState::Ready
+                    );
+                    Ok(PortChoice {
+                        preferred_port: effective.preferred_port,
+                        effective_port: port,
+                        fallback_used: effective.preferred_port != port,
+                    })
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.status, ApplyStatus::Active);
+        assert_eq!(result.snapshot.phase, RuntimePhase::Ready);
+        assert_eq!(result.snapshot.effective_port(), Some(port));
+        assert_eq!(probes.load(Ordering::SeqCst), 1);
+        server.join().unwrap();
+    }
 }

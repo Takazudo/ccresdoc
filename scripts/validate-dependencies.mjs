@@ -31,6 +31,7 @@ const required = {
   devDependencies: {
     "@tailwindcss/vite": "4.2.0",
     "happy-dom": "20.7.0",
+    playwright: "1.62.1",
     tailwindcss: "4.2.0",
     typescript: "5.9.2",
     vitest: "4.0.17",
