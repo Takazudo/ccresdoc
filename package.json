@@ -21,6 +21,7 @@
     "test:macos-settings": "bash scripts/test-macos-settings.sh",
     "test:runtime-digest": "node --test scripts/runtime-workspace-digest.test.mjs",
     "test:release-contract": "node --test scripts/release-contract.test.mjs",
+    "test:release-publication": "node --test scripts/release-publication.test.mjs",
     "check:release-contract": "node scripts/release-contract.mjs check --json",
     "check:frontend": "pnpm -C app run check",
     "check:compatibility": "bash scripts/check-node-free-compatibility.sh",
