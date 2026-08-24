@@ -18,8 +18,8 @@ importers:
         specifier: 2.10.1
         version: 2.10.1(@takazudo/zfb@2.10.1)
       '@takazudo/zudo-doc':
-        specifier: 5.12.0
-        version: 5.12.0(@takazudo/zfb-md-wasm@2.10.1)(@takazudo/zfb-runtime@2.10.1(@takazudo/zfb@2.10.1))(@takazudo/zfb@2.10.1)(katex@0.16.22)(preact@10.29.1)(zod@4.3.6)
+        specifier: 5.12.1
+        version: 5.12.1(@takazudo/zfb-md-wasm@2.10.1)(@takazudo/zfb-runtime@2.10.1(@takazudo/zfb@2.10.1))(@takazudo/zfb@2.10.1)(katex@0.16.22)(preact@10.29.1)(zod@4.3.6)
       katex:
         specifier: 0.16.22
         version: 0.16.22
@@ -655,15 +655,15 @@ packages:
       react:
         optional: true
 
-  '@takazudo/zudo-doc@5.12.0':
-    resolution: {integrity: sha512-di9Uan+jKFyFwwchpNsWfPYR6IQVNVkDUX4+nLqk0kNjeq+d0ieWgT7G5SLDdgZyt3mA9Ys5Yt5MA+3YC1crJQ==}
+  '@takazudo/zudo-doc@5.12.1':
+    resolution: {integrity: sha512-CPezU/wsXcekXS2iyPcY2Of0wkEgCjFwaUpRHPWKSAGXPPfMnCY7dN5cNG4TnMhO8fqdNUlaKMKcEjpTapkx9g==}
     hasBin: true
     peerDependencies:
       '@takazudo/zdtp': ^0.4.12
-      '@takazudo/zfb': ^2.10.0
-      '@takazudo/zfb-md-wasm': ^2.10.0
-      '@takazudo/zfb-runtime': ^2.10.0
-      '@takazudo/zudo-doc-history-server': ^5.5.3
+      '@takazudo/zfb': ^2.10.1
+      '@takazudo/zfb-md-wasm': ^2.10.1
+      '@takazudo/zfb-runtime': ^2.10.1
+      '@takazudo/zudo-doc-history-server': ^5.12.0
       diff: ^8.0.0
       katex: ^0.16.0
       preact: ^10.29.1
@@ -1088,10 +1088,6 @@ packages:
 
   sprintf-js@1.0.3:
     resolution: {integrity: sha512-D9cPgkvLlV3t3IzL0D0YLvGA9Ahk4PcvVwUbN0dSGr1aP0Nrt4AEnTUbuGvquEC0mA64Gqt1fzirlRs5ibXx8g==}
-
-  string-similarity@4.0.4:
-    resolution: {integrity: sha512-/q/8Q4Bl4ZKAPjj8WerIBJWALKkaPRfrvhfF8k/B23i4nzrlRj2/go1m90In7nG/3XDSbOo0+pu6RvCTM9RGMQ==}
-    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
 
   stringify-entities@4.0.4:
     resolution: {integrity: sha512-IwfBptatlO+QCJUo19AqvrPNqlVMpW9YEL2LIVY+Rpv2qsjCGxaDLNRgeGsQWJhfItebuJhsGSLjaBbNSQ+ieg==}
@@ -1558,7 +1554,7 @@ snapshots:
       '@takazudo/zfb-linux-x64-gnu': 2.10.1
       '@takazudo/zfb-win32-x64-msvc': 2.10.1
 
-  '@takazudo/zudo-doc@5.12.0(@takazudo/zfb-md-wasm@2.10.1)(@takazudo/zfb-runtime@2.10.1(@takazudo/zfb@2.10.1))(@takazudo/zfb@2.10.1)(katex@0.16.22)(preact@10.29.1)(zod@4.3.6)':
+  '@takazudo/zudo-doc@5.12.1(@takazudo/zfb-md-wasm@2.10.1)(@takazudo/zfb-runtime@2.10.1(@takazudo/zfb@2.10.1))(@takazudo/zfb@2.10.1)(katex@0.16.22)(preact@10.29.1)(zod@4.3.6)':
     dependencies:
       '@inquirer/prompts': 8.5.2
       '@takazudo/zfb': 2.10.1
@@ -1571,7 +1567,6 @@ snapshots:
       pluralize: 8.0.0
       preact: 10.29.1
       smol-toml: 1.8.0
-      string-similarity: 4.0.4
       tsx: 4.23.12
       zod: 4.3.6
     optionalDependencies:
@@ -2121,8 +2116,6 @@ snapshots:
   source-map-js@1.2.1: {}
 
   sprintf-js@1.0.3: {}
-
-  string-similarity@4.0.4: {}
 
   stringify-entities@4.0.4:
     dependencies:

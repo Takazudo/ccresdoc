@@ -15,7 +15,7 @@ const required = {
     "@takazudo/zfb": "2.10.1",
     "@takazudo/zfb-md-wasm": "2.10.1",
     "@takazudo/zfb-runtime": "2.10.1",
-    "@takazudo/zudo-doc": "5.12.0",
+    "@takazudo/zudo-doc": "5.12.1",
     katex: "0.16.22",
     preact: "10.29.1",
     "preact-render-to-string": "6.6.7",

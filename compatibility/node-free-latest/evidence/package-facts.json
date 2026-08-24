@@ -13,8 +13,8 @@
       "integrity": "sha512-U3P/1qLkAct6DFz2wwGLN5BrhU0J4D0ruo1p1CxIm80ZVA6KuyPcR4RQxESqSO7WuUIHPiod5/D1KJZzQtM/oA=="
     },
     "@takazudo/zudo-doc": {
-      "version": "5.12.0",
-      "integrity": "sha512-di9Uan+jKFyFwwchpNsWfPYR6IQVNVkDUX4+nLqk0kNjeq+d0ieWgT7G5SLDdgZyt3mA9Ys5Yt5MA+3YC1crJQ=="
+      "version": "5.12.1",
+      "integrity": "sha512-CPezU/wsXcekXS2iyPcY2Of0wkEgCjFwaUpRHPWKSAGXPPfMnCY7dN5cNG4TnMhO8fqdNUlaKMKcEjpTapkx9g=="
     }
   },
   "nativeCarriers": {
