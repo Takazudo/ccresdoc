@@ -13,6 +13,54 @@ describe("docs appearance bridge", () => {
     localStorage.clear();
     delete document.documentElement.dataset.theme;
     delete document.documentElement.dataset.themePack;
+    document.documentElement.removeAttribute("data-ccresdoc-load-controls-ready");
+    vi.restoreAllMocks();
+  });
+
+  it("tracks load-control readiness across mount and router-style remounts", () => {
+    let nextFrame = 0;
+    const frames = new Map<number, FrameRequestCallback>();
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      const id = ++nextFrame;
+      frames.set(id, callback);
+      return id;
+    });
+    const cancelFrame = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+      frames.delete(id);
+    });
+    const flushFrame = () => {
+      const entry = frames.entries().next().value as [number, FrameRequestCallback] | undefined;
+      expect(entry).toBeDefined();
+      frames.delete(entry![0]);
+      act(() => entry![1](performance.now()));
+    };
+    const mount = document.createElement("div");
+    document.body.append(mount);
+
+    expect(document.documentElement.hasAttribute("data-ccresdoc-load-controls-ready")).toBe(false);
+    act(() => render(<AppearanceBridge />, mount));
+    expect(document.documentElement.hasAttribute("data-ccresdoc-load-controls-ready")).toBe(false);
+
+    // A teardown before the frame must cancel the stale callback.
+    act(() => render(null, mount));
+    expect(cancelFrame).toHaveBeenCalledWith(1);
+    expect(frames.size).toBe(0);
+    expect(document.documentElement.hasAttribute("data-ccresdoc-load-controls-ready")).toBe(false);
+
+    act(() => render(<AppearanceBridge />, mount));
+    expect(document.documentElement.hasAttribute("data-ccresdoc-load-controls-ready")).toBe(false);
+    flushFrame();
+    expect(document.documentElement.getAttribute("data-ccresdoc-load-controls-ready")).toBe("");
+
+    act(() => render(null, mount));
+    expect(document.documentElement.hasAttribute("data-ccresdoc-load-controls-ready")).toBe(false);
+
+    act(() => render(<AppearanceBridge />, mount));
+    expect(document.documentElement.hasAttribute("data-ccresdoc-load-controls-ready")).toBe(false);
+    flushFrame();
+    expect(document.documentElement.getAttribute("data-ccresdoc-load-controls-ready")).toBe("");
+    act(() => render(null, mount));
+    mount.remove();
   });
 
   it("keeps preview payloads out of persistent origin storage", async () => {
