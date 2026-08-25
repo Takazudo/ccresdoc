@@ -146,10 +146,16 @@ on find_search_dialog(windowElement)
   set candidates to my all_accessible_elements(windowElement)
   repeat with candidate in candidates
     set roleName to my ui_role(contents of candidate)
-    if roleName is "AXDialog" or roleName is "AXSheet" then
+    if roleName is "AXDialog" or roleName is "AXSheet" or roleName is "AXGroup" then
       set labelText to my ui_label(contents of candidate)
       ignoring case
-        if labelText contains "search" then return contents of candidate
+        if my ui_visible(contents of candidate) then
+          if roleName is "AXGroup" then
+            if labelText is "search" then return contents of candidate
+          else if labelText contains "search" then
+            return contents of candidate
+          end if
+        end if
       end ignoring
     end if
   end repeat
