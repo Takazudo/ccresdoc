@@ -132,30 +132,30 @@ tell application "System Events"
     -- Create the Settings window, then close it through the native Escape path.
     -- The app's lifecycle handler hides this window instead of destroying it.
     keystroke "," using command down
-    set settingsWindow to missing value
+    set settingsOpened to false
     repeat with attempt from 1 to 100
       try
         if exists window "CCResDoc Settings" then
-          set settingsWindow to window "CCResDoc Settings"
-          if (visible of settingsWindow) is true then exit repeat
-        end if
-      end try
-      delay 0.1
-    end repeat
-    if settingsWindow is missing value then error "Command-comma did not open CCResDoc Settings"
-    if (visible of settingsWindow) is not true then error "CCResDoc Settings did not become visible"
-    key code 53
-    set settingsHiddenBeforeHide to false
-    repeat with attempt from 1 to 100
-      try
-        if (visible of settingsWindow) is false then
-          set settingsHiddenBeforeHide to true
+          set settingsOpened to true
           exit repeat
         end if
       end try
       delay 0.1
     end repeat
-    if not settingsHiddenBeforeHide then error "Escape did not hide CCResDoc Settings"
+    if not settingsOpened then error "Command-comma did not expose CCResDoc Settings"
+    key code 53
+    set settingsClosed to false
+    repeat with attempt from 1 to 100
+      try
+        set axWindowNames to (name of every window)
+        if axWindowNames does not contain "CCResDoc Settings" then
+          set settingsClosed to true
+          exit repeat
+        end if
+      end try
+      delay 0.1
+    end repeat
+    if not settingsClosed then error "Escape did not remove CCResDoc Settings from the AX window list"
 
     -- Send the actual shortcut. Clicking Hide CCResDoc would not prove that
     -- AppKit dispatched ⌘H to this menu item.
@@ -198,11 +198,12 @@ tell application "System Events"
     end repeat
     if not windowsRestored then error "CCResDoc has no window after reactivation"
 
-    set settingsVisibleAgain to false
+    set settingsPresentAgain to false
     try
-      if exists window "CCResDoc Settings" then set settingsVisibleAgain to (visible of window "CCResDoc Settings")
+      set axWindowNames to (name of every window)
+      if axWindowNames contains "CCResDoc Settings" then set settingsPresentAgain to true
     end try
-    if settingsVisibleAgain then error "CCResDoc Settings became visible after reactivation"
+    if settingsPresentAgain then error "CCResDoc Settings reappeared after reactivation"
 
     return "CCResDoc native menu/Command-H hide: app menu, Window, View, PID " & pidBeforeHide & " verified; app reactivated with Settings hidden"
   end tell
