@@ -132,17 +132,24 @@ tell application "System Events"
     -- Create the Settings window, then close it through the native Escape path.
     -- The app's lifecycle handler hides this window instead of destroying it.
     keystroke "," using command down
-    set settingsOpened to false
+    set settingsOpenedAndFocused to false
     repeat with attempt from 1 to 100
       try
         if exists window "CCResDoc Settings" then
-          set settingsOpened to true
-          exit repeat
+          set frontWindowName to ""
+          try
+            set frontWindowName to (name of front window as text)
+          end try
+          if frontWindowName is "CCResDoc Settings" then
+            set settingsOpenedAndFocused to true
+            exit repeat
+          end if
         end if
       end try
       delay 0.1
     end repeat
-    if not settingsOpened then error "Command-comma did not expose CCResDoc Settings"
+    if not settingsOpenedAndFocused then error "Command-comma did not expose CCResDoc Settings as the front window"
+    delay 0.2
     key code 53
     set settingsClosed to false
     repeat with attempt from 1 to 100
