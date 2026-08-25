@@ -4,7 +4,7 @@
 import { act } from "preact/test-utils";
 import { render } from "preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SearchShortcutBoundary } from "../pages/lib/_chrome";
+import { SearchShortcutBoundary } from "../pages/lib/_settings-button";
 
 const mountedRoots: HTMLDivElement[] = [];
 const removeListeners: Array<() => void> = [];
