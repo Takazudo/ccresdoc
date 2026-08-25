@@ -22,6 +22,8 @@ on run argv
       keystroke "k" using command down
       set searchDialog to my wait_for_search_dialog(front window, 150)
       if searchDialog is missing value then error "Command-K did not expose the Search dialog in Accessibility"
+      set beforeWebAreaLabel to my web_area_label(front window)
+      if beforeWebAreaLabel is "" then error "Search smoke could not read the current AXWebArea label before activation"
 
       set searchInput to my wait_for_search_input(searchDialog, 150)
       if searchInput is missing value then error "Search dialog did not expose its text field in Accessibility"
@@ -29,16 +31,12 @@ on run argv
       keystroke "a" using command down
       keystroke searchTerm
 
-      set resultLink to my wait_for_result_link(searchDialog, searchTerm, 200)
+      set resultLink to my wait_for_result_link(front window, searchTerm, 200)
       if resultLink is missing value then error "Search dialog returned no accessible result for term '" & searchTerm & "'"
-      set resultURL to my ui_url(resultLink)
-      if resultURL is "" then error "Search result did not expose an accessible URL"
-      set routeMarker to my docs_path_marker(resultURL)
-      if routeMarker is "" then error "Search result URL is not a /docs/ route: " & resultURL
 
       click resultLink
-      set navigationState to my wait_for_navigation(front window, routeMarker, 200)
-      if navigationState is not "navigated" then error "Activating the search result did not navigate to " & routeMarker
+      set navigationState to my wait_for_navigation(front window, beforeWebAreaLabel, 200)
+      if navigationState is not "navigated" then error "Activating the search result did not navigate away from " & beforeWebAreaLabel
 
       -- The result click must close the modal before the next native shortcut.
       -- wait_for_navigation includes the closed-dialog assertion.
@@ -61,7 +59,7 @@ on run argv
       end repeat
       if not findClosed then error "Escape did not close the Find in page controls"
 
-      return "Search Command-K term '" & searchTerm & "' activated " & routeMarker & "; Command-F controls visible (Prev, Next, Close)"
+      return "Search Command-K term '" & searchTerm & "' activated a result; Command-F controls visible (Prev, Next, Close)"
     end tell
   end tell
 end run
@@ -75,6 +73,47 @@ on all_accessible_elements(rootElement)
     end try
   end tell
 end all_accessible_elements
+
+on direct_children(rootElement)
+  tell application "System Events"
+    try
+      return UI elements of rootElement
+    on error
+      return {}
+    end try
+  end tell
+end direct_children
+
+on find_web_area(windowElement)
+  tell application "System Events"
+    -- Tauri's WKWebView AX wrapper is a short, stable chain beneath the
+    -- native window. Keep these explicit candidates bounded; never search the
+    -- whole generated sidebar tree for the web area.
+    try
+      set candidate to UI element 1 of UI element 1 of windowElement
+      if (my ui_role(candidate)) is "AXWebArea" then return candidate
+    end try
+    try
+      set candidate to UI element 1 of UI element 1 of UI element 1 of windowElement
+      if (my ui_role(candidate)) is "AXWebArea" then return candidate
+    end try
+    try
+      set candidate to UI element 1 of UI element 1 of UI element 1 of UI element 1 of windowElement
+      if (my ui_role(candidate)) is "AXWebArea" then return candidate
+    end try
+    try
+      set candidate to UI element 1 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of windowElement
+      if (my ui_role(candidate)) is "AXWebArea" then return candidate
+    end try
+  end tell
+  return missing value
+end find_web_area
+
+on web_area_label(windowElement)
+  set webArea to my find_web_area(windowElement)
+  if webArea is missing value then return ""
+  return my ui_label(webArea)
+end web_area_label
 
 on ui_role(candidate)
   tell application "System Events"
@@ -130,30 +169,19 @@ on ui_visible(candidate)
   end tell
 end ui_visible
 
-on ui_url(candidate)
-  tell application "System Events"
-    repeat with attributeName in {"AXURL", "AXLink", "AXValue"}
-      try
-        set candidateURL to (value of attribute (contents of attributeName) of candidate) as text
-        if candidateURL starts with "http://" or candidateURL starts with "https://" or candidateURL starts with "/docs/" then return candidateURL
-      end try
-    end repeat
-  end tell
-  return ""
-end ui_url
-
 on find_search_dialog(windowElement)
-  set candidates to my all_accessible_elements(windowElement)
+  set candidates to my direct_children(my find_web_area(windowElement))
   repeat with candidate in candidates
-    set roleName to my ui_role(contents of candidate)
+    set candidate to contents of candidate
+    set roleName to my ui_role(candidate)
     if roleName is "AXDialog" or roleName is "AXSheet" or roleName is "AXGroup" then
-      set labelText to my ui_label(contents of candidate)
+      set labelText to my ui_label(candidate)
       ignoring case
-        if my ui_visible(contents of candidate) then
+        if my ui_visible(candidate) then
           if roleName is "AXGroup" then
-            if labelText is "search" then return contents of candidate
+            if labelText is "search" then return candidate
           else if labelText contains "search" then
-            return contents of candidate
+            return candidate
           end if
         end if
       end ignoring
@@ -172,7 +200,7 @@ on wait_for_search_dialog(windowElement, attempts)
 end wait_for_search_dialog
 
 on find_search_input(rootElement)
-  set candidates to my all_accessible_elements(rootElement)
+  set candidates to my direct_children(rootElement)
   repeat with candidate in candidates
     set candidate to contents of candidate
     if (my ui_role(candidate)) is "AXTextField" then
@@ -197,20 +225,22 @@ on wait_for_search_input(dialogElement, attempts)
 end wait_for_search_input
 
 on find_result_link(dialogElement, term)
+  set fallbackLink to missing value
   set candidates to my all_accessible_elements(dialogElement)
   repeat with candidate in candidates
     set candidate to contents of candidate
     if (my ui_role(candidate)) is "AXLink" and my ui_visible(candidate) then
-      set candidateURL to my ui_url(candidate)
-      if candidateURL contains "/docs/" then
-        -- Search results are the only /docs/ links in the modal. Prefer a
-        -- label containing the requested term, but accept the first routed
-        -- result when WebKit exposes only its URL in AX.
-        set labelText to my ui_label(candidate)
+      -- WebKit exposes result links' accessible titles reliably but may reject
+      -- AXURL reads. Prefer a label containing the requested term, then retain
+      -- the first labeled result as a bounded fallback.
+      set labelText to my ui_label(candidate)
+      if labelText is not "" then
         ignoring case
           if labelText contains term then return candidate
         end ignoring
-        set fallbackLink to candidate
+        try
+          if fallbackLink is missing value then set fallbackLink to candidate
+        end try
       end if
     end if
   end repeat
@@ -221,38 +251,19 @@ on find_result_link(dialogElement, term)
   end try
 end find_result_link
 
-on wait_for_result_link(dialogElement, term, attempts)
+on wait_for_result_link(windowElement, term, attempts)
   repeat with attempt from 1 to attempts
-    set candidate to my find_result_link(dialogElement, term)
-    if candidate is not missing value then return candidate
+    try
+      set dialogElement to my find_search_dialog(windowElement)
+      if dialogElement is not missing value then
+        set candidate to my find_result_link(dialogElement, term)
+        if candidate is not missing value then return candidate
+      end if
+    end try
     delay 0.1
   end repeat
   return missing value
 end wait_for_result_link
-
-on docs_path_marker(candidateURL)
-  ignoring case
-    if candidateURL does not contain "/docs/" then return ""
-  end ignoring
-  set oldDelimiters to AppleScript's text item delimiters
-  set AppleScript's text item delimiters to "/docs/"
-  set parts to text items of candidateURL
-  set AppleScript's text item delimiters to oldDelimiters
-  if (count of parts) < 2 then return ""
-  return "/docs/" & item 2 of parts
-end docs_path_marker
-
-on current_web_area_url(windowElement)
-  set candidates to my all_accessible_elements(windowElement)
-  repeat with candidate in candidates
-    set candidate to contents of candidate
-    if (my ui_role(candidate)) is "AXWebArea" then
-      set candidateURL to my ui_url(candidate)
-      if candidateURL is not "" then return candidateURL
-    end if
-  end repeat
-  return ""
-end current_web_area_url
 
 on search_surface_present(windowElement)
   set dialogElement to my find_search_dialog(windowElement)
@@ -261,27 +272,15 @@ on search_surface_present(windowElement)
     -- search text field is the stronger open-state boundary.
     if (my find_search_input(dialogElement)) is not missing value then return true
   end if
-  set candidates to my all_accessible_elements(windowElement)
-  repeat with candidate in candidates
-    set candidate to contents of candidate
-    if (my ui_role(candidate)) is "AXTextField" then
-      set labelText to my ui_label(candidate)
-      ignoring case
-        if labelText does not contain "find in page" and labelText does not contain "filter navigation" and my ui_visible(candidate) then return true
-      end ignoring
-    end if
-  end repeat
   return false
 end search_surface_present
 
-on wait_for_navigation(windowElement, routeMarker, attempts)
+on wait_for_navigation(windowElement, beforeLabel, attempts)
   set routeSeen to false
   set dialogClosed to false
   repeat with attempt from 1 to attempts
-    set currentURL to my current_web_area_url(windowElement)
-    ignoring case
-      if currentURL contains routeMarker then set routeSeen to true
-    end ignoring
+    set currentLabel to my web_area_label(windowElement)
+    if currentLabel is not "" and currentLabel is not beforeLabel then set routeSeen to true
     if not (my search_surface_present(windowElement)) then set dialogClosed to true
     if routeSeen and dialogClosed then return "navigated"
     delay 0.1
@@ -291,7 +290,7 @@ on wait_for_navigation(windowElement, routeMarker, attempts)
 end wait_for_navigation
 
 on find_in_page_input(rootElement)
-  set candidates to my all_accessible_elements(rootElement)
+  set candidates to my direct_children(my find_web_area(rootElement))
   repeat with candidate in candidates
     set candidate to contents of candidate
     if (my ui_role(candidate)) is "AXTextField" then
@@ -322,7 +321,7 @@ on wait_for_find_controls(windowElement, attempts)
     set previousVisible to false
     set nextVisible to false
     set closeVisible to false
-    set candidates to my all_accessible_elements(windowElement)
+    set candidates to my direct_children(my find_web_area(windowElement))
     repeat with candidate in candidates
       set candidate to contents of candidate
       if (my ui_role(candidate)) is "AXButton" and my ui_visible(candidate) then
