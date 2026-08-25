@@ -309,10 +309,12 @@ async function runModifierScenario(page, url, modifier) {
 
   const initialIndex = await activeMatchIndex(page);
   assert.equal(initialIndex, 0, `${modifier.label}+F must activate the first find match`);
-  await page.locator('button[title="Next (Enter)"]').click();
+  // Exercise FindBar's supported input keyboard path so Escape below remains
+  // focused on the same input (the shipped component handles Escape there).
+  await findInput.press("Enter");
   const nextIndex = await activeMatchIndex(page);
   assert.notEqual(nextIndex, initialIndex, `${modifier.label}+F Next must move the active match`);
-  await page.locator('button[title="Previous (Shift+Enter)"]').click();
+  await findInput.press("Shift+Enter");
   assert.equal(
     await activeMatchIndex(page),
     initialIndex,
