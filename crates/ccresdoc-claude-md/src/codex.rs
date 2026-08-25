@@ -345,6 +345,23 @@ fn validate_slug(
     Ok(())
 }
 
+#[cfg(test)]
+mod slug_tests {
+    use super::*;
+
+    #[test]
+    fn normalized_slug_collisions_are_detected_without_filesystem_semantics() {
+        for (first, second) in [("é", "e\u{301}"), ("straße", "strasse")] {
+            let mut seen = HashMap::new();
+            validate_slug(first, "test", Path::new(first), &mut seen).unwrap();
+            assert!(matches!(
+                validate_slug(second, "test", Path::new(second), &mut seen),
+                Err(GenerateError::SlugCollision(_))
+            ));
+        }
+    }
+}
+
 fn read_utf8(cx: &mut Context<'_>, source: CodexSource, path: &Path) -> Option<String> {
     match std::fs::read_to_string(path) {
         Ok(value) => Some(value),

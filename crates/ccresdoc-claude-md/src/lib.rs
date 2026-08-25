@@ -176,7 +176,30 @@ impl Config {
 }
 
 pub(crate) fn canonical_or_absolute(path: &std::path::Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+
+    // The output directory commonly does not exist until generation starts.
+    // Canonicalize its deepest existing ancestor so platform aliases and
+    // symlinked prefixes (for example macOS `/var` -> `/private/var`) are still
+    // resolved before overlap checks and watcher path comparisons.
+    let mut missing_tail = Vec::new();
+    let mut current = path;
+    while let Some(parent) = current.parent() {
+        if let Some(name) = current.file_name() {
+            missing_tail.push(name.to_owned());
+        }
+        if let Ok(mut canonical_parent) = parent.canonicalize() {
+            for component in missing_tail.iter().rev() {
+                canonical_parent.push(component);
+            }
+            return canonical_parent;
+        }
+        current = parent;
+    }
+
+    path.to_path_buf()
 }
 
 pub(crate) fn validate_no_overlap(
@@ -192,6 +215,27 @@ pub(crate) fn validate_no_overlap(
         )));
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod path_tests {
+    use std::os::unix::fs::symlink;
+
+    use super::*;
+
+    #[test]
+    fn overlap_normalizes_missing_path_through_existing_symlink_ancestor() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let real = temp.path().join("real");
+        let alias = temp.path().join("alias");
+        std::fs::create_dir(&real).unwrap();
+        symlink(&real, &alias).unwrap();
+
+        assert!(matches!(
+            validate_no_overlap("source", &alias, &alias.join("generated/docs")),
+            Err(GenerateError::InvalidConfig(_))
+        ));
+    }
 }
 
 /// Generate the full MDX tree once (used at boot).

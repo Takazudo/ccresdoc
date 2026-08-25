@@ -201,26 +201,17 @@ fn regeneration_is_idempotent_prunes_stale_and_preserves_overview() {
 }
 
 #[test]
-fn normalized_collisions_and_reserved_slugs_fail_before_overwrite() {
+fn slug_collisions_and_reserved_slugs_fail_before_overwrite() {
     let source = tempfile::TempDir::new().unwrap();
     let output = tempfile::TempDir::new().unwrap();
-    write(source.path(), "é.config.toml", "model = \"a\"");
-    write(source.path(), "e\u{301}.config.toml", "model = \"b\"");
+    write(source.path(), "a.b.config.toml", "model = \"a\"");
+    write(source.path(), "a-b.config.toml", "model = \"b\"");
     assert!(matches!(
         generate_codex(&config(source.path(), output.path())),
         Err(GenerateError::SlugCollision(_))
     ));
-
-    fs::remove_file(source.path().join("é.config.toml")).unwrap();
-    fs::remove_file(source.path().join("e\u{301}.config.toml")).unwrap();
-    write(source.path(), "straße.config.toml", "model = \"a\"");
-    write(source.path(), "strasse.config.toml", "model = \"b\"");
-    assert!(matches!(
-        generate_codex(&config(source.path(), output.path())),
-        Err(GenerateError::SlugCollision(_))
-    ));
-    fs::remove_file(source.path().join("straße.config.toml")).unwrap();
-    fs::remove_file(source.path().join("strasse.config.toml")).unwrap();
+    fs::remove_file(source.path().join("a.b.config.toml")).unwrap();
+    fs::remove_file(source.path().join("a-b.config.toml")).unwrap();
     write(
         source.path(),
         "rules/index.rules",
