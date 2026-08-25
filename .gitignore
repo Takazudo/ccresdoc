@@ -12,6 +12,7 @@ app/.zfb/
 app/.zfb-build/
 app/dist/**
 app/public/theme-packs/
+app/public/docs/search-index.json
 release-artifacts/
 
 # Runtime-generated resource detail MDX (not committed; rebuilt on launch).
