@@ -5,7 +5,8 @@ set -uo pipefail
 #   count — number of launch iterations (default 3, must be a positive integer)
 #   --controls — after the first ready /docs/ pass, use macOS accessibility to
 #                activate the hydrated header ThemeToggle and require its AX
-#                label to change. This is intentionally run after readiness,
+#                label to change, then verify native menu/Command-H hide and
+#                reactivation. This is intentionally run after readiness,
 #                without waiting for a livereload rescue reload.
 # Exits 0 on success, 1 on failure.
 #
@@ -72,6 +73,19 @@ for RUN in $(seq 1 "$COUNT"); do
           OK=0
         else
           echo "  Run $RUN: PASS ($CONTROL_RESULT)"
+          if ! HIDE_CONTROL_RESULT=$(osascript "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/assert-app-menu-hide.applescript" 2>&1); then
+            echo "  Run $RUN: FAIL (native menu/Command-H accessibility check: $HIDE_CONTROL_RESULT)" >&2
+            OK=0
+          else
+            echo "  Run $RUN: PASS ($HIDE_CONTROL_RESULT)"
+            HIDE_HTTP=$(curl -s -o /tmp/ccresdoc-launch-docs.html -w "%{http_code}" http://localhost:4892/docs/ 2>/dev/null)
+            if [[ "$HIDE_HTTP" != "200" ]] || ! grep -Fq "CCResDoc Resources" /tmp/ccresdoc-launch-docs.html; then
+              echo "  Run $RUN: FAIL (/docs/ was not healthy after native hide/unhide: HTTP $HIDE_HTTP)" >&2
+              OK=0
+            else
+              echo "  Run $RUN: PASS (/docs/ remained healthy after native hide/unhide)"
+            fi
+          fi
         fi
       fi
       if [[ "$OK" == "1" ]]; then PASS=$((PASS + 1)); fi
