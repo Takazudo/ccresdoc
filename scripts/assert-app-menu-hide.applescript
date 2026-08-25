@@ -167,6 +167,18 @@ tell application "System Events"
     -- Send the actual shortcut. Clicking Hide CCResDoc would not prove that
     -- AppKit dispatched ⌘H to this menu item.
     set frontmost to true
+    set appFrontmost to false
+    repeat with attempt from 1 to 100
+      try
+        if (frontmost of process "CCResDoc") is true then
+          set appFrontmost to true
+          exit repeat
+        end if
+      end try
+      delay 0.1
+    end repeat
+    if not appFrontmost then error "CCResDoc did not become frontmost before Command-H"
+    delay 0.2
     keystroke "h" using command down
     set appHidden to false
     repeat with attempt from 1 to 100
