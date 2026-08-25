@@ -18,6 +18,7 @@
 //! nothing is left holding its effective port. Closing Settings only hides it.
 
 pub mod appearance;
+mod menu;
 pub mod runtime;
 pub mod settings;
 pub mod settings_commands;
@@ -35,7 +36,6 @@ use ccresdoc_claude_md::{
     generate_codex, watch_codex, CodexConfig, CodexWatchEvent, CodexWatchHandle,
     Config as GenConfig, WatchEvent, WatchHandle, DEFAULT_DEBOUNCE,
 };
-use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use runtime::{
@@ -44,8 +44,8 @@ use runtime::{
 };
 use settings::{EffectiveSettings, SettingsStore};
 use settings_window::{
-    lifecycle_action, open_or_focus_settings, LifecycleAction, SETTINGS_ACCELERATOR,
-    SETTINGS_MENU_ID, SETTINGS_WINDOW_LABEL,
+    lifecycle_action, open_or_focus_settings, LifecycleAction, SETTINGS_MENU_ID,
+    SETTINGS_WINDOW_LABEL,
 };
 const LOADING_URL: &str = "tauri://localhost/index.html";
 const IS_DEV: bool = cfg!(debug_assertions);
@@ -2000,64 +2000,7 @@ fn main() {
             log_to(&log_path, "setup: starting CCResDoc");
 
             // ── Menu ──
-            let app_menu = SubmenuBuilder::new(app, "CCResDoc")
-                .about(None)
-                .separator()
-                .item(
-                    &MenuItemBuilder::with_id(SETTINGS_MENU_ID, "Settings…")
-                        .accelerator(SETTINGS_ACCELERATOR)
-                        .build(app)?,
-                )
-                .separator()
-                .quit()
-                .build()?;
-
-            let edit_menu = SubmenuBuilder::new(app, "Edit")
-                .undo()
-                .redo()
-                .separator()
-                .cut()
-                .copy()
-                .paste()
-                .select_all()
-                .build()?;
-
-            let view_menu = SubmenuBuilder::new(app, "View")
-                .item(
-                    &MenuItemBuilder::with_id("refresh", "Refresh")
-                        .accelerator("CmdOrCtrl+R")
-                        .build(app)?,
-                )
-                .item(
-                    &MenuItemBuilder::with_id("devtools", "Toggle Developer Tools")
-                        .accelerator("CmdOrCtrl+Alt+I")
-                        .build(app)?,
-                )
-                .separator()
-                .item(
-                    &MenuItemBuilder::with_id("actual_size", "Actual Size")
-                        .accelerator("CmdOrCtrl+0")
-                        .build(app)?,
-                )
-                .item(
-                    &MenuItemBuilder::with_id("zoom_in", "Zoom In")
-                        .accelerator("CmdOrCtrl+=")
-                        .build(app)?,
-                )
-                .item(
-                    &MenuItemBuilder::with_id("zoom_out", "Zoom Out")
-                        .accelerator("CmdOrCtrl+-")
-                        .build(app)?,
-                )
-                .build()?;
-
-            let menu = MenuBuilder::new(app)
-                .item(&app_menu)
-                .item(&edit_menu)
-                .item(&view_menu)
-                .build()?;
-
-            app.set_menu(menu)?;
+            app.set_menu(menu::build(app)?)?;
 
             app.on_menu_event(|app_handle, event| match event.id().as_ref() {
                 SETTINGS_MENU_ID => {
