@@ -13,7 +13,9 @@ tell application "System Events"
     set appMenu to missing value
     repeat with attempt from 1 to 100
       try
-        set candidateMenu to menu 1 of menu bar item 1 of menu bar 1
+        -- The Apple menu occupies item 1; the application's menu is the
+        -- named CCResDoc item that follows it.
+        set candidateMenu to menu 1 of menu bar item "CCResDoc" of menu bar 1
         if (count of menu items of candidateMenu) > 0 then
           set appMenu to candidateMenu
           exit repeat
@@ -21,7 +23,7 @@ tell application "System Events"
       end try
       delay 0.1
     end repeat
-    if appMenu is missing value then error "CCResDoc app menu was not exposed by Accessibility"
+    if appMenu is missing value then error "CCResDoc application menu was not exposed by Accessibility"
 
     set appMenuItems to menu items of appMenu
     set aboutIndex to 0
