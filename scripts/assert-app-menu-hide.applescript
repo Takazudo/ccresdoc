@@ -170,7 +170,7 @@ tell application "System Events"
     set appFrontmost to false
     repeat with attempt from 1 to 100
       try
-        if (frontmost of process "CCResDoc") is true then
+        if frontmost is true then
           set appFrontmost to true
           exit repeat
         end if
@@ -183,7 +183,7 @@ tell application "System Events"
     set appHidden to false
     repeat with attempt from 1 to 100
       try
-        if (visible of process "CCResDoc") is false then
+        if visible is false then
           set appHidden to true
           exit repeat
         end if
@@ -196,7 +196,7 @@ tell application "System Events"
     set appVisibleAgain to false
     repeat with attempt from 1 to 100
       try
-        if (visible of process "CCResDoc") is true then
+        if visible is true then
           set appVisibleAgain to true
           exit repeat
         end if
@@ -204,7 +204,7 @@ tell application "System Events"
       delay 0.1
     end repeat
     if not appVisibleAgain then error "CCResDoc did not become visible after reactivation"
-    if (unix id of process "CCResDoc") is not pidBeforeHide then error "CCResDoc process changed across hide/unhide"
+    if unix id is not pidBeforeHide then error "CCResDoc process changed across hide/unhide"
     set windowsRestored to false
     repeat with attempt from 1 to 100
       try
