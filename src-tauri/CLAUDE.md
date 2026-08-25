@@ -20,7 +20,7 @@ cargo tauri build
 ```
 main() ──► setup()
               ├─ resolve log path (app_data_dir/ccresdoc.log)
-              ├─ build App/Edit/View menu
+              ├─ build the macOS application menu
               ├─ open window (bundled loading page, on_navigation filter)
               └─ spawn launch() thread:
                    1. resolve_workspace()  →  writable app-project root
@@ -217,6 +217,10 @@ full `launch()` (new generation).
 rejected by the WebView so they open in the OS browser.
 
 ## Menu actions
+
+### macOS menu ownership
+
+**macOS menu ownership.** `app.set_menu()` replaces the default macOS menu wholesale. AppKit binds ⌘H, ⌥⌘H and the Services submenu to *items in the application menu* — there is no system-global fallback. Removing `Hide`/`Hide Others`/`Show All`/`Services` from `src-tauri/src/menu.rs` silently removes those shortcuts from the app. `APP_MENU_SPEC` is the asserted source of truth. The Window submenu must be built with `tauri::menu::WINDOW_SUBMENU_ID` — `init_app_menu` looks it up by that id to call `set_as_windows_menu_for_nsapp()`, and a differently-identified submenu is never registered with AppKit. The menu is authored for macOS (the only bundled target); `services` / `show_all` are inert elsewhere. ⌘W is deliberately absent because closing the main window triggers `StopForMainClose` → `teardown()` and stops the zfb sidecar.
 
 | Menu item | Shortcut | Behaviour |
 | --- | --- | --- |
