@@ -82,6 +82,7 @@ mod codex;
 mod error;
 mod escape;
 mod generate;
+mod search_index;
 mod walk;
 mod watch;
 
@@ -93,6 +94,11 @@ pub use codex::{
 };
 pub use error::{GenerateError, Result};
 pub use generate::GenerateReport;
+pub use search_index::{
+    build_search_index, build_search_index_json, search_index_json, serialize_search_index,
+    strip_markdown, GeneratedPage, SearchIndexEntry, SearchIndexNamespace, SearchIndexPage,
+    DOCS_URL_PREFIX, MAX_BODY_LENGTH,
+};
 pub use watch::{watch, WatchEvent, WatchHandle, DEFAULT_DEBOUNCE};
 
 /// Resolved, absolute paths the generator/watcher operate on.
