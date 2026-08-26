@@ -15,13 +15,10 @@ tell application "System Events"
     repeat with attempt from 1 to 150
       try
         -- Tauri wraps WKWebView in two groups and one scroll area. The page's
-        -- first group is the header; its fourth child owns ThemeToggle. This
-        -- bounded path avoids traversing hundreds of generated sidebar nodes.
-        set candidate to UI element 1 of UI element 4 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of front window
-        set label to (description of candidate as text)
-        if (role of candidate as text) is "AXButton" and label contains "Switch to " then
-          set targetButton to candidate
-        end if
+        -- first group is the header. Search only its direct children and
+        -- direct grandchildren, whose small set remains stable as header
+        -- slots are added; never traverse the generated sidebar tree.
+        set targetButton to my find_theme_toggle(front window)
       end try
       if targetButton is not missing value then exit repeat
       delay 0.1
@@ -29,30 +26,15 @@ tell application "System Events"
     if targetButton is missing value then error "hydrated ThemeToggle button was not exposed by WebKit"
 
     set beforeLabel to ""
-    try
-      set beforeLabel to (description of targetButton as text)
-    end try
-    if beforeLabel is "" then
-      try
-        set beforeLabel to (title of targetButton as text)
-      end try
-    end if
-    if beforeLabel is "" then
-      try
-        set beforeLabel to (name of targetButton as text)
-      end try
-    end if
+    set beforeLabel to my theme_toggle_label(targetButton)
     click targetButton
     delay 0.35
 
     set afterLabel to ""
     repeat with attempt from 1 to 50
       try
-        set candidate to UI element 1 of UI element 4 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of front window
-        set label to (description of candidate as text)
-        if (role of candidate as text) is "AXButton" and label contains "Switch to " then
-          set afterLabel to label
-        end if
+        set candidate to my find_theme_toggle(front window)
+        if candidate is not missing value then set afterLabel to my theme_toggle_label(candidate)
       end try
       if afterLabel is not "" and afterLabel is not beforeLabel then exit repeat
       delay 0.1
@@ -66,11 +48,8 @@ tell application "System Events"
     set restoredLabel to ""
     repeat with attempt from 1 to 50
       try
-        set candidate to UI element 1 of UI element 4 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of front window
-        set label to (description of candidate as text)
-        if (role of candidate as text) is "AXButton" and label contains "Switch to " then
-          set restoredLabel to label
-        end if
+        set candidate to my find_theme_toggle(front window)
+        if candidate is not missing value then set restoredLabel to my theme_toggle_label(candidate)
       end try
       if restoredLabel is beforeLabel then exit repeat
       delay 0.1
@@ -79,3 +58,70 @@ tell application "System Events"
     return "ThemeToggle interactive: " & beforeLabel & " -> " & afterLabel & " -> " & restoredLabel & " (restored)"
   end tell
 end tell
+
+on find_theme_toggle(windowElement)
+  tell application "System Events"
+    try
+      -- This is the existing bounded route to the header group. The search
+      -- below intentionally stops after one child level.
+      set headerGroup to UI element 1 of UI element 1 of UI element 1 of UI element 1 of UI element 1 of windowElement
+      set headerChildren to UI elements of headerGroup
+      repeat with child in headerChildren
+        set candidate to contents of child
+        if my is_theme_toggle(candidate) then return candidate
+        try
+          set grandchildren to UI elements of candidate
+          repeat with grandchild in grandchildren
+            set candidate to contents of grandchild
+            if my is_theme_toggle(candidate) then return candidate
+          end repeat
+        end try
+      end repeat
+    on error
+      return missing value
+    end try
+  end tell
+  return missing value
+end find_theme_toggle
+
+on is_theme_toggle(candidate)
+  tell application "System Events"
+    try
+      if (role of candidate as text) is not "AXButton" then return false
+    on error
+      return false
+    end try
+    repeat with attributeName in {"description", "title", "name"}
+      set candidateLabel to my candidate_attribute(candidate, contents of attributeName)
+      ignoring case
+        if candidateLabel contains "Switch to " then return true
+      end ignoring
+    end repeat
+  end tell
+  return false
+end is_theme_toggle
+
+on theme_toggle_label(candidate)
+  tell application "System Events"
+    repeat with attributeName in {"description", "title", "name"}
+      set candidateLabel to my candidate_attribute(candidate, contents of attributeName)
+      ignoring case
+        if candidateLabel contains "Switch to " then return candidateLabel
+      end ignoring
+    end repeat
+  end tell
+  return ""
+end theme_toggle_label
+
+on candidate_attribute(candidate, attributeName)
+  tell application "System Events"
+    try
+      if attributeName is "description" then return (description of candidate as text)
+      if attributeName is "title" then return (title of candidate as text)
+      if attributeName is "name" then return (name of candidate as text)
+    on error
+      return ""
+    end try
+  end tell
+  return ""
+end candidate_attribute

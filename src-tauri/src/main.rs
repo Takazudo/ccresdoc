@@ -20,6 +20,7 @@
 pub mod appearance;
 mod menu;
 pub mod runtime;
+mod search_index_publication;
 pub mod settings;
 pub mod settings_commands;
 pub mod settings_window;
@@ -42,6 +43,7 @@ use runtime::{
     NavigationDecision, PortBoundary, PortChoice, ReadyResult, RuntimeDiagnostic,
     RuntimeDiagnosticKind, SystemPortBoundary,
 };
+use search_index_publication::publish_search_index;
 use settings::{EffectiveSettings, SettingsStore};
 use settings_window::{
     lifecycle_action, open_or_focus_settings, LifecycleAction, SETTINGS_MENU_ID,
@@ -961,6 +963,26 @@ fn write_overview(
     .map_err(|error| format!("write {kind} overview: {error}"))
 }
 
+/// A rollback and its shared-index repair are one coordinator operation. The
+/// publication is attempted even when journal restoration reports an error so
+/// the index describes the best tree that is actually left on disk.
+fn rollback_and_republish(
+    journal: runtime::ManagedTreeJournal,
+    workspace: &Path,
+    docs_dir: &Path,
+) -> Result<(), String> {
+    let rollback = journal
+        .rollback()
+        .map_err(|error| format!("managed-tree restore failed: {error}"));
+    let publication = publish_search_index(workspace, docs_dir)
+        .map_err(|error| format!("restored search-index publication failed: {error}"));
+    match (rollback, publication) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(restore), Err(publication)) => Err(format!("{restore}; {publication}")),
+    }
+}
+
 /// Generate a complete selected-resource candidate away from the served docs
 /// tree. Disabled paths are never dereferenced or passed to a generator.
 fn build_candidate(
@@ -1095,6 +1117,7 @@ fn build_candidate(
 fn start_resource_watchers(
     app_handle: &AppHandle,
     desired: &EffectiveSettings,
+    workspace: &Path,
     docs_dir: &Path,
     generation: u64,
     marker: &str,
@@ -1113,6 +1136,7 @@ fn start_resource_watchers(
         let callback_app = app_handle.clone();
         let callback_log = log_path.to_string();
         let callback_docs = docs_dir.to_path_buf();
+        let callback_workspace = workspace.to_path_buf();
         let callback_marker = marker.to_string();
         let publication = watchers.publication.clone();
         watchers.claude = Some(
@@ -1154,6 +1178,16 @@ fn start_resource_watchers(
                                 &callback_marker,
                             ) {
                                 log_to(&callback_log, &format!("watch[{generation}]: Claude overview error: {error}"));
+                            }
+                            if let Err(error) =
+                                publish_search_index(&callback_workspace, &callback_docs)
+                            {
+                                log_to(
+                                    &callback_log,
+                                    &format!(
+                                        "watch[{generation}]: shared search-index error after Claude regeneration: {error}"
+                                    ),
+                                );
                             }
                             let counts = {
                                 let state = callback_app.state::<AppState>();
@@ -1197,6 +1231,7 @@ fn start_resource_watchers(
         let callback_app = app_handle.clone();
         let callback_log = log_path.to_string();
         let callback_docs = docs_dir.to_path_buf();
+        let callback_workspace = workspace.to_path_buf();
         let callback_marker = marker.to_string();
         let publication = watchers.publication.clone();
         watchers.codex = Some(
@@ -1244,6 +1279,16 @@ fn start_resource_watchers(
                                 &callback_marker,
                             ) {
                                 log_to(&callback_log, &format!("watch[{generation}]: Codex overview error: {error}"));
+                            }
+                            if let Err(error) =
+                                publish_search_index(&callback_workspace, &callback_docs)
+                            {
+                                log_to(
+                                    &callback_log,
+                                    &format!(
+                                        "watch[{generation}]: shared search-index error after Codex regeneration: {error}"
+                                    ),
+                                );
                             }
                             let counts = {
                                 let state = callback_app.state::<AppState>();
@@ -1302,6 +1347,7 @@ fn relaunch_previous_runtime(
     let watchers = start_resource_watchers(
         app_handle,
         &previous.effective,
+        &previous.workspace,
         &docs_dir,
         generation,
         &previous.marker,
@@ -1549,6 +1595,12 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
                     attempted_port: None,
                     message: format!("candidate promotion/restore failed: {error}"),
                 };
+                if let Err(publication) = publish_search_index(&workspace, &docs_dir) {
+                    diagnostic.kind = RuntimeDiagnosticKind::RestoreFailed;
+                    diagnostic.message.push_str(&format!(
+                        "; restored search-index publication failed: {publication}"
+                    ));
+                }
                 if previous_metadata.is_some() {
                     if let Err(relaunch) = recover_previous_runtime(
                         app_handle,
@@ -1572,11 +1624,43 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
             }
         };
 
+    // The old sidecar is stopped, so promote + publication form an
+    // unobservable cutover. The new sidecar and watchers never start against a
+    // tree whose shared index still describes the previous selection.
+    if let Err(error) = publish_search_index(&workspace, &docs_dir) {
+        let rollback = rollback_and_republish(journal, &workspace, &docs_dir);
+        let mut kind = RuntimeDiagnosticKind::PromotionFailed;
+        let mut message = format!("candidate search-index publication failed: {error}");
+        if let Err(restore) = rollback {
+            kind = RuntimeDiagnosticKind::RestoreFailed;
+            message.push_str(&format!("; {restore}"));
+        }
+        if kind != RuntimeDiagnosticKind::RestoreFailed && previous_metadata.is_some() {
+            if let Err(relaunch) = recover_previous_runtime(
+                app_handle,
+                &resources_arc,
+                previous_metadata,
+                my_gen,
+                &log_path,
+            ) {
+                kind = RuntimeDiagnosticKind::RelaunchFailed;
+                message.push_str(&format!("; previous relaunch failed: {relaunch}"));
+                state.runtime.clear_active(my_gen);
+            }
+        } else if kind == RuntimeDiagnosticKind::RestoreFailed {
+            state.runtime.clear_active(my_gen);
+        }
+        publish_launch_failure(&state, my_gen, &desired, kind, None, message);
+        emit_launch_error_if_current(app_handle, my_gen, "promotion_failed");
+        return;
+    }
+
     // Enabled watcher startup is part of activation. A partial second-watcher
     // failure drops/joins the first before the tree journal is rolled back.
     let watchers = match start_resource_watchers(
         app_handle,
         &desired,
+        &workspace,
         &docs_dir,
         my_gen,
         &candidate.marker,
@@ -1584,13 +1668,13 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
     ) {
         Ok(watchers) => watchers,
         Err(error) => {
-            let rollback = journal.rollback();
+            let rollback = rollback_and_republish(journal, &workspace, &docs_dir);
             let mut kind = RuntimeDiagnosticKind::WatchFailed;
             let mut message = match rollback {
                 Ok(()) => error,
                 Err(restore) => {
                     kind = RuntimeDiagnosticKind::RestoreFailed;
-                    format!("{error}; restore failed: {restore}")
+                    format!("{error}; {restore}")
                 }
             };
             if kind != RuntimeDiagnosticKind::RestoreFailed && previous_metadata.is_some() {
@@ -1699,7 +1783,7 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
         if let Some(mut sidecar) = candidate_sidecar {
             kill_sidecar(&mut sidecar, &log_path);
         }
-        match journal.rollback() {
+        match rollback_and_republish(journal, &workspace, &docs_dir) {
             Err(error) => log_to(
                 &log_path,
                 &format!("launch: supersession restore failed: {error}"),
@@ -1754,7 +1838,7 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
                 let handoff_generation = state.runtime.generation().load(Ordering::SeqCst);
                 drop(unpublished.watchers);
                 kill_sidecar(&mut unpublished.sidecar, &log_path);
-                match journal.rollback() {
+                match rollback_and_republish(journal, &workspace, &docs_dir) {
                     Err(error) => log_to(
                         &log_path,
                         &format!("launch: publication restore failed: {error}"),
@@ -1815,7 +1899,7 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
                     .clone()
                     .unwrap_or_else(|| format!("{result:?}")),
             };
-            let restore_result = journal.rollback();
+            let restore_result = rollback_and_republish(journal, &workspace, &docs_dir);
             let had_previous = previous_metadata.is_some();
             let recovery = match restore_result {
                 Ok(()) if had_previous => recover_previous_runtime(
@@ -1826,7 +1910,7 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
                     &log_path,
                 ),
                 Ok(()) => Ok(()),
-                Err(error) => Err(format!("managed-tree restore failed: {error}")),
+                Err(error) => Err(error),
             };
             if let Err(error) = recovery {
                 log_to(&log_path, &format!("launch: recovery failed: {error}"));
@@ -2317,6 +2401,44 @@ mod tests {
             !transitions.exists() || fs::read_dir(&transitions).unwrap().next().is_none(),
             "failed candidate should be cleaned exactly"
         );
+    }
+
+    #[test]
+    fn promoted_and_rolled_back_trees_republish_matching_search_indexes() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace = temp.path().join("workspace");
+        let docs = workspace.join("src/content/docs");
+        let candidate = workspace.join("candidate");
+        let backup = workspace.join("backup");
+        fs::create_dir_all(docs.join("claude-md")).unwrap();
+        fs::write(
+            docs.join("claude-md/old.mdx"),
+            "---\ntitle: Old\n---\n\nold body\n",
+        )
+        .unwrap();
+        publish_search_index(&workspace, &docs).unwrap();
+        assert!(
+            fs::read_to_string(workspace.join("public/docs/search-index.json"))
+                .unwrap()
+                .contains("claude:claude-md/old")
+        );
+
+        fs::create_dir_all(candidate.join("codex-config")).unwrap();
+        fs::write(
+            candidate.join("codex-config/new.mdx"),
+            "---\ntitle: New\n---\n\nnew body\n",
+        )
+        .unwrap();
+        let journal = runtime::ManagedTreeJournal::promote(&docs, &candidate, &backup).unwrap();
+        publish_search_index(&workspace, &docs).unwrap();
+        let promoted = fs::read_to_string(workspace.join("public/docs/search-index.json")).unwrap();
+        assert!(promoted.contains("codex:codex-config/new"));
+        assert!(!promoted.contains("claude:claude-md/old"));
+
+        rollback_and_republish(journal, &workspace, &docs).unwrap();
+        let restored = fs::read_to_string(workspace.join("public/docs/search-index.json")).unwrap();
+        assert!(restored.contains("claude:claude-md/old"));
+        assert!(!restored.contains("codex:codex-config/new"));
     }
 
     #[test]

@@ -58,6 +58,7 @@ describe("CCResDoc theme-pack host integration", () => {
       },
     });
     expect(settings.headerRightItems).toEqual([
+      { type: "component", component: "search" },
       { type: "component", component: "ccresdoc-settings" },
       { type: "component", component: "theme-toggle" },
     ]);

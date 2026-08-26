@@ -8,8 +8,9 @@ import { createChrome } from "@takazudo/zudo-doc/chrome";
 import {
   createHeaderWithDefaults,
 } from "@takazudo/zudo-doc/header-with-defaults";
+import { FindInPageInit } from "@takazudo/zudo-doc/find-in-page";
 import { routeContext } from "./_route-context";
-import { SettingsHeaderButton } from "./_settings-button";
+import { SearchShortcutBoundary, SettingsHeaderButton } from "./_settings-button";
 import { AppearanceBridge } from "@/appearance/bridge";
 
 export { openSettingsFromDocs, SettingsHeaderButton } from "./_settings-button";
@@ -29,7 +30,11 @@ const PackageHeader = createHeaderWithDefaults({
 });
 
 function AppearanceBodyEnd() {
-  return Island({ when: "load", children: h(AppearanceBridge, {}) });
+  return [
+    Island({ when: "load", children: h(AppearanceBridge, {}) }),
+    Island({ when: "load", children: h(FindInPageInit, {}) }),
+    Island({ when: "load", children: h(SearchShortcutBoundary, {}) }),
+  ];
 }
 
 export const {
