@@ -27,6 +27,7 @@ fi
 
 PROBE_DIR="$(mktemp -d /tmp/ccresdoc-macos-package.XXXXXX)"
 PROBE_HOME="$PROBE_DIR/home"
+HOST_LOG="$PROBE_HOME/Library/Application Support/com.takazudo.ccresdoc/ccresdoc.log"
 SENTINEL_DIR="$PROBE_DIR/bin"
 SENTINEL_LOG="$PROBE_DIR/node-invocations.log"
 PROCESS_LOG="$PROBE_DIR/process-samples.log"
@@ -36,6 +37,10 @@ FIXTURE_BODY="Generated package route $(basename "$PROBE_DIR")"
 FIXTURE_AUTOLINK="https://example.com/package-readiness-probe"
 FIXTURE_ROUTE="http://127.0.0.1:4892/docs/claude-skills/package-readiness-probe/"
 APP_PID=""
+OWNED_SIDECAR_PID=""
+OWNED_SIDECAR_PGID=""
+OWNED_ZFB_BIN=""
+OWNED_ZFB_COMMAND=""
 PORT_LOCK="${TMPDIR:-/tmp}"
 PORT_LOCK="${PORT_LOCK%/}/ccresdoc-runtime-port-4892.lock"
 PORT_LOCK_HELD=0
@@ -45,9 +50,92 @@ DARWIN_RELATIVE_PATH=""
 DARWIN_SIZE=""
 DARWIN_SHA256=""
 
+owned_group_alive() {
+  local pgid="$1"
+  ps -axo pgid= | awk -v pgid="$pgid" '$1 == pgid { found=1 } END { exit found ? 0 : 1 }'
+}
+
+owned_sidecar_alive() {
+  local pid=""
+  local pgid=""
+  local command=""
+  while read -r pid pgid command; do
+    if [[ "$pid" = "$OWNED_SIDECAR_PID" && "$pgid" = "$OWNED_SIDECAR_PGID" && "$command" = "$OWNED_ZFB_COMMAND" ]]; then
+      return 0
+    fi
+  done < <(ps -ww -axo pid=,pgid=,command=)
+  return 1
+}
+
+owned_group_is_probe_scoped() {
+  local expected_pgid="$1"
+  local pid=""
+  local pgid=""
+  local command=""
+  while read -r pid pgid command; do
+    if [[ "$pgid" = "$expected_pgid" && "$command" = "$OWNED_ZFB_BIN"* ]]; then
+      return 0
+    fi
+  done < <(ps -ww -axo pid=,pgid=,command=)
+  return 1
+}
+
+find_owned_sidecar() {
+  local pid=""
+  local pgid=""
+  local command=""
+  while read -r pid pgid command; do
+    if [[ "$command" = "$OWNED_ZFB_COMMAND" ]]; then
+      printf '%s %s\n' "$pid" "$pgid"
+    fi
+  done < <(ps -ww -axo pid=,pgid=,command=)
+}
+
+stop_owned_sidecar_for_cleanup() {
+  if [[ -z "$OWNED_SIDECAR_PID" || -z "$OWNED_SIDECAR_PGID" ]]; then
+    return 0
+  fi
+  if ! owned_group_alive "$OWNED_SIDECAR_PGID" && ! owned_sidecar_alive; then
+    OWNED_SIDECAR_PID=""
+    OWNED_SIDECAR_PGID=""
+    return 0
+  fi
+  if ! owned_group_is_probe_scoped "$OWNED_SIDECAR_PGID"; then
+    echo "Refusing to signal process group $OWNED_SIDECAR_PGID without the probe-owned zfb path." >&2
+    return 1
+  fi
+  /bin/kill -TERM "-$OWNED_SIDECAR_PGID" 2>/dev/null || true
+  for _ in $(seq 1 40); do
+    if ! owned_group_alive "$OWNED_SIDECAR_PGID" && ! owned_sidecar_alive; then break; fi
+    sleep 0.25
+  done
+  if owned_group_alive "$OWNED_SIDECAR_PGID" || owned_sidecar_alive; then
+    if ! owned_group_is_probe_scoped "$OWNED_SIDECAR_PGID"; then
+      echo "Refusing to force-kill process group $OWNED_SIDECAR_PGID after its probe identity changed." >&2
+      return 1
+    fi
+    /bin/kill -KILL "-$OWNED_SIDECAR_PGID" 2>/dev/null || true
+    for _ in $(seq 1 40); do
+      if ! owned_group_alive "$OWNED_SIDECAR_PGID" && ! owned_sidecar_alive; then break; fi
+      sleep 0.25
+    done
+  fi
+  if owned_group_alive "$OWNED_SIDECAR_PGID" || owned_sidecar_alive; then
+    echo "Probe-owned process group $OWNED_SIDECAR_PGID survived cleanup." >&2
+    return 1
+  fi
+  OWNED_SIDECAR_PID=""
+  OWNED_SIDECAR_PGID=""
+}
+
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
+  if [[ "$status" != "0" && -f "$HOST_LOG" ]]; then
+    echo "--- packaged host lifecycle log ---" >&2
+    tail -200 "$HOST_LOG" >&2 || true
+    echo "--- end packaged host lifecycle log ---" >&2
+  fi
   if [[ -n "$APP_PID" ]]; then
     if app_running; then
       /usr/bin/osascript -e 'tell application id "com.takazudo.ccresdoc" to quit' >/dev/null 2>&1 || true
@@ -64,6 +152,9 @@ cleanup() {
       kill -TERM "$APP_PID" 2>/dev/null || true
     fi
     wait "$APP_PID" 2>/dev/null || true
+  fi
+  if ! stop_owned_sidecar_for_cleanup; then
+    status=1
   fi
   case "$PROBE_DIR" in
     /tmp/ccresdoc-macos-package.*) rm -rf "$PROBE_DIR" ;;
@@ -120,6 +211,8 @@ test -z "$(lsof -ti :4892 2>/dev/null || true)"
 
 RUNTIME_ROOT="$APP_PATH/Contents/Resources/runtime-workspace/app"
 ZFB_BIN="$RUNTIME_ROOT/$DARWIN_RELATIVE_PATH"
+OWNED_ZFB_BIN="$PROBE_HOME/Library/Application Support/com.takazudo.ccresdoc/app-workspace/$DARWIN_RELATIVE_PATH"
+OWNED_ZFB_COMMAND="$OWNED_ZFB_BIN dev --host 127.0.0.1 --port 4892"
 
 # Audit the final bundle's staged app before any user fixture is introduced.
 # This checks the same explicit source/namespace/privacy contract as the Linux
@@ -173,7 +266,7 @@ for RUN in 1 2; do
   APP_PID=$!
   READY=0
   for _ in $(seq 1 300); do
-    ps -axo pid=,ppid=,args= | grep "$PROBE_DIR\|$APP_PATH" >> "$PROCESS_LOG" || true
+    ps -ww -axo pid=,ppid=,pgid=,args= | grep "$PROBE_DIR\|$APP_PATH" >> "$PROCESS_LOG" || true
     if grep -q "plugin-host.mjs" "$PROCESS_LOG"; then
       echo "plugin host observed during packaged launch" >&2
       exit 1
@@ -206,13 +299,32 @@ for RUN in 1 2; do
   grep -Fq "CCResDoc" "$PROBE_DIR/docs.html"
   test ! -s "$SENTINEL_LOG"
 
+  OWNED_SIDECAR_ROW="$(find_owned_sidecar)"
+  if [[ -z "$OWNED_SIDECAR_ROW" || "$OWNED_SIDECAR_ROW" = *$'\n'* ]]; then
+    echo "Expected exactly one probe-owned zfb sidecar, got: ${OWNED_SIDECAR_ROW:-none}" >&2
+    exit 1
+  fi
+  read -r OWNED_SIDECAR_PID OWNED_SIDECAR_PGID <<< "$OWNED_SIDECAR_ROW"
+  [[ "$OWNED_SIDECAR_PID" =~ ^[1-9][0-9]*$ ]]
+  [[ "$OWNED_SIDECAR_PGID" =~ ^[1-9][0-9]*$ ]]
+  test "$OWNED_SIDECAR_PID" = "$OWNED_SIDECAR_PGID"
+  printf 'owned-sidecar run=%s pid=%s pgid=%s command=%s\n' \
+    "$RUN" "$OWNED_SIDECAR_PID" "$OWNED_SIDECAR_PGID" "$OWNED_ZFB_COMMAND" >> "$PROCESS_LOG"
+
   osascript -e 'tell application id "com.takazudo.ccresdoc" to quit' || kill -TERM "$APP_PID"
   wait "$APP_PID" || true
   APP_PID=""
-  for _ in $(seq 1 20); do
-    if ! lsof -ti :4892 >/dev/null 2>&1; then break; fi
+  for _ in $(seq 1 80); do
+    if ! owned_group_alive "$OWNED_SIDECAR_PGID" && ! owned_sidecar_alive; then break; fi
     sleep 0.25
   done
+  if owned_group_alive "$OWNED_SIDECAR_PGID" || owned_sidecar_alive; then
+    echo "Packaged quit left probe-owned PID $OWNED_SIDECAR_PID / PGID $OWNED_SIDECAR_PGID alive." >&2
+    ps -ww -axo pid=,ppid=,pgid=,stat=,args= | awk -v pgid="$OWNED_SIDECAR_PGID" '$3 == pgid'
+    exit 1
+  fi
+  OWNED_SIDECAR_PID=""
+  OWNED_SIDECAR_PGID=""
   test -z "$(lsof -ti :4892 2>/dev/null || true)"
 done
 

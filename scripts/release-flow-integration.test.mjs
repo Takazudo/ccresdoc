@@ -23,6 +23,7 @@ const ciWorkflow = source(".github/workflows/ci.yml");
 const producer = source("scripts/build-macos-release.sh");
 const packageProbe = source("scripts/test-macos-package.sh");
 const publication = source("scripts/release-publication.mjs");
+const host = source("src-tauri/src/main.rs");
 
 function assertNoMachineSpecificPaths(label, value) {
   const slash = String.raw`/`;
@@ -159,6 +160,14 @@ test("the producer derives its pair from the contract and keeps upload mutation 
   assert.match(packageProbe, /Refusing to run beside an existing CCResDoc instance/);
   assert.match(packageProbe, /tell application id "com\.takazudo\.ccresdoc" to quit/);
   assert.match(packageProbe, /Packaged CCResDoc did not quit during probe cleanup/);
+  assert.match(packageProbe, /OWNED_SIDECAR_PID/);
+  assert.match(packageProbe, /OWNED_SIDECAR_PGID/);
+  assert.match(packageProbe, /test "\$OWNED_SIDECAR_PID" = "\$OWNED_SIDECAR_PGID"/);
+  assert.match(packageProbe, /owned_group_alive "\$OWNED_SIDECAR_PGID"/);
+  assert.doesNotMatch(packageProbe, /\bpkill\b/);
+  assert.match(host, /libc::atexit\(stop_owned_sidecar_at_process_exit\)/);
+  assert.match(host, /OWNED_SIDECAR_PROCESS_GROUP/);
+  assert.match(host, /wait_process_group_gone_at_exit/);
 });
 
 test("the publication workflow is parseable, input-correlated, draft-visible, and Ubuntu-only", () => {
