@@ -128,9 +128,12 @@ by package verification.
 
 - `zfb dev` is spawned in its own **process group** (`process_group(0)`). On
   window close the host signals the **negative PID** (SIGTERM, then SIGKILL on
-  timeout) so the exact app-owned tree dies. No port-owner discovery or broad
-  kill is allowed; a foreign preferred-port listener remains alive while the
-  runtime selects a fallback.
+  timeout) and waits for the stored group to disappear, not merely for its
+  leader or listening port to exit. A process-exit hook owns that same exact
+  PGID as the final backstop when AppKit's Apple-event quit path bypasses Tauri
+  run events; it performs bounded TERM→KILL group shutdown before host exit.
+  No port-owner discovery or broad kill is allowed; a foreign preferred-port
+  listener remains alive while the runtime selects a fallback.
 - The runtime coordinator's generation is bumped at the start of every launch (initial +
   each retry). A launch thread that finishes after a newer one began sees a
   mismatch and skips its terminal navigate/emit — so a Retry pressed mid-build

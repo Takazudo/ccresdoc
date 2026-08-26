@@ -28,6 +28,8 @@ pub mod settings_window;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+#[cfg(unix)]
+use std::sync::atomic::AtomicI32;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -64,6 +66,14 @@ const READY_TIMEOUT: Duration = Duration::from_secs(300);
 const WORKSPACE_READY_FILE: &str = ".ccresdoc-workspace-ready";
 const EPHEMERAL_WEBVIEW_ENV: &str = "CCRESDOC_EPHEMERAL_WEBVIEW";
 
+/// Process-exit backstop for the one native sidecar group CCResDoc can own at
+/// a time. AppKit's Apple-event quit path can bypass Tauri run events on macOS,
+/// so normal `teardown` clears this only after the exact group is gone; an
+/// `atexit` hook consumes it otherwise. It is never populated from a port or
+/// process scan.
+#[cfg(unix)]
+static OWNED_SIDECAR_PROCESS_GROUP: AtomicI32 = AtomicI32::new(0);
+
 /// Maps `std::env::consts::OS`-`ARCH` to the zfb platform package name.
 /// Mirrors `@takazudo/zfb/bin/zfb.mjs` exactly (biome's pattern). The native
 /// binary lives at `<pkgDir>/zfb` (`zfb.exe` on Windows) — NEVER the
@@ -95,6 +105,8 @@ fn zfb_binary_name() -> &'static str {
 
 struct Sidecar {
     child: Child,
+    #[cfg(unix)]
+    process_group_id: i32,
 }
 
 struct ResourceWatchers {
@@ -692,12 +704,37 @@ fn spawn_zfb_dev(
         cmd.process_group(0);
     }
 
-    let child = cmd.spawn().map_err(|e| {
+    let mut child = cmd.spawn().map_err(|e| {
         log_to(log_path, &format!("spawn_zfb_dev: spawn failed: {e}"));
         format!("failed to spawn zfb dev in {}: {e}", workspace.display())
     })?;
     log_to(log_path, &format!("spawn_zfb_dev: pid={}", child.id()));
-    Ok(Sidecar { child })
+    #[cfg(unix)]
+    let process_group_id = match i32::try_from(child.id()) {
+        Ok(pid) if pid > 0 => pid,
+        _ => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("spawned zfb dev with an invalid process-group id".to_string());
+        }
+    };
+    let sidecar = Sidecar {
+        child,
+        #[cfg(unix)]
+        process_group_id,
+    };
+    #[cfg(unix)]
+    let sidecar = {
+        let mut sidecar = sidecar;
+        if let Err(existing) = claim_owned_process_group(process_group_id) {
+            kill_sidecar(&mut sidecar, log_path);
+            return Err(format!(
+                "refusing to replace live owned process group {existing} with {process_group_id}"
+            ));
+        }
+        sidecar
+    };
+    Ok(sidecar)
 }
 
 /// Tear down the live sidecar + watcher: drop the `WatchHandle` (stops the
@@ -710,10 +747,11 @@ fn spawn_zfb_dev(
 /// which previously left `zfb dev` orphaned. So the run-event handler
 /// calls this from `WindowEvent::Destroyed` AND `ExitRequested` AND `Exit`.
 ///
-/// It is idempotent: both the sidecar (`Option::take()` on the shared
-/// `Mutex<Option<Sidecar>>`) and the watcher (`Option::take()` on the
-/// `WatchHandle`) are taken out of shared state, so whichever exit event fires
-/// first does the work and any later call is a no-op.
+/// It is idempotent: the cohesive runtime is removed with `Option::take()`, so
+/// whichever exit event fires first does the work and any later call is a
+/// no-op. A process-exit hook owns the same exact PGID as a final backstop on
+/// macOS, where LaunchServices can finish application termination without
+/// giving the run-event callback a usable teardown window.
 fn teardown(
     app_handle: &AppHandle,
     resources: &Arc<Mutex<Option<ResourceRuntime>>>,
@@ -773,52 +811,200 @@ fn wait_reaped(child: &mut Child, max: Duration, step: Duration) -> bool {
     }
 }
 
+#[cfg(unix)]
+fn process_group_exists(process_group_id: i32) -> bool {
+    if process_group_id <= 0 {
+        return false;
+    }
+    // SAFETY: signal 0 performs an existence/permission check only. The
+    // negative id addresses the process group created for this exact child.
+    if unsafe { libc::kill(-process_group_id, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(unix)]
+fn claim_owned_process_group(process_group_id: i32) -> Result<(), i32> {
+    let existing = OWNED_SIDECAR_PROCESS_GROUP.load(Ordering::SeqCst);
+    if existing > 0 && !process_group_exists(existing) {
+        let _ = OWNED_SIDECAR_PROCESS_GROUP.compare_exchange(
+            existing,
+            0,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+    }
+    OWNED_SIDECAR_PROCESS_GROUP
+        .compare_exchange(0, process_group_id, Ordering::SeqCst, Ordering::SeqCst)
+        .map(|_| ())
+        .map_err(|current| current)
+}
+
+#[cfg(unix)]
+fn release_owned_process_group(process_group_id: i32) {
+    let _ = OWNED_SIDECAR_PROCESS_GROUP.compare_exchange(
+        process_group_id,
+        0,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    );
+}
+
+/// `applicationWillTerminate` can end a macOS app without Tauri dispatching a
+/// usable run event. libc's normal process-exit hook runs inside that native
+/// termination path. It has no discovery step: the only target is the PGID
+/// stored immediately after this host created it with `process_group(0)`.
+#[cfg(unix)]
+extern "C" fn stop_owned_sidecar_at_process_exit() {
+    let process_group_id = OWNED_SIDECAR_PROCESS_GROUP.swap(0, Ordering::SeqCst);
+    if process_group_id <= 0 {
+        return;
+    }
+
+    if process_group_exists(process_group_id) {
+        // SAFETY: the negative id is the exact group claimed at sidecar spawn.
+        let _ = unsafe { libc::kill(-process_group_id, libc::SIGTERM) };
+    }
+    if wait_process_group_gone_at_exit(process_group_id, Duration::from_millis(1000)) {
+        return;
+    }
+    if process_group_exists(process_group_id) {
+        // SAFETY: the group is still allocated, so the stored PGID still names
+        // this exact owned group rather than a recycled identifier.
+        let _ = unsafe { libc::kill(-process_group_id, libc::SIGKILL) };
+    }
+    let _ = wait_process_group_gone_at_exit(process_group_id, Duration::from_millis(1000));
+}
+
+#[cfg(unix)]
+fn wait_process_group_gone_at_exit(process_group_id: i32, max: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        let mut status = 0;
+        // SAFETY: the group leader is the direct child whose PID equals PGID.
+        // WNOHANG makes this a bounded reap attempt during process exit.
+        let _ = unsafe { libc::waitpid(process_group_id, &mut status, libc::WNOHANG) };
+        if !process_group_exists(process_group_id) {
+            return true;
+        }
+        if start.elapsed() >= max {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(unix)]
+fn register_sidecar_process_exit_hook() -> Result<(), String> {
+    // SAFETY: the callback has C ABI, no captures, and remains valid for the
+    // entire process lifetime.
+    let result = unsafe { libc::atexit(stop_owned_sidecar_at_process_exit) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "register sidecar process-exit hook: status {result}"
+        ))
+    }
+}
+
+/// Reap the direct child while waiting for every member of its exact process
+/// group to disappear. The group, rather than the listening port or group
+/// leader alone, is the lifecycle contract.
+#[cfg(unix)]
+fn wait_owned_process_group_gone(
+    child: &mut Child,
+    process_group_id: i32,
+    max: Duration,
+    step: Duration,
+) -> bool {
+    let start = Instant::now();
+    loop {
+        let _ = child.try_wait();
+        if !process_group_exists(process_group_id) {
+            return true;
+        }
+        if start.elapsed() >= max {
+            return false;
+        }
+        thread::sleep(step);
+    }
+}
+
 fn kill_sidecar(sidecar: &mut Sidecar, log_path: &str) {
     let pid = sidecar.child.id();
+    #[cfg(unix)]
+    let process_group_id = sidecar.process_group_id;
+    #[cfg(unix)]
+    log_to(
+        log_path,
+        &format!("kill_sidecar: pid={pid} pgid={process_group_id}"),
+    );
+    #[cfg(not(unix))]
     log_to(log_path, &format!("kill_sidecar: pid={pid}"));
 
-    // Only signal the process GROUP while the group leader (our direct child)
-    // is still alive: once it has exited, the PID/PGID can be recycled, and
-    // signalling `-pid` could then hit an unrelated group. If the child is
-    // already gone there is nothing to SIGTERM — fall through to reap it.
     #[cfg(unix)]
     {
-        let already_exited = matches!(sidecar.child.try_wait(), Ok(Some(_)));
-        if !already_exited {
-            if let Ok(pid) = i32::try_from(pid) {
-                // Negative PID → signal the whole process group.
-                signal_checked(-pid, libc::SIGTERM, log_path, "kill_sidecar");
+        // Signal the stored group even if its leader exited between readiness
+        // and teardown. A surviving group member keeps the PGID allocated, so
+        // this still targets the exact app-owned tree rather than a port owner.
+        if process_group_exists(process_group_id) {
+            signal_checked(-process_group_id, libc::SIGTERM, log_path, "kill_sidecar");
+        }
+
+        let gone_after_term = wait_owned_process_group_gone(
+            &mut sidecar.child,
+            process_group_id,
+            Duration::from_millis(1000),
+            Duration::from_millis(50),
+        );
+        if gone_after_term {
+            log_to(log_path, "kill_sidecar: group exited after SIGTERM");
+        } else {
+            log_to(log_path, "kill_sidecar: escalating group to SIGKILL");
+            if process_group_exists(process_group_id) {
+                signal_checked(-process_group_id, libc::SIGKILL, log_path, "kill_sidecar");
+            }
+            if !wait_owned_process_group_gone(
+                &mut sidecar.child,
+                process_group_id,
+                Duration::from_millis(1000),
+                Duration::from_millis(50),
+            ) {
+                log_to(
+                    log_path,
+                    &format!(
+                        "kill_sidecar: process group {process_group_id} survived SIGKILL timeout"
+                    ),
+                );
             }
         }
-    }
 
-    // Bounded poll instead of a flat 500ms sleep so we return as soon as the
-    // child is reaped (this can run on the main event loop during exit).
-    let reaped = wait_reaped(
-        &mut sidecar.child,
-        Duration::from_millis(1000),
-        Duration::from_millis(50),
-    );
-    if reaped {
-        log_to(log_path, "kill_sidecar: exited after SIGTERM");
-    } else {
-        log_to(log_path, "kill_sidecar: escalating to SIGKILL");
-    }
-
-    // The direct child can exit before one of its descendants. While any
-    // descendant remains, the app-created PGID remains allocated and cannot
-    // be reassigned, so a signal-0 check followed by SIGKILL targets only that
-    // exact owned group. This replaces the unsafe former port-owner sweep.
-    #[cfg(unix)]
-    if let Ok(pid) = i32::try_from(pid) {
-        // SAFETY: signal 0 performs an existence check only.
-        if unsafe { libc::kill(-pid, 0) } == 0 {
-            signal_checked(-pid, libc::SIGKILL, log_path, "kill_sidecar");
+        // A child that moved itself out of the group is still represented by
+        // the exact `Child` handle. Bound the final reap, then terminate only
+        // that owned PID as a defensive fallback.
+        if !wait_reaped(
+            &mut sidecar.child,
+            Duration::from_millis(250),
+            Duration::from_millis(25),
+        ) {
+            let _ = sidecar.child.kill();
+            let _ = sidecar.child.wait();
         }
+        if !process_group_exists(process_group_id) {
+            release_owned_process_group(process_group_id);
+        }
+        return;
     }
-    if !reaped {
-        #[cfg(not(unix))]
-        {
+
+    #[cfg(not(unix))]
+    {
+        if !wait_reaped(
+            &mut sidecar.child,
+            Duration::from_millis(1000),
+            Duration::from_millis(50),
+        ) {
             let _ = sidecar.child.kill();
         }
         let _ = sidecar.child.wait();
@@ -2023,6 +2209,9 @@ fn create_main_window(
 // ── Main ──────────────────────────────────────────
 
 fn main() {
+    #[cfg(unix)]
+    register_sidecar_process_exit_hook().expect("sidecar process-exit hook must register");
+
     let home = match home_dir() {
         Some(home) => PathBuf::from(home),
         None => PathBuf::from("/"),
@@ -2740,7 +2929,10 @@ mod tests {
         command.args(["-c", "sleep 30 & wait"]).process_group(0);
         let child = command.spawn().expect("spawn owned process group");
         let pgid = i32::try_from(child.id()).unwrap();
-        let mut sidecar = Sidecar { child };
+        let mut sidecar = Sidecar {
+            child,
+            process_group_id: pgid,
+        };
         kill_sidecar(&mut sidecar, "");
         // SAFETY: signal 0 only checks existence; the negative id addresses
         // precisely the process group created above.
@@ -2749,6 +2941,77 @@ mod tests {
         assert_eq!(
             std::io::Error::last_os_error().raw_os_error(),
             Some(libc::ESRCH)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owned_process_group_teardown_escalates_and_waits_for_stubborn_members() {
+        use std::os::unix::process::CommandExt;
+
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "trap '' TERM HUP; while :; do sleep 1; done"])
+            .process_group(0);
+        let child = command.spawn().expect("spawn stubborn owned process group");
+        let pgid = i32::try_from(child.id()).unwrap();
+        let mut sidecar = Sidecar {
+            child,
+            process_group_id: pgid,
+        };
+        thread::sleep(Duration::from_millis(100));
+        assert!(process_group_exists(pgid));
+        kill_sidecar(&mut sidecar, "");
+        assert!(
+            !process_group_exists(pgid),
+            "the exact app-owned process group must be absent before teardown returns"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_exit_hook_reaps_owned_group_without_a_run_event() {
+        use std::os::unix::process::CommandExt;
+
+        const HELPER_ENV: &str = "CCRESDOC_TEST_PROCESS_EXIT_HELPER";
+        const PGID_FILE_ENV: &str = "CCRESDOC_TEST_PROCESS_EXIT_PGID_FILE";
+        if std::env::var_os(HELPER_ENV).is_some() {
+            register_sidecar_process_exit_hook().unwrap();
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", "sleep 30 & wait"]).process_group(0);
+            let child = command.spawn().expect("spawn exit-hook sidecar group");
+            let pgid = i32::try_from(child.id()).unwrap();
+            claim_owned_process_group(pgid).unwrap();
+            std::fs::write(std::env::var_os(PGID_FILE_ENV).unwrap(), pgid.to_string()).unwrap();
+            std::process::exit(0);
+        }
+
+        let pgid_file =
+            std::env::temp_dir().join(format!("ccresdoc-process-exit-pgid-{}", std::process::id()));
+        let _ = std::fs::remove_file(&pgid_file);
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::process_exit_hook_reaps_owned_group_without_a_run_event",
+                "--nocapture",
+            ])
+            .env(HELPER_ENV, "1")
+            .env(PGID_FILE_ENV, &pgid_file)
+            .output()
+            .expect("run process-exit hook helper");
+        assert!(
+            output.status.success(),
+            "helper failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let pgid = std::fs::read_to_string(&pgid_file)
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        let _ = std::fs::remove_file(&pgid_file);
+        assert!(
+            !process_group_exists(pgid),
+            "the process-exit hook must remove the exact owned group"
         );
     }
 
