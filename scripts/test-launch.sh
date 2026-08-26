@@ -327,8 +327,21 @@ enabled_source_has_entries() {
   jq -e --arg prefix "$prefix" 'any(.[]; (.id | startswith($prefix)))' "$INDEX_FILE" >/dev/null
 }
 
+wait_for_sample_url() {
+  local sample_url="$1" sample_http="" attempt
+  for attempt in $(seq 1 20); do
+    sample_http="$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$EFFECTIVE_PORT$sample_url" 2>/dev/null || true)"
+    if [[ "$sample_http" == "200" ]]; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "error: sampled search URL did not reach HTTP 200 after 20 attempts (last HTTP $sample_http): $sample_url" >&2
+  return 1
+}
+
 check_index_contract() {
-  local phase="$1" http entry_count bytes sample_url sample_http
+  local phase="$1" http entry_count bytes sample_url
   [[ "$EFFECTIVE_PORT" =~ ^[1-9][0-9]*$ ]] || return 1
   http="$(curl -sS --max-time 3 -o "$INDEX_FILE" -w '%{http_code}' "http://127.0.0.1:$EFFECTIVE_PORT/docs/search-index.json" 2>/dev/null || true)"
   if [[ "$http" != "200" ]]; then
@@ -356,9 +369,7 @@ check_index_contract() {
       /docs/*) ;;
       *) echo "error: sampled search URL is outside /docs/: $sample_url" >&2; return 1 ;;
     esac
-    sample_http="$(curl -sS --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$EFFECTIVE_PORT$sample_url" 2>/dev/null || true)"
-    if [[ "$sample_http" != "200" ]]; then
-      echo "error: sampled search URL returned HTTP $sample_http: $sample_url" >&2
+    if ! wait_for_sample_url "$sample_url"; then
       return 1
     fi
   done < <(jq -r '.[0:3] | .[].url' "$INDEX_FILE")
