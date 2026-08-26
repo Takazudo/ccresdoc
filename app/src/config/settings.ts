@@ -75,6 +75,7 @@ export const settings = {
     { label: "Codex", path: "/docs/codex", categoryMatch: "codex", versioned: false },
   ],
   headerRightItems: [
+    { type: "component", component: "search" },
     { type: "component", component: "ccresdoc-settings" },
     { type: "component", component: "theme-toggle" },
   ] as HeaderRightItem[],
