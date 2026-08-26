@@ -40,8 +40,7 @@ on run argv
 
       -- The result click must close the modal before the next native shortcut.
       -- wait_for_navigation includes the closed-dialog assertion.
-      keystroke "f" using command down
-      set findInput to my wait_for_find_input(front window, 150)
+      set findInput to my open_find_bar_with_retry(front window)
       if findInput is missing value then error "Command-F did not expose the Find in page field in Accessibility"
       set controlsState to my wait_for_find_controls(front window, 100)
       if controlsState is "" then error "Find in page controls were not all visible in Accessibility"
@@ -315,6 +314,24 @@ on wait_for_find_input(windowElement, attempts)
   end repeat
   return missing value
 end wait_for_find_input
+
+on open_find_bar_with_retry(windowElement)
+  tell application "System Events"
+    tell process "CCResDoc"
+      -- A post-HMR FindInPage remount can briefly lack its document listener.
+      -- Check before every attempt so Cmd-F is never sent after observing an
+      -- already-open field (which would toggle the successful bar closed).
+      repeat with attempt from 1 to 3
+        set alreadyOpen to my find_in_page_input(windowElement)
+        if alreadyOpen is not missing value then return alreadyOpen
+        keystroke "f" using command down
+        set candidate to my wait_for_find_input(windowElement, 40)
+        if candidate is not missing value then return candidate
+      end repeat
+    end tell
+  end tell
+  return missing value
+end open_find_bar_with_retry
 
 on wait_for_find_controls(windowElement, attempts)
   repeat with attempt from 1 to attempts
