@@ -73,6 +73,10 @@ const EPHEMERAL_WEBVIEW_ENV: &str = "CCRESDOC_EPHEMERAL_WEBVIEW";
 /// process scan.
 #[cfg(unix)]
 static OWNED_SIDECAR_PROCESS_GROUP: AtomicI32 = AtomicI32::new(0);
+#[cfg(unix)]
+const SIDECAR_OWNERSHIP_EXITING: i32 = -1;
+#[cfg(unix)]
+static SIDECAR_OWNERSHIP_TRANSITION: Mutex<()> = Mutex::new(());
 
 /// Maps `std::env::consts::OS`-`ARCH` to the zfb platform package name.
 /// Mirrors `@takazudo/zfb/bin/zfb.mjs` exactly (biome's pattern). The native
@@ -704,6 +708,18 @@ fn spawn_zfb_dev(
         cmd.process_group(0);
     }
 
+    // Serialize the tiny spawn-to-PGID-publication window with the process-exit
+    // hook. If exit wins, no new child is created; if spawn wins, the hook waits
+    // until the exact new PGID has been published and then consumes it.
+    #[cfg(unix)]
+    let _ownership_transition = SIDECAR_OWNERSHIP_TRANSITION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    #[cfg(unix)]
+    if OWNED_SIDECAR_PROCESS_GROUP.load(Ordering::SeqCst) == SIDECAR_OWNERSHIP_EXITING {
+        return Err("refusing to start zfb dev while process exit is in progress".to_string());
+    }
+
     let mut child = cmd.spawn().map_err(|e| {
         log_to(log_path, &format!("spawn_zfb_dev: spawn failed: {e}"));
         format!("failed to spawn zfb dev in {}: {e}", workspace.display())
@@ -728,9 +744,13 @@ fn spawn_zfb_dev(
         let mut sidecar = sidecar;
         if let Err(existing) = claim_owned_process_group(process_group_id) {
             kill_sidecar(&mut sidecar, log_path);
-            return Err(format!(
-                "refusing to replace live owned process group {existing} with {process_group_id}"
-            ));
+            return Err(if existing == SIDECAR_OWNERSHIP_EXITING {
+                "refusing to start zfb dev while process exit is in progress".to_string()
+            } else {
+                format!(
+                    "refusing to replace live owned process group {existing} with {process_group_id}"
+                )
+            });
         }
         sidecar
     };
@@ -838,7 +858,6 @@ fn claim_owned_process_group(process_group_id: i32) -> Result<(), i32> {
     OWNED_SIDECAR_PROCESS_GROUP
         .compare_exchange(0, process_group_id, Ordering::SeqCst, Ordering::SeqCst)
         .map(|_| ())
-        .map_err(|current| current)
 }
 
 #[cfg(unix)]
@@ -857,7 +876,14 @@ fn release_owned_process_group(process_group_id: i32) {
 /// stored immediately after this host created it with `process_group(0)`.
 #[cfg(unix)]
 extern "C" fn stop_owned_sidecar_at_process_exit() {
-    let process_group_id = OWNED_SIDECAR_PROCESS_GROUP.swap(0, Ordering::SeqCst);
+    let _ownership_transition = SIDECAR_OWNERSHIP_TRANSITION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Keep the slot terminal while exit handlers run. A late background launch
+    // may still reach `spawn` when AppKit bypassed Tauri's shutdown flag; its
+    // subsequent claim must fail so that exact new child is torn down too.
+    let process_group_id =
+        OWNED_SIDECAR_PROCESS_GROUP.swap(SIDECAR_OWNERSHIP_EXITING, Ordering::SeqCst);
     if process_group_id <= 0 {
         return;
     }
@@ -995,7 +1021,6 @@ fn kill_sidecar(sidecar: &mut Sidecar, log_path: &str) {
         if !process_group_exists(process_group_id) {
             release_owned_process_group(process_group_id);
         }
-        return;
     }
 
     #[cfg(not(unix))]
