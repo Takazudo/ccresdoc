@@ -34,9 +34,12 @@ describe("CCResDoc browser adapter", () => {
 
   it("waits for Tauri bootstrap, skips native-owned keys, and deduplicates native envelopes", async () => {
     const callbacks = new Map<string, (event: { payload: unknown }) => void>();
-    const search = document.createElement("button");
-    search.dataset.openSearch = "true";
-    const click = vi.fn(); search.addEventListener("click", click); document.body.append(search);
+    const search = document.createElement("site-search");
+    const command = vi.fn();
+    const findCommand = vi.fn();
+    document.addEventListener("zudo-doc:search-command", command);
+    document.addEventListener("zudo-doc:find-in-page-command", findCommand);
+    document.body.append(search);
     const bootstrap: BrowserBootstrap = {
       shortcutEntries: [{ commandId: "search-documentation", bindings: ["Mod+K"] }],
       nativeOwnedBindings: [{ commandId: "search-documentation", binding: "Mod+K" }],
@@ -62,7 +65,7 @@ describe("CCResDoc browser adapter", () => {
     const key = new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true, cancelable: true });
     document.body.dispatchEvent(key);
     expect(key.defaultPrevented).toBe(false);
-    expect(click).not.toHaveBeenCalled();
+    expect(command).not.toHaveBeenCalled();
 
     const envelope: BrowserCommandEnvelope = {
       commandId: "search-documentation", origin: "native_menu", invocationId: 5,
@@ -71,7 +74,17 @@ describe("CCResDoc browser adapter", () => {
     callbacks.get("ccresdoc://browser-command")?.({ payload: envelope });
     callbacks.get("ccresdoc://browser-command")?.({ payload: envelope });
     await flush();
-    expect(click).toHaveBeenCalledOnce();
+    expect(command).toHaveBeenCalledOnce();
+    expect((command.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({ action: "open", refresh: true });
+    callbacks.get("ccresdoc://browser-command")?.({ payload: {
+      commandId: "find-in-page", origin: "native_menu", invocationId: 6,
+      runtimeGeneration: 42, hostHandled: false,
+    } satisfies BrowserCommandEnvelope });
+    await flush();
+    expect(findCommand).toHaveBeenCalledOnce();
+    expect((findCommand.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({ action: "open" });
+    document.removeEventListener("zudo-doc:search-command", command);
+    document.removeEventListener("zudo-doc:find-in-page-command", findCommand);
     stop();
   });
 

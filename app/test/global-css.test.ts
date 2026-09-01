@@ -60,6 +60,11 @@ describe("package CSS foundation", () => {
     expect(css).toContain("--ccresdoc-toolbar-control-size: 2.75rem");
     expect(css).toContain("@media (hover: hover)");
     expect(css).toContain("@media (prefers-reduced-motion: no-preference)");
+    expect(css).toContain("[data-find-in-page-bar]");
+    expect(css).toContain(".find-in-page-control:focus-visible");
+    expect(css).toContain("@media (max-width: 30rem)");
+    expect(css).toMatch(/@media \(pointer: coarse\)[\s\S]*\.find-in-page-control/);
+    expect(css).toMatch(/@media \(forced-colors: active\)[\s\S]*\.find-in-page-control/);
     expect(css).not.toMatch(/\.ccresdoc-browser-toolbar__path[^}]*max-inline-size/s);
   });
 });
