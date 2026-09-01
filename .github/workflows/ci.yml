@@ -18,7 +18,7 @@ jobs:
   frontend:
     name: Frontend published-toolchain gates
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,6 +38,9 @@ jobs:
       - name: Release flow contract tests
         run: pnpm run test:release-contract && pnpm run test:release-publication && pnpm run test:release-flow
 
+      - name: Browser navigation repository contracts
+        run: pnpm run test:browser-navigation-contract
+
       - name: Install app dependencies (frozen)
         run: pnpm --dir app install --frozen-lockfile
 
@@ -55,6 +58,13 @@ jobs:
 
       - name: Settings Node tests
         run: pnpm --dir app run test:settings
+
+      - name: Install pinned Playwright Chromium
+        run: pnpm --dir app exec playwright install --with-deps chromium
+
+      - name: Browser navigation actual-key confirmation
+        timeout-minutes: 10
+        run: pnpm run test:browser-navigation
 
       - name: Native zfb build
         run: pnpm --dir app exec zfb build
