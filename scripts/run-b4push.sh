@@ -65,6 +65,7 @@ if [ "$INSTALL_OK" -eq 1 ]; then
   if (cd "$ROOT_DIR/app" && pnpm run typecheck); then pass "strict TypeScript passed"; else fail "strict TypeScript"; fi
   if (cd "$ROOT_DIR/app" && pnpm run check:zfb); then pass "zfb check passed"; else fail "zfb check"; fi
   if (cd "$ROOT_DIR/app" && pnpm run test:run); then pass "frontend tests passed"; else fail "frontend tests"; fi
+  if (cd "$ROOT_DIR/app" && pnpm run test:settings); then pass "Settings Node tests passed"; else fail "Settings Node tests"; fi
 else
   echo "⏭ skipping frontend gates (frozen install failed)"
   FAILURES+=("frontend gates — skipped: frozen install failed")

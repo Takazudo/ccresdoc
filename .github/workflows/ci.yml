@@ -53,6 +53,9 @@ jobs:
       - name: Frontend tests
         run: pnpm --dir app run test:run
 
+      - name: Settings Node tests
+        run: pnpm --dir app run test:settings
+
       - name: Native zfb build
         run: pnpm --dir app exec zfb build
 

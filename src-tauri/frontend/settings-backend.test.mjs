@@ -13,6 +13,7 @@ test("adapter uses exact commands and camelCase arguments", async () => {
   await backend.saveAndApply(draft, "sha256:one");
   await backend.rebaseStale(draft, new Set(["claudeResources", "codexResources", "claudeDir", "codexDir"]), "sha256:stale");
   await backend.replaceMalformed(draft, "sha256:bad");
+  await backend.setShortcutCaptureActive(true);
   assert.deepEqual(calls, [
     { command: "validate_settings_draft", args: { draft: { schema_version: 1 } } },
     { command: "preview_appearance", args: { mode: "dark", themePack: "default" } },
@@ -20,6 +21,7 @@ test("adapter uses exact commands and camelCase arguments", async () => {
     { command: "save_and_apply_settings", args: { draft: { schema_version: 1 }, expectedRevision: "sha256:one" } },
     { command: "rebase_stale_settings", args: { draft: { schema_version: 1 }, dirtyFields: ["claude_resources", "codex_resources", "claude_dir", "codex_dir"], staleRevision: "sha256:stale" } },
     { command: "replace_malformed_settings", args: { draft: { schema_version: 1 }, expectedRevision: "sha256:bad" } },
+    { command: "set_shortcut_capture_active", args: { active: true } },
   ]);
 });
 

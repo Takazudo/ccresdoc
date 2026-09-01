@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { applyDirectorySelection, DEFAULT_DRAFT, FIELDS, resourcePathDisabled } from "./settings-shell.mjs";
+import { applyDirectorySelection, cloneDraft, DEFAULT_DRAFT, displayShortcutBinding, FIELDS, portableBindingFromKeyEvent, resourcePathDisabled } from "./settings-shell.mjs";
 
 test("resource defaults and dirty fields match the additive schema-v1 contract", () => {
   assert.deepEqual(DEFAULT_DRAFT, {
@@ -14,8 +14,24 @@ test("resource defaults and dirty fields match the additive schema-v1 contract",
     themePack: "default",
     preferredPort: 4892,
     fallbackToFreePort: true,
+    shortcuts: [],
   });
   assert.deepEqual(FIELDS.slice(0, 4), ["claudeResources", "codexResources", "claudeDir", "codexDir"]);
+  assert.equal(FIELDS.at(-1), "shortcuts");
+});
+
+test("shortcut drafts deep-clone binding arrays and key events use neutral Mod storage", () => {
+  const source = { ...DEFAULT_DRAFT, shortcuts: [{ commandId: "back", bindings: ["Mod+["] }] };
+  const draft = cloneDraft(source);
+  draft.shortcuts[0].bindings.push("Mod+B");
+  assert.deepEqual(source.shortcuts[0].bindings, ["Mod+["]);
+  assert.deepEqual(portableBindingFromKeyEvent({ key: "b", ctrlKey: true }), { kind: "binding", binding: "Mod+B" });
+  assert.deepEqual(portableBindingFromKeyEvent({ key: "q" }), { kind: "invalid", message: "Bare printable keys are not supported. Add Command or Control." });
+  assert.deepEqual(portableBindingFromKeyEvent({ key: "Shift", shiftKey: true }), { kind: "modifier" });
+  assert.deepEqual(portableBindingFromKeyEvent({ key: "Escape" }), { kind: "cancel" });
+  assert.deepEqual(portableBindingFromKeyEvent({ key: "+", ctrlKey: true, shiftKey: true }), { kind: "binding", binding: "Mod+Shift+=" });
+  assert.equal(displayShortcutBinding("Mod+Shift+K", { macos: true }), "⌘⇧K");
+  assert.equal(displayShortcutBinding("Mod+Shift+K"), "Control+Shift+K");
 });
 
 test("directory picker updates only its selected source and preserves cancellation", () => {
@@ -46,4 +62,6 @@ test("resource controls remain native, labelled, and independently addressable",
   }
   assert.match(html, /id="pick-claude-source"/);
   assert.match(html, /id="pick-codex-source"/);
+  assert.match(html, /id="shortcut-groups"/);
+  assert.match(html, /id="shortcut-live"[^>]+aria-live="polite"/);
 });

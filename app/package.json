@@ -25,9 +25,10 @@
     "check:zfb": "zfb check",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:settings": "node --test ../src-tauri/frontend/settings-backend.test.mjs ../src-tauri/frontend/settings-shell.test.mjs",
     "test:theme-packs": "node --test scripts/sync-theme-packs.test.mjs",
     "precheck": "pnpm run sync:theme-packs",
-    "check": "pnpm run validate:dependencies && pnpm run validate:theme-packs && pnpm run typecheck && pnpm run check:zfb && pnpm run test:run && pnpm run test:theme-packs"
+    "check": "pnpm run validate:dependencies && pnpm run validate:theme-packs && pnpm run typecheck && pnpm run check:zfb && pnpm run test:run && pnpm run test:settings && pnpm run test:theme-packs"
   },
   "dependencies": {
     "@takazudo/zfb": "2.10.1",
