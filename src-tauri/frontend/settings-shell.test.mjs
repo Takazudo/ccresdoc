@@ -30,6 +30,7 @@ test("shortcut drafts deep-clone binding arrays and key events use neutral Mod s
   assert.deepEqual(portableBindingFromKeyEvent({ key: "Shift", shiftKey: true }), { kind: "modifier" });
   assert.deepEqual(portableBindingFromKeyEvent({ key: "Escape" }), { kind: "cancel" });
   assert.deepEqual(portableBindingFromKeyEvent({ key: "+", ctrlKey: true, shiftKey: true }), { kind: "binding", binding: "Mod+Shift+=" });
+  assert.deepEqual(portableBindingFromKeyEvent({ key: "k", ctrlKey: true, altKey: true, getModifierState: (name) => name === "AltGraph" }), { kind: "invalid", message: "AltGraph cannot be used as an app shortcut." });
   assert.equal(displayShortcutBinding("Mod+Shift+K", { macos: true }), "⌘⇧K");
   assert.equal(displayShortcutBinding("Mod+Shift+K"), "Control+Shift+K");
 });

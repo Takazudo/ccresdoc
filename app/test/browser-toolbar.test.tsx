@@ -50,6 +50,14 @@ describe("browser toolbar", () => {
     expect(root.querySelector<HTMLButtonElement>("[data-browser-command='forward']")?.disabled).toBe(true);
     expect(root.querySelector<HTMLButtonElement>("[data-browser-command='reload-documentation']")?.disabled).toBe(true);
     expect(root.querySelector("[data-browser-command='more']")?.getAttribute("aria-haspopup")).toBe("menu");
+    expect([...root.querySelectorAll<HTMLElement>("[role='menuitem']")].map(
+      (item) => item.dataset.browserCommand,
+    )).toEqual([
+      "search-documentation",
+      "copy-page-path",
+      "open-in-default-browser",
+      "settings",
+    ]);
   });
 
   it("opens More with ArrowDown, moves focus, and restores it on Escape", async () => {

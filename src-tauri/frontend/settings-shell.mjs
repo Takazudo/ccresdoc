@@ -16,6 +16,7 @@ export function portableBindingFromKeyEvent(event, { macos = false } = {}) {
   const rawKey = KEY_NAMES[event.key] ?? event.key;
   if (!rawKey || MODIFIER_KEYS.has(rawKey) || event.isComposing) return { kind: "modifier" };
   if (rawKey === "Escape") return { kind: "cancel" };
+  if (event.getModifierState?.("AltGraph")) return { kind: "invalid", message: "AltGraph cannot be used as an app shortcut." };
   if (String(rawKey).length > 1 && String(rawKey).includes(" ") && rawKey !== "Space") return { kind: "invalid", message: "Shortcut chords are not supported. Press one modifier-and-key shortcut." };
   let key = event.shiftKey && SHIFTED_PRINTABLE_KEYS[rawKey] ? SHIFTED_PRINTABLE_KEYS[rawKey] : rawKey;
   key = key.length === 1 && /[a-z]/i.test(key) ? key.toUpperCase() : key;
@@ -269,7 +270,7 @@ export function createSettingsEditor({ document, window, backend }) {
   el("reveal-config").addEventListener("click", () => backendAction(() => backend.revealConfigFile()));
   el("cancel-settings").addEventListener("click", () => { void cancel(); });
   el("reload-settings").addEventListener("click", () => load({ focus: true }));
-  document.addEventListener("keydown", (event) => { if (state.capture) { void captureKeydown(event); return; } if (event.key === "Escape" && !state.busy) { event.preventDefault(); void cancel(); } }, true); window.addEventListener("focus", () => { if (state.snapshot && !state.busy && !state.capture) load({ detectConflict: true }); }); window.addEventListener("ccresdoc-settings-native-close", () => { void endCapture({ focus: false }); discardDraft(); void backend.clearAppearancePreview().catch(() => {}); }); window.addEventListener("pagehide", () => { void endCapture({ focus: false }); }); window.addEventListener("beforeunload", () => { void endCapture({ focus: false }); }); window.addEventListener("error", () => { void endCapture({ focus: false }); });
+  document.addEventListener("keydown", (event) => { if (state.capture) { void captureKeydown(event); return; } if (event.key === "Escape" && !state.busy) { event.preventDefault(); void cancel(); } }, true); window.addEventListener("focus", () => { if (state.snapshot && !state.busy && !state.capture) load({ detectConflict: true }); }); window.addEventListener("blur", () => { void endCapture({ focus: false, message: "Shortcut capture cancelled when Settings lost focus." }); }); window.addEventListener("ccresdoc-settings-native-close", () => { void endCapture({ focus: false }); discardDraft(); void backend.clearAppearancePreview().catch(() => {}); }); window.addEventListener("pagehide", () => { void endCapture({ focus: false }); }); window.addEventListener("beforeunload", () => { void endCapture({ focus: false }); }); window.addEventListener("error", () => { void endCapture({ focus: false }); });
   return Object.freeze({ state, load, submit, reapply, replaceMalformed, cancel, beginCapture, endCapture, captureKeydown });
 }
 

@@ -27,6 +27,17 @@ const EDITING_SELECTOR = [
   "[data-search-input]",
   "input[aria-label='Find in page']",
 ].join(",");
+const NONINTERACTIVE_EDITING_ANCESTOR = [
+  "dialog:not([open])",
+  "[hidden]",
+  "[inert]",
+  "[aria-hidden='true']",
+].join(",");
+const SHIFTED_PRINTABLE_KEYS: Record<string, string> = {
+  "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7", "*": "8",
+  "(": "9", ")": "0", _: "-", "+": "=", "{": "[", "}": "]", "|": "\\", ":": ";",
+  "\"": "'", "<": ",", ">": ".", "?": "/", "~": "`",
+};
 
 type Unlisten = () => void;
 type TauriRoot = Window & {
@@ -83,24 +94,47 @@ function configuredBrowserShortcuts(): ShortcutEntry[] {
   }));
 }
 
-function normalizedBinding(binding: string): string {
-  return binding.split("+").map((part) => part.trim().toLowerCase()).sort().join("+");
+function normalizedBinding(binding: string, macos: boolean): string {
+  return binding
+    .split("+")
+    .map((part) => part.trim().toLowerCase())
+    .map((part) => !macos && part === "ctrl" ? "mod" : part)
+    .sort()
+    .join("+");
 }
 
-function eventBinding(event: KeyboardEvent): string {
+function macOSPlatform(root: Window): boolean {
+  const navigator = root.navigator as Navigator & { userAgentData?: { platform?: string } };
+  return /Mac|iPhone|iPad|iPod/i.test(navigator.userAgentData?.platform ?? navigator.platform ?? "");
+}
+
+export function keyboardEventBinding(event: KeyboardEvent, macos: boolean): string {
   const parts: string[] = [];
-  if (event.metaKey || event.ctrlKey) parts.push("mod");
+  if (macos) {
+    if (event.metaKey) parts.push("mod");
+    if (event.ctrlKey) parts.push("ctrl");
+  } else {
+    if (event.ctrlKey) parts.push("mod");
+    // The Windows/Super key is not the portable Mod key off macOS. Retain an
+    // unconfigurable marker so it cannot accidentally trigger another binding.
+    if (event.metaKey) parts.push("meta");
+  }
   if (event.altKey) parts.push("alt");
   if (event.shiftKey) parts.push("shift");
-  const aliases: Record<string, string> = { "[": "[", "]": "]", arrowleft: "arrowleft", arrowright: "arrowright" };
-  parts.push(aliases[event.key.toLowerCase()] ?? event.key.toLowerCase());
+  if (event.getModifierState?.("AltGraph")) parts.push("altgraph");
+  const rawKey = event.shiftKey ? SHIFTED_PRINTABLE_KEYS[event.key] ?? event.key : event.key;
+  parts.push((rawKey === " " ? "Space" : rawKey).toLowerCase());
   return parts.sort().join("+");
 }
 
 function editingTarget(event: KeyboardEvent): boolean {
   const target = event.target instanceof Element ? event.target : null;
   const active = document.activeElement instanceof Element ? document.activeElement : null;
-  return Boolean(target?.closest(EDITING_SELECTOR) || active?.closest(EDITING_SELECTOR));
+  const isInteractiveEditor = (element: Element | null) => {
+    const editor = element?.closest(EDITING_SELECTOR);
+    return Boolean(editor && !editor.closest(NONINTERACTIVE_EDITING_ANCESTOR));
+  };
+  return isInteractiveEditor(target) || isInteractiveEditor(active);
 }
 
 export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
@@ -113,8 +147,10 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
   private started = false;
   private stopCallbacks: Unlisten[] = [];
   private snapshot: BrowserToolbarSnapshot;
+  private readonly macos: boolean;
 
   constructor(private readonly root: TauriRoot = window as TauriRoot) {
+    this.macos = macOSPlatform(root);
     const mode = root.__TAURI__?.core?.invoke ? "tauri" : "browser";
     this.snapshot = {
       title: document.title,
@@ -192,11 +228,11 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
     switch (command) {
       case "back":
         if (!this.historyController?.traverse(-1)) return false;
-        this.refresh(false);
+        this.refresh();
         return true;
       case "forward":
         if (!this.historyController?.traverse(1)) return false;
-        this.refresh(false);
+        this.refresh();
         return true;
       case "home":
         await navigate("/docs/");
@@ -255,7 +291,9 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
     if (generationChanged) this.seenNativeInvocations.clear();
     this.runtimeGeneration = bootstrap.runtimeGeneration;
     this.shortcutEntries = bootstrap.shortcutEntries;
-    this.nativeOwned = new Set(bootstrap.nativeOwnedBindings.map((item) => normalizedBinding(item.binding)));
+    this.nativeOwned = new Set(
+      bootstrap.nativeOwnedBindings.map((item) => normalizedBinding(item.binding, this.macos)),
+    );
     const availability = { ...defaultAvailability("tauri") };
     availability["reload-documentation"] = bootstrap.hostCapabilities.reloadDocumentation;
     availability["open-in-default-browser"] = bootstrap.hostCapabilities.openInDefaultBrowser;
@@ -274,7 +312,9 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
       const oldest = this.seenNativeInvocations.values().next().value;
       if (oldest !== undefined) this.seenNativeInvocations.delete(oldest);
     }
-    void this.execute({ ...envelope, origin: "native_menu" });
+    void this.execute({ ...envelope, origin: "native_menu" }).catch((error) => {
+      console.error(`browser command ${envelope.commandId} failed:`, error);
+    });
   }
 
   private establishHistory(scope: string): void {
@@ -316,17 +356,18 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
 
   private handleKeyDown = (event: KeyboardEvent): void => {
     if (this.snapshot.bootstrap !== "ready" || editingTarget(event) || event.defaultPrevented) return;
-    const binding = eventBinding(event);
+    const binding = keyboardEventBinding(event, this.macos);
     if (this.nativeOwned.has(binding)) return;
     const entry = this.shortcutEntries.find((candidate) =>
-      candidate.bindings.some((item) => normalizedBinding(item) === binding));
+      candidate.bindings.some((item) => normalizedBinding(item, this.macos) === binding));
     if (!entry || !this.snapshot.availability[entry.commandId]) return;
     // Let the ordinary browser own its native Find UI. Toolbar activation has
     // a window.find fallback because browsers do not expose that UI directly.
     if (this.snapshot.mode === "browser" && entry.commandId === "find-in-page") return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    void this.execute({ commandId: entry.commandId, origin: "keyboard", invocationId: `key:${Date.now()}` });
+    void this.execute({ commandId: entry.commandId, origin: "keyboard", invocationId: `key:${Date.now()}` })
+      .catch((error) => console.error(`browser command ${entry.commandId} failed:`, error));
   };
 
   private async invokeHost(command: string): Promise<boolean> {
@@ -337,18 +378,28 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
   }
 
   private async copyPath(): Promise<void> {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(this.snapshot.stablePath);
-      return;
+    if (this.root.navigator.clipboard?.writeText) {
+      try {
+        await this.root.navigator.clipboard.writeText(this.snapshot.stablePath);
+        return;
+      } catch {
+        // Permission can be denied in an ordinary browser; fall through to
+        // selection-based copying before surfacing a command failure.
+      }
     }
-    const area = document.createElement("textarea");
+    const area = this.root.document.createElement("textarea");
     area.value = this.snapshot.stablePath;
     area.style.position = "fixed";
     area.style.opacity = "0";
-    document.body.append(area);
+    this.root.document.body.append(area);
     area.select();
-    document.execCommand("copy");
-    area.remove();
+    let copied = false;
+    try {
+      copied = this.root.document.execCommand("copy");
+    } finally {
+      area.remove();
+    }
+    if (!copied) throw new Error("the documentation path could not be copied");
   }
 }
 

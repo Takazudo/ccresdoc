@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CCResDocBrowserAdapter } from "../src/browser-chrome/adapter";
+import { CCResDocBrowserAdapter, keyboardEventBinding } from "../src/browser-chrome/adapter";
 import type { BrowserBootstrap, BrowserCommandEnvelope } from "../src/browser-chrome/types";
 
 type TestWindow = Window & {
@@ -21,6 +21,14 @@ afterEach(() => {
 });
 
 describe("CCResDoc browser adapter", () => {
+  it("maps portable Mod, macOS Ctrl, and shifted punctuation without conflating platform keys", () => {
+    expect(keyboardEventBinding(new KeyboardEvent("keydown", { key: "k", metaKey: true }), true)).toBe("k+mod");
+    expect(keyboardEventBinding(new KeyboardEvent("keydown", { key: "k", ctrlKey: true }), true)).toBe("ctrl+k");
+    expect(keyboardEventBinding(new KeyboardEvent("keydown", { key: "{", metaKey: true, shiftKey: true }), true)).toBe("[+mod+shift");
+    expect(keyboardEventBinding(new KeyboardEvent("keydown", { key: "k", metaKey: true }), false)).toBe("k+meta");
+    expect(keyboardEventBinding(new KeyboardEvent("keydown", { key: "+", ctrlKey: true, shiftKey: true }), false)).toBe("=+mod+shift");
+  });
+
   it("uses manifest defaults in browser mode without enabling host commands", () => {
     history.replaceState({}, "", "/docs/");
     const adapter = new CCResDocBrowserAdapter(testWindow);
@@ -62,7 +70,7 @@ describe("CCResDoc browser adapter", () => {
     expect(adapter.getSnapshot()).toMatchObject({ mode: "tauri", bootstrap: "ready" });
     expect(adapter.getSnapshot().availability.settings).toBe(true);
 
-    const key = new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true, cancelable: true });
+    const key = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true });
     document.body.dispatchEvent(key);
     expect(key.defaultPrevented).toBe(false);
     expect(command).not.toHaveBeenCalled();
@@ -85,6 +93,68 @@ describe("CCResDoc browser adapter", () => {
     expect((findCommand.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({ action: "open" });
     document.removeEventListener("zudo-doc:search-command", command);
     document.removeEventListener("zudo-doc:find-in-page-command", findCommand);
+    stop();
+  });
+
+  it("treats explicit Ctrl as Mod off macOS when the page owns the fallback", async () => {
+    const search = document.createElement("site-search");
+    const command = vi.fn();
+    document.addEventListener("zudo-doc:search-command", command);
+    document.body.append(search);
+    const bootstrap: BrowserBootstrap = {
+      shortcutEntries: [{ commandId: "search-documentation", bindings: ["Ctrl+K"] }],
+      nativeOwnedBindings: [],
+      hostCapabilities: { reloadDocumentation: true, openInDefaultBrowser: true },
+      runtimeGeneration: 43,
+    };
+    testWindow.__TAURI__ = {
+      core: { invoke: vi.fn(async (name: string) => name === "get_browser_bootstrap" ? bootstrap : undefined) as any },
+      event: { listen: async () => () => undefined },
+    };
+
+    const adapter = new CCResDocBrowserAdapter(testWindow);
+    const stop = adapter.start();
+    await flush();
+    const key = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(key);
+    await flush();
+    expect(key.defaultPrevented).toBe(true);
+    expect(command).toHaveBeenCalledOnce();
+
+    document.removeEventListener("zudo-doc:search-command", command);
+    stop();
+  });
+
+  it("does not let an editor inside a closed dialog suppress global shortcuts", async () => {
+    const search = document.createElement("site-search");
+    const dialog = document.createElement("dialog");
+    const input = document.createElement("input");
+    input.dataset.searchInput = "";
+    dialog.append(input);
+    document.body.append(search, dialog);
+    const command = vi.fn();
+    document.addEventListener("zudo-doc:search-command", command);
+    const bootstrap: BrowserBootstrap = {
+      shortcutEntries: [{ commandId: "search-documentation", bindings: ["Mod+K"] }],
+      nativeOwnedBindings: [],
+      hostCapabilities: { reloadDocumentation: true, openInDefaultBrowser: true },
+      runtimeGeneration: 44,
+    };
+    testWindow.__TAURI__ = {
+      core: { invoke: vi.fn(async (name: string) => name === "get_browser_bootstrap" ? bootstrap : undefined) as any },
+      event: { listen: async () => () => undefined },
+    };
+
+    const adapter = new CCResDocBrowserAdapter(testWindow);
+    const stop = adapter.start();
+    await flush();
+    const key = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true });
+    input.dispatchEvent(key);
+    await flush();
+    expect(key.defaultPrevented).toBe(true);
+    expect(command).toHaveBeenCalledOnce();
+
+    document.removeEventListener("zudo-doc:search-command", command);
     stop();
   });
 

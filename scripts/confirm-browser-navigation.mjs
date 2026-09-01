@@ -21,7 +21,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,9 @@ const appRequire = createRequire(join(appRoot, "package.json"));
 const semanticReadyTimeoutMs = 300_000;
 const browserTimeoutMs = 30_000;
 const ioTimeoutMs = 2_000;
+const artifactDir = process.env.CCRESDOC_BROWSER_ARTIFACT_DIR
+  ? resolve(process.env.CCRESDOC_BROWSER_ARTIFACT_DIR)
+  : undefined;
 let activeServerChild;
 let activeBrowser;
 let activeCleanupPromise;
@@ -40,6 +43,7 @@ const appRoutes = {
   claude: "/docs/claude/",
   codex: "/docs/codex/",
   missing: "/docs/browser-navigation-missing/",
+  notFound: "/404.html",
 };
 
 const nativePackages = {
@@ -60,7 +64,10 @@ navigation confirmation. Chromium must be installed once with:
 Options:
   --headed  Show Chromium while running the confirmation
   --contracts  Run repository/runtime contract checks without starting zfb or Chromium
-  --help    Show this help`);
+  --help    Show this help
+
+Set CCRESDOC_BROWSER_ARTIFACT_DIR to capture desktop, narrow, and narrow-Find
+review screenshots without changing the pass/fail contract.`);
 }
 
 function parseOptions() {
@@ -465,6 +472,12 @@ function command(page, commandId) {
   return toolbar(page).locator(`[data-browser-command="${commandId}"]`).first();
 }
 
+async function waitForCommandEnabled(page, commandId) {
+  await page.waitForFunction((id) => (
+    document.querySelector(`[data-browser-command="${id}"]`)?.disabled === false
+  ), commandId, { timeout: browserTimeoutMs });
+}
+
 function menu(page) {
   return toolbar(page).locator('[role="menu"]');
 }
@@ -521,14 +534,47 @@ async function openPatchedFind(page, byKeyboard = false) {
   if (byKeyboard) await page.keyboard.press("Control+F");
   else await command(page, "find-in-page").click();
   await page.waitForFunction(() => document.querySelector("[data-find-in-page-bar]") !== null, undefined, { timeout: browserTimeoutMs });
+  await page.waitForFunction(() => (
+    document.querySelector('[data-find-in-page-bar] input[aria-label="Find in page"]')?.matches(":focus") === true
+  ), undefined, { timeout: browserTimeoutMs });
   return page.locator('[data-find-in-page-bar] input[aria-label="Find in page"]');
 }
 
 async function openControlledSearch(page, byKeyboard = false) {
   await closeSearch(page);
-  if (byKeyboard) await page.keyboard.press("Control+K");
-  else await command(page, "search-documentation").click();
-  await page.waitForFunction(() => document.querySelector("dialog[data-search-dialog]")?.open === true, undefined, { timeout: browserTimeoutMs });
+  if (byKeyboard) {
+    await page.evaluate(() => {
+      window.__ccresdocSearchKeys = [];
+      window.addEventListener("keydown", (event) => {
+        const record = {
+          key: event.key,
+          ctrlKey: event.ctrlKey,
+          target: event.target?.outerHTML,
+          active: document.activeElement?.outerHTML,
+          defaultPrevented: event.defaultPrevented,
+        };
+        window.__ccresdocSearchKeys.push(record);
+        queueMicrotask(() => { record.defaultPrevented = event.defaultPrevented; });
+      }, { capture: true, once: true });
+    });
+    await page.keyboard.press("Control+K");
+  } else {
+    await command(page, "more").click();
+    await menu(page).waitFor({ state: "visible", timeout: browserTimeoutMs });
+    await menu(page).locator('[data-browser-command="search-documentation"]').click();
+  }
+  try {
+    await page.waitForFunction(() => document.querySelector("dialog[data-search-dialog]")?.open === true, undefined, { timeout: browserTimeoutMs });
+  } catch (error) {
+    const diagnostic = await page.evaluate(() => ({
+      path: location.pathname,
+      active: document.activeElement?.outerHTML,
+      dialogOpen: document.querySelector("dialog[data-search-dialog]")?.open,
+      toolbarBootstrap: document.querySelector("nav.ccresdoc-browser-toolbar")?.getAttribute("data-bootstrap"),
+      keys: window.__ccresdocSearchKeys,
+    }));
+    throw new Error(`Search did not open: ${JSON.stringify(diagnostic)}`, { cause: error });
+  }
   return page.locator("dialog[data-search-dialog] [data-search-input]");
 }
 
@@ -537,9 +583,24 @@ async function activeFindIndex(page) {
 }
 
 async function assertFindSurface(page) {
+  // The root fixture intentionally contains CCResDoc in both its rendered
+  // heading and body. Earlier history/reload checks finish on a category page,
+  // whose article has only one occurrence, so establish the deterministic
+  // Find fixture explicitly before asserting traversal between matches.
+  await openPage(page, new URL(page.url()).origin, appRoutes.root);
   const toolbarFind = await openPatchedFind(page);
   await toolbarFind.fill("CCResDoc");
-  await page.waitForFunction(() => document.querySelectorAll("[data-find-match]").length >= 2, undefined, { timeout: browserTimeoutMs });
+  try {
+    await page.waitForFunction(() => document.querySelectorAll("[data-find-match]").length >= 2, undefined, { timeout: browserTimeoutMs });
+  } catch (error) {
+    const diagnostic = await page.evaluate(() => ({
+      path: location.pathname,
+      input: document.querySelector('[data-find-in-page-bar] input[aria-label="Find in page"]')?.value,
+      marks: document.querySelectorAll("[data-find-match]").length,
+      articleText: document.querySelector("article.zd-content")?.textContent,
+    }));
+    throw new Error(`Find did not mark the deterministic root fixture: ${JSON.stringify(diagnostic)}`, { cause: error });
+  }
   const marks = await page.locator("[data-find-match]").count();
   assert(marks >= 2, `expected deterministic CCResDoc content to produce at least two matches, got ${marks}`);
   assert.equal(await activeFindIndex(page), 0, "Find starts at the first match");
@@ -571,11 +632,15 @@ async function assertFindSurface(page) {
 }
 
 async function assertSearchSurface(page) {
-  let refreshRequests = 0;
-  const onRequest = (request) => {
-    if (new URL(request.url()).pathname.endsWith("/docs/search-index.json")) refreshRequests += 1;
-  };
-  page.on("request", onRequest);
+  await page.evaluate(() => {
+    const nativeFetch = window.fetch.bind(window);
+    window.__ccresdocSearchFetch = { nativeFetch: window.fetch, urls: [] };
+    window.fetch = (input, init) => {
+      const raw = input instanceof Request ? input.url : String(input);
+      window.__ccresdocSearchFetch.urls.push(new URL(raw, location.href).href);
+      return nativeFetch(input, init);
+    };
+  });
   try {
     const toolbarInput = await openControlledSearch(page);
     assert.equal(await toolbarInput.count(), 1, "toolbar Search opens the package widget");
@@ -583,12 +648,25 @@ async function assertSearchSurface(page) {
     await closeSearch(page);
     const keyboardInput = await openControlledSearch(page, true);
     assert.equal(await keyboardInput.count(), 1, "actual Control+K opens the package widget");
-    const deadline = Date.now() + browserTimeoutMs;
-    while (refreshRequests === 0 && Date.now() < deadline) await delay(20);
+    try {
+      await page.waitForFunction(() => window.__ccresdocSearchFetch.urls.some((raw) => (
+        new URL(raw).pathname === "/docs/search-index.json"
+      )), undefined, { timeout: browserTimeoutMs });
+    } catch (error) {
+      const fetchUrls = await page.evaluate(() => window.__ccresdocSearchFetch.urls);
+      throw new Error(`Search did not fetch the public index: ${JSON.stringify(fetchUrls)}`, { cause: error });
+    }
     await closeSearch(page);
-    assert(refreshRequests >= 1, "controlled Search refreshes its public search-index endpoint");
+    const fetchUrls = await page.evaluate(() => window.__ccresdocSearchFetch.urls);
+    assert(
+      fetchUrls.some((raw) => new URL(raw).pathname === "/docs/search-index.json"),
+      `controlled Search must refresh its public search-index endpoint: ${JSON.stringify(fetchUrls)}`,
+    );
   } finally {
-    page.off("request", onRequest);
+    await page.evaluate(() => {
+      if (window.__ccresdocSearchFetch?.nativeFetch) window.fetch = window.__ccresdocSearchFetch.nativeFetch;
+      delete window.__ccresdocSearchFetch;
+    });
   }
 }
 
@@ -643,6 +721,19 @@ async function assertEditingTargetSuppression(page) {
 
 async function assertHistorySurface(page, origin) {
   await openPage(page, origin, appRoutes.root);
+  await page.evaluate(() => {
+    const shell = document.querySelector("[data-ccresdoc-browser-toolbar-shell]");
+    window.__ccresdocHistoryTrace = { shell, events: [] };
+    for (const name of ["zfb:before-preparation", "zfb:after-swap", "zfb:page-load", "zfb:navigation-aborted", "popstate"]) {
+      const target = name === "popstate" ? window : document;
+      target.addEventListener(name, (event) => window.__ccresdocHistoryTrace.events.push({
+        name,
+        navigationType: event.navigationType,
+        path: location.pathname,
+        state: structuredClone(history.state),
+      }));
+    }
+  });
   const first = await managedHistory(page);
   assert(first.stored, "initial managed route must persist a browser-history record");
   assert.equal(first.stored?.boundary, first.stored?.current, "initial managed route starts at its boundary");
@@ -657,16 +748,60 @@ async function assertHistorySurface(page, origin) {
 
     await routeViaHeader(page, appRoutes.claude);
     await routeViaHeader(page, appRoutes.codex);
-    assert.equal(await command(page, "back").isDisabled(), false);
+    const routedHistory = await managedHistory(page);
+    const historyTrace = await page.evaluate(() => ({
+      shellPersisted: window.__ccresdocHistoryTrace.shell === document.querySelector("[data-ccresdoc-browser-toolbar-shell]"),
+      events: window.__ccresdocHistoryTrace.events,
+    }));
+    assert.equal(
+      await command(page, "back").isDisabled(),
+      false,
+      `Back must enable after two pushes: ${JSON.stringify({ routedHistory, historyTrace })}`,
+    );
     await page.keyboard.press("Control+[");
     await waitForPath(page, appRoutes.claude);
+    // popstate updates the URL/path before zfb:page-load settles the managed
+    // traversal. Wait for the exposed Forward affordance instead of racing
+    // that intentional traversal lock with the opposite shortcut.
+    await waitForCommandEnabled(page, "forward");
+    const beforeForward = await managedHistory(page);
+    const forwardDisabled = await command(page, "forward").isDisabled();
+    await page.evaluate(() => {
+      window.__ccresdocForwardKeys = [];
+      window.addEventListener("keydown", (event) => {
+        const record = {
+          key: event.key,
+          code: event.code,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          target: event.target?.tagName,
+          active: document.activeElement?.tagName,
+          defaultPrevented: event.defaultPrevented,
+        };
+        window.__ccresdocForwardKeys.push(record);
+        queueMicrotask(() => { record.defaultPrevented = event.defaultPrevented; });
+      }, true);
+    });
     await page.keyboard.press("Control+]");
-    await waitForPath(page, appRoutes.codex);
+    try {
+      await page.waitForFunction((expected) => location.pathname === expected, appRoutes.codex, { timeout: 3_000 });
+      await waitForPath(page, appRoutes.codex);
+      await waitForCommandEnabled(page, "back");
+    } catch (error) {
+      const diagnostic = await page.evaluate(() => ({
+        path: location.pathname,
+        active: document.activeElement?.outerHTML,
+        forwardDisabled: document.querySelector('[data-browser-command="forward"]')?.disabled,
+        keys: window.__ccresdocForwardKeys,
+      }));
+      throw new Error(`Forward shortcut did not traverse: ${JSON.stringify({ beforeForward, forwardDisabled, diagnostic, history: await managedHistory(page) })}`, { cause: error });
+    }
 
     // C → Back to B → D (Home) creates a new branch. Forward must remain
     // disabled, and the old C entry must not become reachable again.
     await page.keyboard.press("Control+[");
     await waitForPath(page, appRoutes.claude);
+    await waitForCommandEnabled(page, "forward");
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
     assert.equal(await command(page, "forward").isDisabled(), true, "Forward is disabled after a new branch");
@@ -717,7 +852,10 @@ async function assertReloadAndPageshow(page, origin) {
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
   const afterRestore = await managedHistory(page);
   assert.equal(afterRestore.stored?.boundary, boundary, "pageshow restore preserves the managed boundary");
-  assert(!document.body.textContent?.includes("CCResDoc is starting"), "loading document was not exposed during deep-route restore");
+  const exposedLoadingDocument = await page.locator("body").evaluate(
+    (body) => body.textContent?.includes("CCResDoc is starting") ?? false,
+  );
+  assert(!exposedLoadingDocument, "loading document was not exposed during deep-route restore");
 }
 
 async function assertShortcutReconfiguration(page) {
@@ -845,6 +983,7 @@ async function geometry(page) {
 
 async function assertResponsiveGeometry(page, origin) {
   await openPage(page, origin, appRoutes.root);
+  if (artifactDir) await page.screenshot({ path: join(artifactDir, "browser-toolbar-desktop.png") });
   await command(page, "more").click();
   const desktopMenu = menu(page);
   const desktop = await geometry(page);
@@ -857,6 +996,7 @@ async function assertResponsiveGeometry(page, origin) {
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 390, height: 844 });
   await delay(50);
+  if (artifactDir) await page.screenshot({ path: join(artifactDir, "browser-toolbar-narrow.png") });
   const narrow = await geometry(page);
   assert(Math.abs(narrow.toolbar.height - 52) <= 1, `narrow toolbar must be 52px, got ${narrow.toolbar.height}`);
   assert(narrow.path.width > 0, "narrow path must retain all available width");
@@ -866,6 +1006,7 @@ async function assertResponsiveGeometry(page, origin) {
   assert.equal(await command(page, "copy-page-path").isVisible(), false, "narrow Copy moves to More");
   assert.equal(await command(page, "open-in-default-browser").isVisible(), false, "narrow external-open moves to More");
   await command(page, "find-in-page").click();
+  if (artifactDir) await page.screenshot({ path: join(artifactDir, "browser-toolbar-narrow-find.png") });
   const findBar = page.locator("[data-find-in-page-bar]");
   const barBox = await findBar.boundingBox();
   const toolbarBox = await toolbar(page).boundingBox();
@@ -935,14 +1076,21 @@ async function assertBrowserOnly(browser, origin) {
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
     await routeViaHeader(page, appRoutes.claude);
+    await waitForCommandEnabled(page, "back");
     await page.keyboard.press("Control+[");
     await waitForPath(page, appRoutes.root);
+    await waitForCommandEnabled(page, "forward");
     await page.keyboard.press("Control+]");
     await waitForPath(page, appRoutes.claude);
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
-    await openPage(page, origin, appRoutes.missing);
-    assert.match(await page.locator("body").innerText(), /Page not found/i, "the deterministic missing route renders the package 404");
+    const missing = await fetchText(`${origin}${appRoutes.missing}`);
+    assert.equal(missing.status, 404, "the deterministic missing route keeps its HTTP 404 contract");
+    // zfb dev intentionally answers an unknown URL with its own minimal 404.
+    // Open the generated host page to exercise CCResDoc's toolbar and Home
+    // recovery behavior instead of asserting against that carrier fallback.
+    await openPage(page, origin, appRoutes.notFound);
+    assert.match(await page.locator("body").innerText(), /Page not found/i, "the checked-in host 404 renders through package chrome");
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
     assert.equal(await page.evaluate(() => "__TAURI__" in window), false, "browser-only interactions never create a Tauri bridge");
@@ -959,6 +1107,7 @@ async function run() {
     console.log("browser-navigation repository/runtime contracts passed");
     return;
   }
+  if (artifactDir) mkdirSync(artifactDir, { recursive: true });
   const removeSignalCleanup = installSignalCleanup();
   try {
     const server = await startServer();

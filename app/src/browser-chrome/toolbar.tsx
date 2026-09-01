@@ -7,9 +7,9 @@ import type { BrowserCommandId, BrowserToolbarAdapter, BrowserToolbarSnapshot } 
 
 const MENU_COMMANDS: Array<{ command: BrowserCommandId; label: string }> = [
   { command: "search-documentation", label: "Search Documentation" },
-  { command: "settings", label: "Settings" },
   { command: "copy-page-path", label: "Copy Page Path" },
   { command: "open-in-default-browser", label: "Open in Default Browser" },
+  { command: "settings", label: "Settings" },
 ];
 
 const INITIAL_SNAPSHOT: BrowserToolbarSnapshot = {
@@ -94,7 +94,8 @@ function BrowserToolbarMarkup({ snapshot, adapter }: {
 
   const activate = (command: BrowserCommandId, origin: "toolbar" | "overflow") => {
     if (!adapter || commandDisabled(snapshot, command)) return;
-    void adapter.execute({ commandId: command, origin, invocationId: `${origin}:${Date.now()}` });
+    void adapter.execute({ commandId: command, origin, invocationId: `${origin}:${Date.now()}` })
+      .catch((error) => console.error(`browser command ${command} failed:`, error));
     if (origin === "overflow") closeMenu(true);
   };
 

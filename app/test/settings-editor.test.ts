@@ -127,6 +127,12 @@ describe("bundled Settings editor", () => {
     window.dispatchEvent(new Event("ccresdoc-settings-native-close")); await flush();
     expect(current.backend.setShortcutCaptureActive.mock.calls.slice(-2)).toEqual([[true], [false]]);
     expect(current.editor.state.dirty.size).toBe(0);
+
+    (document.querySelector('[data-shortcut-command="back"] .shortcut-add') as HTMLButtonElement).click(); await flush();
+    window.dispatchEvent(new Event("blur")); await flush();
+    expect(current.backend.setShortcutCaptureActive.mock.calls.slice(-2)).toEqual([[true], [false]]);
+    expect(current.editor.state.capture).toBeNull();
+    expect(document.querySelector("#shortcut-live")?.textContent).toContain("lost focus");
   });
 
   it("keeps authored and effective ports distinct when the runtime falls back", async () => {

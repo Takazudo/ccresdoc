@@ -25,10 +25,10 @@ export const BACKEND_METHODS = Object.freeze([
  *   appearanceMode: string,
  *   themePack: string,
  *   preferredPort: number,
- *   fallbackToFreePort: boolean
+ *   fallbackToFreePort: boolean,
  *   shortcuts: Array<{commandId: string, bindings: string[]}>
  * }} SettingsDraft
- * @typedef {"claudeResources"|"codexResources"|"claudeDir"|"codexDir"|"appearanceMode"|"themePack"|"preferredPort"|"fallbackToFreePort"} DirtyField
+ * @typedef {"claudeResources"|"codexResources"|"claudeDir"|"codexDir"|"appearanceMode"|"themePack"|"preferredPort"|"fallbackToFreePort"|"shortcuts"} DirtyField
  * @typedef {{code: string, message: string, details: unknown}} BackendError
  */
 

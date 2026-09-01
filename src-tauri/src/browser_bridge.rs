@@ -293,7 +293,6 @@ pub fn validate_active_docs_url(url: &tauri::Url, effective_port: u16) -> Result
         || url.password().is_some()
         || url.port() != Some(effective_port)
         || !url.path().starts_with(DOCS_PATH)
-        || url.fragment().is_some()
     {
         return Err(CommandError::new(
             "forbidden_docs_url",
@@ -471,6 +470,7 @@ mod tests {
         for valid in [
             "http://localhost:6000/docs/",
             "http://127.0.0.1:6000/docs/codex/?q=one",
+            "http://localhost:6000/docs/codex/#current-section",
         ] {
             validate_active_docs_url(&valid.parse().unwrap(), 6000).unwrap();
         }
@@ -480,7 +480,6 @@ mod tests {
             "http://example.com:6000/docs/",
             "http://user@localhost:6000/docs/",
             "http://localhost:6000/",
-            "http://localhost:6000/docs/#fragment",
             "http://localhost/docs/",
         ] {
             assert_eq!(

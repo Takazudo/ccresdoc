@@ -23,21 +23,22 @@ function SettingsHeaderButtonIsland() {
 }
 
 function BrowserToolbarIsland() {
-  return h(
-    "div",
-    {
-      "data-ccresdoc-browser-toolbar-shell": true,
-      "data-zfb-transition-persist": "ccresdoc-browser-toolbar",
-    },
-    Island({ when: "load", children: h(CCResDocBrowserToolbar, {}) }),
-  );
+  const island = Island({ when: "load", children: h(CCResDocBrowserToolbar, {}) });
+  // Persistence belongs on the island marker itself. zfb moves persisted
+  // ancestor wrappers too, but only an island carrying this ID is exempt from
+  // pre-swap unmount, which keeps its history listeners alive for page-load.
+  return h(island.type, {
+    ...island.props,
+    "data-ccresdoc-browser-toolbar-shell": true,
+    "data-zfb-transition-persist": "ccresdoc-browser-toolbar",
+  });
 }
 
 function ControlledSearchWidget(props: Record<string, unknown>) {
   const searchProps = props as unknown as SearchWidgetSlotProps;
   return h(SearchWidget, {
     ...searchProps,
-    base: routeContext.withBase("/"),
+    base: routeContext.withBase("/docs/"),
     disableBuiltInShortcut: true,
   });
 }
