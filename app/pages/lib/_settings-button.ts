@@ -79,14 +79,18 @@ export function openSettingsFromDocs(
 }
 
 export function SettingsHeaderButton() {
+  const available = typeof (globalThis as TauriGlobal).__TAURI__?.core?.invoke === "function";
   return h(
     "button",
     {
       type: "button",
       title: "Settings",
       "aria-label": "Open Settings",
+      "aria-disabled": !available,
+      disabled: !available,
       class: "flex min-h-11 min-w-11 items-center justify-center rounded-md text-muted focus-visible:outline-2 focus-visible:outline-offset-2",
       onClick: () => {
+        if (!available) return;
         void openSettingsFromDocs().catch((error) => {
           console.error("open_settings_window failed:", error);
         });

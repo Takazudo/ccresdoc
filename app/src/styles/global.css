@@ -18,6 +18,221 @@
 @source "src/utils/**/*.{tsx,ts,jsx,js}";
 @source "pages/**/*.{tsx,ts,jsx,js}";
 
+:root {
+  --ccresdoc-browser-toolbar-h: 3.25rem;
+  --ccresdoc-package-header-h: 3.5rem;
+  --ccresdoc-complete-chrome-offset: calc(var(--ccresdoc-browser-toolbar-h) + var(--ccresdoc-package-header-h));
+  --ccresdoc-toolbar-control-size: 2.25rem;
+  --ccresdoc-toolbar-menu-row-min: 2.25rem;
+  --ccresdoc-toolbar-control-gap: var(--spacing-vsp-3xs);
+}
+
+/* App-owned browser chrome. The persisted outer shell keeps this one load
+ * island alive while zfb replaces the rest of the body. */
+[data-ccresdoc-browser-toolbar-shell] {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-index-dropdown);
+}
+
+.ccresdoc-browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-hsp-2xs);
+  block-size: var(--ccresdoc-browser-toolbar-h);
+  min-inline-size: 0;
+  padding-inline: var(--spacing-hsp-sm);
+  border-block-end: 1px solid var(--color-muted);
+  background: var(--color-surface, var(--color-bg));
+  color: var(--color-fg);
+}
+
+.ccresdoc-browser-toolbar__leading,
+.ccresdoc-browser-toolbar__trailing {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--ccresdoc-toolbar-control-gap);
+}
+
+.ccresdoc-browser-toolbar__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--ccresdoc-toolbar-control-size);
+  block-size: var(--ccresdoc-toolbar-control-size);
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-DEFAULT);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.ccresdoc-browser-toolbar__button:focus-visible,
+.ccresdoc-browser-toolbar__menu button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.ccresdoc-browser-toolbar__button:active:not(:disabled),
+.ccresdoc-browser-toolbar__menu button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
+.ccresdoc-browser-toolbar__button:disabled,
+.ccresdoc-browser-toolbar__menu button:disabled {
+  color: color-mix(in srgb, var(--color-muted) 50%, transparent);
+  cursor: default;
+}
+
+.ccresdoc-browser-toolbar__path {
+  flex: 1;
+  min-inline-size: 0;
+  block-size: var(--ccresdoc-toolbar-control-size);
+  padding-inline: var(--spacing-hsp-sm);
+  overflow: hidden;
+  border: 1px solid var(--color-muted);
+  border-radius: var(--radius-DEFAULT);
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ccresdoc-browser-toolbar__path:focus {
+  border-color: var(--color-accent);
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+  outline-offset: 0;
+  text-overflow: clip;
+}
+
+.ccresdoc-browser-toolbar__more {
+  position: relative;
+  flex: none;
+}
+
+.ccresdoc-browser-toolbar__menu {
+  position: absolute;
+  inset-block-start: calc(100% + var(--spacing-vsp-3xs));
+  inset-inline-end: 0;
+  z-index: var(--z-index-dropdown);
+  display: flex;
+  min-inline-size: 15rem;
+  flex-direction: column;
+  gap: var(--spacing-vsp-3xs);
+  padding: var(--spacing-vsp-3xs);
+  border: 1px solid var(--color-muted);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.ccresdoc-browser-toolbar__menu[hidden] {
+  display: none;
+}
+
+.ccresdoc-browser-toolbar__menu button {
+  display: flex;
+  min-block-size: var(--ccresdoc-toolbar-menu-row-min);
+  inline-size: 100%;
+  align-items: center;
+  gap: var(--spacing-hsp-sm);
+  padding: var(--spacing-vsp-3xs) var(--spacing-hsp-sm);
+  border: 0;
+  border-radius: var(--radius-DEFAULT);
+  background: transparent;
+  color: var(--color-fg);
+  cursor: pointer;
+  font: inherit;
+  text-align: start;
+}
+
+.ccresdoc-browser-toolbar__menu svg {
+  flex: none;
+}
+
+@media (hover: hover) {
+  .ccresdoc-browser-toolbar__button:hover:not(:disabled),
+  .ccresdoc-browser-toolbar__menu button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-surface) 80%, var(--color-fg) 20%);
+    color: var(--color-fg);
+  }
+}
+
+/* Copy and external-open compact only after the complete action row no longer
+ * leaves a useful path field. Their identical commands remain in More. */
+@media (max-width: 46rem) {
+  .ccresdoc-browser-toolbar__compactable {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) {
+  :root {
+    --ccresdoc-toolbar-control-size: 2.75rem;
+    --ccresdoc-toolbar-menu-row-min: 2.75rem;
+  }
+
+  .ccresdoc-browser-toolbar {
+    gap: 0;
+    padding-inline: var(--spacing-hsp-2xs);
+  }
+
+  .ccresdoc-browser-toolbar__leading,
+  .ccresdoc-browser-toolbar__trailing {
+    gap: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ccresdoc-browser-toolbar__button,
+  .ccresdoc-browser-toolbar__menu button {
+    transition: background-color 150ms, color 150ms;
+  }
+}
+
+/* The package header remains in normal flow below the app row, while every
+ * fixed/sticky package surface consumes the same complete offset token. */
+header[data-header] {
+  top: var(--ccresdoc-browser-toolbar-h) !important;
+}
+
+#desktop-sidebar {
+  top: var(--ccresdoc-complete-chrome-offset) !important;
+  height: calc(100vh - var(--ccresdoc-complete-chrome-offset)) !important;
+}
+
+.zd-sidebar-content-wrapper > .flex {
+  min-height: calc(100vh - var(--ccresdoc-complete-chrome-offset)) !important;
+}
+
+nav[data-zd-toc] {
+  top: var(--ccresdoc-complete-chrome-offset) !important;
+  height: calc(100vh - var(--ccresdoc-complete-chrome-offset)) !important;
+}
+
+[data-zfb-island="SidebarToggle"] > div,
+[data-zd-mobile-sidebar] {
+  top: var(--ccresdoc-complete-chrome-offset) !important;
+  height: calc(100vh - var(--ccresdoc-complete-chrome-offset)) !important;
+}
+
+[data-zfb-island="FindInPageInit"] > div {
+  top: var(--ccresdoc-complete-chrome-offset) !important;
+}
+
+[data-sidebar-resizer] {
+  top: var(--ccresdoc-complete-chrome-offset) !important;
+}
+
+:where(article, main) :where([id]) {
+  scroll-margin-top: calc(var(--ccresdoc-complete-chrome-offset) + var(--spacing-vsp-sm));
+}
+
 /* zfb does not expose a post-mount island marker, so the AppearanceBridge
  * removes this pending treatment after the synchronous load-island pass.
  * This is visual and pointer affordance only: CSS cannot provide true
@@ -41,6 +256,17 @@ html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="SettingsHeaderBu
     forced-color-adjust: none;
     background-color: Highlight;
     color: HighlightText;
+  }
+
+  .ccresdoc-browser-toolbar,
+  .ccresdoc-browser-toolbar__path,
+  .ccresdoc-browser-toolbar__menu {
+    border-color: CanvasText;
+  }
+
+  .ccresdoc-browser-toolbar__button:disabled,
+  .ccresdoc-browser-toolbar__menu button:disabled {
+    color: GrayText;
   }
 
   .find-match-active {

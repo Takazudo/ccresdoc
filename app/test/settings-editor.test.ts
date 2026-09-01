@@ -218,10 +218,19 @@ describe("bundled Settings editor", () => {
 });
 
 describe("documentation header Settings entry point", () => {
+  it("renders Settings unavailable outside Tauri", () => {
+    delete (globalThis as any).__TAURI__;
+    const mount = document.createElement("div"); document.body.append(mount);
+    act(() => render(SettingsHeaderButton(), mount));
+    const button = mount.querySelector("button")!;
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+  });
+
   it("renders an accessible gear and invokes only the narrow open command", async () => {
     const invoke = vi.fn(async () => {}); const root = { __TAURI__: { core: { invoke } } } as any;
     await openSettingsFromDocs(root); expect(invoke).toHaveBeenCalledWith("open_settings_window");
     const mount = document.createElement("div"); document.body.append(mount); (globalThis as any).__TAURI__ = root.__TAURI__;
-    act(() => render(SettingsHeaderButton(), mount)); const button = mount.querySelector("button")!; expect(button.getAttribute("aria-label")).toBe("Open Settings"); expect(button.title).toBe("Settings"); button.click(); await flush(); expect(invoke).toHaveBeenCalledTimes(2); delete (globalThis as any).__TAURI__;
+    act(() => render(SettingsHeaderButton(), mount)); const button = mount.querySelector("button")!; expect(button.getAttribute("aria-label")).toBe("Open Settings"); expect(button.title).toBe("Settings"); expect(button.disabled).toBe(false); button.click(); await flush(); expect(invoke).toHaveBeenCalledTimes(2); delete (globalThis as any).__TAURI__;
   });
 });
