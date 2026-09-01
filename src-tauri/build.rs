@@ -1,5 +1,10 @@
 fn main() {
     const COMMANDS: &[&str] = &[
+        "get_browser_bootstrap",
+        "update_browser_navigation_state",
+        "set_shortcut_capture_active",
+        "open_current_page_in_default_browser",
+        "reload_documentation",
         "retry_launch",
         "open_settings_window",
         "get_settings_snapshot",

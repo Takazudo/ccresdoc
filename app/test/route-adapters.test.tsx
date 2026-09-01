@@ -267,6 +267,18 @@ describe("host-owned package route adapters", () => {
     expect(settingsIsland).not.toBeNull();
     expect(settingsIsland?.getAttribute("data-when")).toBe("load");
     expect(settingsIsland?.querySelector('button[aria-label="Open Settings"]')).not.toBeNull();
+    const toolbarIsland = shell.querySelector<HTMLElement>(
+      '[data-zfb-island="CCResDocBrowserToolbar"]',
+    );
+    expect(toolbarIsland).not.toBeNull();
+    expect(toolbarIsland?.hasAttribute("data-ccresdoc-browser-toolbar-shell")).toBe(true);
+    expect(toolbarIsland?.getAttribute("data-zfb-transition-persist")).toBe(
+      "ccresdoc-browser-toolbar",
+    );
+    const siteSearch = shell.querySelector<HTMLElement>("site-search");
+    expect(siteSearch).not.toBeNull();
+    expect(siteSearch?.getAttribute("data-base")).toBe("/docs/");
+    expect(siteSearch?.getAttribute("data-disable-built-in-shortcut")).toBe("true");
     const mobileToggle = shell.querySelector<HTMLElement>(
       '[data-zfb-island="SidebarToggle"]',
     );

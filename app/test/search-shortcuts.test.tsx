@@ -1,168 +1,126 @@
-/** @jsxRuntime automatic */
-/** @jsxImportSource preact */
-
-import { act } from "preact/test-utils";
-import { render } from "preact";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { SearchShortcutBoundary } from "../pages/lib/_settings-button";
-
-const mountedRoots: HTMLDivElement[] = [];
-const removeListeners: Array<() => void> = [];
-
-type SeededSearchWidget = HTMLElement & {
-  _entries: unknown[] | null;
-  _indexUnavailable: boolean;
-};
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  SEARCH_COMMAND_EVENT,
+  SEARCH_WIDGET_SCRIPT,
+  closeSearch,
+  openSearch,
+  refreshSearch,
+} from "@takazudo/zudo-doc/search-widget-script";
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-async function mountBoundary() {
-  const root = document.createElement("div");
-  document.body.append(root);
-  mountedRoots.push(root);
-  act(() => render(<SearchShortcutBoundary />, root));
-  await flush();
-}
-
-function listenAtBubblePhase() {
-  const listener = vi.fn();
-  document.addEventListener("keydown", listener);
-  removeListeners.push(() => document.removeEventListener("keydown", listener));
-  return listener;
-}
-
-function seedSearchWidget() {
-  const search = document.createElement("site-search") as SeededSearchWidget;
-  search._entries = [{ id: "stale" }];
-  search._indexUnavailable = true;
-  const button = document.createElement("button");
-  button.setAttribute("data-open-search", "true");
-  search.append(button);
+function seedSearchWidget(disableBuiltInShortcut = true) {
+  const search = document.createElement("site-search");
+  search.dataset.base = "/docs/";
+  search.dataset.resultCountTemplate = "{count} results";
+  if (disableBuiltInShortcut) search.dataset.disableBuiltInShortcut = "true";
+  search.innerHTML = `
+    <button data-open-search type="button">Open</button>
+    <dialog data-search-dialog>
+      <input data-search-input type="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <span data-search-count></span><span data-search-count-narrow></span>
+      <button data-close-search type="button">Close</button>
+      <div data-search-results><p data-search-placeholder>Search</p></div>
+    </dialog>`;
   document.body.append(search);
-  return { search, button };
+  return {
+    search,
+    dialog: search.querySelector("dialog") as HTMLDialogElement,
+    input: search.querySelector("input") as HTMLInputElement,
+  };
 }
 
-function press(key: "f" | "k", modifier: "ctrlKey" | "metaKey") {
-  const event = new KeyboardEvent("keydown", {
-    key,
-    [modifier]: true,
-    bubbles: true,
-    cancelable: true,
-  });
-  document.body.dispatchEvent(event);
-  return event;
-}
-
-afterEach(() => {
-  for (const removeListener of removeListeners.splice(0)) removeListener();
-  for (const root of mountedRoots.splice(0)) {
-    act(() => render(null, root));
-    root.remove();
-  }
+beforeAll(() => {
+  Function(SEARCH_WIDGET_SCRIPT)();
 });
 
-describe("search/find shortcut boundary", () => {
-  it.each(["ctrlKey", "metaKey"] as const)(
-    "blocks Cmd/Ctrl+F while the search dialog is open (%s)",
-    async (modifier) => {
-      const dialog = document.createElement("dialog");
-      dialog.setAttribute("data-search-dialog", "true");
-      dialog.open = true;
-      document.body.append(dialog);
-      await mountBoundary();
+afterEach(() => {
+  document.body.replaceChildren();
+  document.documentElement.style.overflow = "";
+  vi.restoreAllMocks();
+});
 
-      const downstream = listenAtBubblePhase();
-      const event = press("f", modifier);
+describe("controlled search commands", () => {
+  it("opens and refreshes through the public command seam", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([])));
+    const { dialog, input } = seedSearchWidget();
 
-      expect(event.defaultPrevented).toBe(true);
-      expect(downstream).not.toHaveBeenCalled();
-    },
-  );
+    openSearch({ refresh: true });
+    await flush();
 
-  it.each(["ctrlKey", "metaKey"] as const)(
-    "blocks Cmd/Ctrl+K while the find bar is open (%s)",
-    async (modifier) => {
-      const { search } = seedSearchWidget();
-      const input = document.createElement("input");
-      input.setAttribute("aria-label", "Find in page");
-      document.body.append(input);
-      await mountBoundary();
+    expect(dialog.open).toBe(true);
+    expect(document.activeElement).toBe(input);
+    expect(fetch).toHaveBeenCalledWith("/docs/search-index.json");
 
-      const downstream = listenAtBubblePhase();
-      const event = press("k", modifier);
+    expect(() => openSearch({ refresh: false })).not.toThrow();
 
-      expect(event.defaultPrevented).toBe(true);
-      expect(downstream).not.toHaveBeenCalled();
-      expect(search._entries).toEqual([{ id: "stale" }]);
-      expect(search._indexUnavailable).toBe(true);
-    },
-  );
+    refreshSearch();
+    await flush();
+    expect(fetch).toHaveBeenCalledTimes(2);
 
-  it.each(["ctrlKey", "metaKey"] as const)(
-    "refreshes the shipped search cache before normal Cmd/Ctrl+K handling (%s)",
-    async (modifier) => {
-      const { search } = seedSearchWidget();
-      await mountBoundary();
+    closeSearch();
+    expect(dialog.open).toBe(false);
+    expect(() => closeSearch()).not.toThrow();
+  });
 
-      const downstream = vi.fn(() => {
-        expect(search._entries).toBeNull();
-        expect(search._indexUnavailable).toBe(false);
-      });
-      document.addEventListener("keydown", downstream);
-      removeListeners.push(() => document.removeEventListener("keydown", downstream));
-      const event = press("k", modifier);
+  it("ignores an older in-flight index response after a controlled refresh", async () => {
+    let resolveStale!: (response: Response) => void;
+    const stale = new Promise<Response>((resolve) => { resolveStale = resolve; });
+    const fetch = vi.spyOn(globalThis, "fetch")
+      .mockReturnValueOnce(stale)
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { title: "Fresh result", description: "current", body: "", url: "/docs/fresh" },
+      ])));
+    const { input, search } = seedSearchWidget();
 
-      expect(event.defaultPrevented).toBe(false);
-      expect(downstream).toHaveBeenCalledOnce();
-      expect(search._entries).toBeNull();
-      expect(search._indexUnavailable).toBe(false);
-    },
-  );
+    openSearch({ refresh: true });
+    refreshSearch();
+    await flush();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    resolveStale(new Response(JSON.stringify([
+      { title: "Stale result", description: "old", body: "", url: "/docs/stale" },
+    ])));
+    await flush();
 
-  it("refreshes the shipped search cache before button activation", async () => {
-    const { search, button } = seedSearchWidget();
-    await mountBoundary();
-
-    const downstream = vi.fn(() => {
-      expect(search._entries).toBeNull();
-      expect(search._indexUnavailable).toBe(false);
-    });
-    button.addEventListener("click", downstream);
-    removeListeners.push(() => button.removeEventListener("click", downstream));
-    button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-
-    expect(downstream).toHaveBeenCalledOnce();
-    expect(search._entries).toBeNull();
-    expect(search._indexUnavailable).toBe(false);
+    input.value = "Fresh";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    expect(search.querySelector("[data-search-results]")?.textContent).toContain("Fresh result");
+    expect(search.querySelector("[data-search-results]")?.textContent).not.toContain("Stale result");
   });
 
   it.each(["ctrlKey", "metaKey"] as const)(
-    "lets Cmd/Ctrl+F through when the search dialog is closed (%s)",
+    "disables the stale package shortcut while preserving controlled open (%s)",
     async (modifier) => {
-      const dialog = document.createElement("dialog");
-      dialog.setAttribute("data-search-dialog", "true");
-      dialog.open = false;
-      document.body.append(dialog);
-      await mountBoundary();
-
-      const downstream = listenAtBubblePhase();
-      const event = press("f", modifier);
-
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([])));
+      const { dialog } = seedSearchWidget(true);
+      const event = new KeyboardEvent("keydown", {
+        key: "k",
+        [modifier]: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      document.dispatchEvent(event);
       expect(event.defaultPrevented).toBe(false);
-      expect(downstream).toHaveBeenCalledOnce();
+      expect(dialog.open).toBe(false);
+
+      openSearch({ refresh: false });
+      await flush();
+      expect(dialog.open).toBe(true);
     },
   );
 
-  it.each(["ctrlKey", "metaKey"] as const)(
-    "lets Cmd/Ctrl+K through when the find bar is closed (%s)",
-    async (modifier) => {
-      await mountBoundary();
-
-      const downstream = listenAtBubblePhase();
-      const event = press("k", modifier);
-
-      expect(event.defaultPrevented).toBe(false);
-      expect(downstream).toHaveBeenCalledOnce();
-    },
-  );
+  it("removes its public command listener and restores document overflow on disconnect", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([])));
+    const { search, dialog } = seedSearchWidget();
+    openSearch({ refresh: false });
+    await flush();
+    expect(document.documentElement.style.overflow).toBe("hidden");
+    search.remove();
+    document.dispatchEvent(new CustomEvent(SEARCH_COMMAND_EVENT, {
+      detail: { action: "open", refresh: true },
+    }));
+    expect(dialog.open).toBe(false);
+    expect(document.documentElement.style.overflow).toBe("");
+  });
 });

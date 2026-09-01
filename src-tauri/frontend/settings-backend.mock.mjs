@@ -5,14 +5,15 @@ export function createMockBackend(overrides = {}) {
   const snapshot = overrides.snapshot ?? {
     settings: {
       status: "missing", revision: null, configPath: "/mock/config.toml", fileExists: false,
-      authored: { schemaVersion: 1, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "default", preferredPort: 4892, fallbackToFreePort: true },
-      effective: { claudeResources: true, codexResources: false, claudeDir: "/mock/.claude", codexDir: null, appearanceMode: "system", themePack: "default", preferredPort: 4892, effectivePort: 4892, fallbackToFreePort: true },
+      authored: { schemaVersion: 1, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "default", preferredPort: 4892, fallbackToFreePort: true, shortcuts: [] },
+      effective: { claudeResources: true, codexResources: false, claudeDir: "/mock/.claude", codexDir: null, appearanceMode: "system", themePack: "default", preferredPort: 4892, effectivePort: 4892, fallbackToFreePort: true, shortcuts: [] },
       validation: [],
     },
     runtime: { phase: "idle", active: null },
     actions: { canSave: true, canRebase: false, canReplaceMalformed: false },
-    defaults: { schemaVersion: 1, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "default", preferredPort: 4892, fallbackToFreePort: true },
+    defaults: { schemaVersion: 1, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "default", preferredPort: 4892, fallbackToFreePort: true, shortcuts: [] },
     themePacks: ["default"],
+    shortcutCatalog: { version: 1, commands: [] },
   };
   const result = (method, value) => (...args) => {
     calls.push({ method, args });
@@ -32,6 +33,7 @@ export function createMockBackend(overrides = {}) {
     pickSourceDirectory: result("pickSourceDirectory", overrides.selection ?? null),
     openConfigFile: result("openConfigFile"),
     revealConfigFile: result("revealConfigFile"),
+    setShortcutCaptureActive: result("setShortcutCaptureActive"),
   };
   for (const method of BACKEND_METHODS) {
     if (typeof overrides[method] === "function") adapter[method] = overrides[method];

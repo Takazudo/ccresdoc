@@ -23,6 +23,12 @@
         <div class="field-group"><label for="codex-dir">Codex directory</label><div class="input-action"><input id="codex-dir" type="text" spellcheck="false" autocomplete="off" aria-describedby="codex-dir-description codex-dir-error"><button id="pick-codex-source" type="button" aria-describedby="codex-dir-description">Choose…</button></div><p id="codex-dir-description" class="description">Use an absolute path or a path beginning with <code>~/</code>. The authored value is preserved while Codex resources are disabled.</p><p id="codex-dir-error" class="field-error" role="alert" hidden></p></div>
       </div>
     </section>
+    <section class="settings-section" aria-labelledby="shortcuts-heading">
+      <div class="section-heading section-heading-actions"><div><h2 id="shortcuts-heading">Shortcuts</h2><p>Customize browser and page actions. Changes stay in the draft until Save.</p></div><button id="reset-all-shortcuts" type="button">Reset All</button></div>
+      <div id="shortcut-groups" class="shortcut-groups"></div>
+      <p id="shortcut-capture-help" class="visually-hidden">Press one shortcut using a modifier and a key. Press Escape to cancel. Modifier-only keys and shortcut chords are not accepted.</p>
+      <div id="shortcut-live" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+    </section>
     <section class="settings-section" aria-labelledby="server-heading">
       <div class="section-heading"><h2 id="server-heading">Advanced / Server</h2><p>Server changes restart documentation on a loopback-only port.</p></div>
       <div class="field-group"><label for="preferred-port">Preferred port</label><input id="preferred-port" type="number" min="1" max="65535" step="1" inputmode="numeric" aria-describedby="preferred-port-description preferred-port-error"><p id="preferred-port-description" class="description">The active effective port may differ when fallback is enabled.</p><p id="preferred-port-error" class="field-error" role="alert" hidden></p></div>

@@ -1,4 +1,4 @@
-:root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; background: Canvas; color: CanvasText; accent-color: #b66f35; --border: color-mix(in srgb, CanvasText 18%, transparent); --muted: color-mix(in srgb, CanvasText 66%, transparent); --danger: #b3261e; --section-gap: 2rem; --field-gap: .5rem; }
+:root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; background: Canvas; color: CanvasText; accent-color: #b66f35; --border: color-mix(in srgb, CanvasText 18%, transparent); --muted: color-mix(in srgb, CanvasText 66%, transparent); --danger: #b3261e; --section-gap: 2rem; --group-gap: 1rem; --row-gap: .75rem; --field-gap: .5rem; --touch-min: 44px; }
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme]) { --danger: #ffb4ab; } }
@@ -6,7 +6,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
 button, input, select { font: inherit; }
-button, select, input[type="text"], input[type="number"] { min-height: 44px; }
+button, select, input[type="text"], input[type="number"] { min-height: var(--touch-min); }
 button { color: ButtonText; background: ButtonFace; border: 1px solid ButtonBorder; border-radius: .45rem; padding: .55rem .9rem; cursor: pointer; }
 button:focus-visible { outline: 3px solid Highlight; outline-offset: 2px; }
 button:active:not(:disabled) { transform: translateY(1px); }
@@ -28,18 +28,35 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--da
 .centered { min-height: 16rem; display: grid; place-content: center; justify-items: center; text-align: center; }
 .settings-section { display: grid; gap: 1rem; padding-block: var(--section-gap); border-bottom: 1px solid var(--border); }
 .section-heading h2 { font-size: 1.12rem; }
+.section-heading-actions { display: flex; align-items: start; justify-content: space-between; gap: var(--group-gap); }
 .field-group { display: grid; gap: var(--field-gap); border: 0; margin: 0; padding: 0; }
 .field-group > label, .field-group legend { font-weight: 650; padding: 0; }
 .resource-group { display: grid; gap: .75rem; padding: 1rem; border: 1px solid var(--border); border-radius: .55rem; }
 .resource-group .field-group { padding-inline-start: 1.8rem; }
 .choice-row { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; }
-.choice-row label, .check-row { min-height: 44px; display: flex; align-items: center; gap: .55rem; cursor: pointer; }
+.choice-row label, .check-row { min-height: var(--touch-min); display: flex; align-items: center; gap: .55rem; cursor: pointer; }
 .choice-row input, .check-row input { width: 1.25rem; height: 1.25rem; margin: 0; flex: none; }
 .check-row span { display: grid; gap: .2rem; }
 .check-row small { display: block; font-weight: 400; }
 .input-action { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; }
 .description { font-size: .86rem; line-height: 1.45; }
 .field-error { color: var(--danger); font-size: .86rem; }
+.shortcut-groups { display: grid; gap: var(--section-gap); }
+.shortcut-group { display: grid; gap: var(--group-gap); }
+.shortcut-group h3 { margin: 0; font-size: .95rem; text-transform: capitalize; }
+.shortcut-rows { display: grid; gap: var(--row-gap); }
+.shortcut-row { display: grid; gap: var(--field-gap); padding: var(--row-gap); border: 1px solid var(--border); border-radius: .55rem; }
+.shortcut-row.has-error { border-color: var(--danger); }
+.shortcut-row-title { display: flex; align-items: center; justify-content: space-between; gap: var(--group-gap); }
+.shortcut-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--field-gap); }
+.shortcut-chip { display: inline-flex; align-items: center; gap: .55rem; min-width: var(--touch-min); padding-inline: .75rem; }
+.shortcut-chip kbd { font: inherit; font-weight: 650; }
+.shortcut-chip span { font-size: 1.15em; line-height: 1; }
+.shortcut-add[aria-pressed="true"] { border-color: Highlight; background: color-mix(in srgb, Highlight 12%, ButtonFace); }
+.shortcut-reset.quiet { min-height: var(--touch-min); padding-inline: .7rem; color: var(--muted); background: transparent; }
+.shortcut-empty { color: var(--muted); font-style: italic; padding-inline: .25rem; }
+.shortcut-status { margin: 0; line-height: 1.45; }
+.visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
 .message, .recovery { border: 1px solid var(--border); border-radius: .55rem; padding: 1rem; }
 .message.error, .fatal, .field-error { color: var(--danger); }
 .message:focus { outline: 2px solid Highlight; }
@@ -57,5 +74,6 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--da
 .spinner { width: 1.5rem; height: 1.5rem; border: 2px solid var(--border); border-top-color: currentColor; border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (hover: hover) and (pointer: fine) { button:hover:not(:disabled) { filter: brightness(1.08); } }
-@media (max-width: 560px) { .settings-header, .settings-footer { align-items: stretch; flex-direction: column; } .operation-status { text-align: start; } .status-grid div { grid-template-columns: 1fr; gap: .2rem; } .settings-footer > div:last-child { justify-content: flex-end; } }
-@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 1.5s; } }
+@media (max-width: 560px) { .settings-header, .settings-footer, .section-heading-actions { align-items: stretch; flex-direction: column; } .operation-status { text-align: start; } .status-grid div { grid-template-columns: 1fr; gap: .2rem; } .settings-footer > div:last-child { justify-content: flex-end; } }
+@media (forced-colors: active) { .shortcut-row.has-error, .shortcut-add[aria-pressed="true"] { border-color: Highlight; } .shortcut-add[aria-pressed="true"] { forced-color-adjust: none; background: Highlight; color: HighlightText; } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; border-top-color: Highlight; } button:active:not(:disabled) { transform: none; } }

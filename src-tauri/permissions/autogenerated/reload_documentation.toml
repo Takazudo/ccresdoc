@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reload-documentation"
+description = "Enables the reload_documentation command without any pre-configured scope."
+commands.allow = ["reload_documentation"]
+
+[[permission]]
+identifier = "deny-reload-documentation"
+description = "Denies the reload_documentation command without any pre-configured scope."
+commands.deny = ["reload_documentation"]

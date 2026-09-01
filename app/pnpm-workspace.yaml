@@ -1,9 +1,8 @@
 # app/ is intentionally a standalone project: the Tauri host copies this complete
-# node_modules tree into a writable workspace. Keep the linker and release-age
-# policy in this file so pnpm 10 applies them to the standalone lockfile.
-nodeLinker: hoisted
-
+# node_modules tree into a writable workspace. Keep install policy and the exact
+# consumer patch here so pnpm applies both to the standalone frozen lockfile.
 minimumReleaseAge: 1440
+
 minimumReleaseAgeExclude:
   - '@takazudo/zfb@2.10.1'
   - '@takazudo/zfb-darwin-arm64@2.10.1'
@@ -14,3 +13,8 @@ minimumReleaseAgeExclude:
   - '@takazudo/zfb-runtime@2.10.1'
   - '@takazudo/zfb-win32-x64-msvc@2.10.1'
   - '@takazudo/zudo-doc@5.12.1'
+
+nodeLinker: hoisted
+
+patchedDependencies:
+  '@takazudo/zudo-doc@5.12.1': patches/@takazudo__zudo-doc@5.12.1.patch

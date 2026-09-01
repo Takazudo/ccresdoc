@@ -11,8 +11,9 @@ use tauri_plugin_dialog::DialogExt;
 use crate::appearance::{AppearanceEnvelope, AppearanceSource, AppearanceValue, APPEARANCE_EVENT};
 use crate::runtime::{ApplyStatus, RuntimeApplyResult, RuntimePhase, RuntimeSnapshot};
 use crate::settings::{
-    AppearanceMode, ApplyImpact, ContentRevision, EffectiveSettings, LoadStatus, SaveError,
-    SaveResult, SettingField, SettingsDiagnostic, SettingsDraft, SettingsSnapshot,
+    browser_command_catalog, AppearanceMode, ApplyImpact, CommandCatalog, ContentRevision,
+    EffectiveSettings, LoadStatus, SaveError, SaveResult, SettingField, SettingsDiagnostic,
+    SettingsDraft, SettingsSnapshot,
 };
 use crate::settings_window::{open_or_focus_settings, SETTINGS_WINDOW_LABEL};
 use crate::{launch, AppState};
@@ -29,7 +30,7 @@ pub struct CommandError {
 }
 
 impl CommandError {
-    fn new(code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -115,13 +116,17 @@ pub struct CompleteSettingsSnapshot {
     pub actions: ActionAvailability,
     pub defaults: SettingsDraft,
     pub theme_packs: Vec<String>,
+    pub shortcut_catalog: CommandCatalog,
 }
 
 fn complete_snapshot(state: &AppState) -> CompleteSettingsSnapshot {
     let mut settings = state.settings_store.load();
     state
+        .browser_bridge
+        .reconcile_shortcuts(settings.effective.shortcuts.clone());
+    state
         .runtime
-        .publish_authoritative_appearance(settings.clone());
+        .publish_authoritative_restart_free_settings(settings.clone());
     // A valid legacy value is a first-save draft candidate only. It never
     // changes file status/revision and disappears when the exact origin does.
     if settings.status == LoadStatus::Missing {
@@ -139,6 +144,7 @@ fn complete_snapshot(state: &AppState) -> CompleteSettingsSnapshot {
         actions,
         defaults: SettingsDraft::defaults(),
         theme_packs: state.settings_store.available_theme_packs(),
+        shortcut_catalog: browser_command_catalog(),
     }
 }
 
@@ -185,6 +191,13 @@ fn apply_saved(
     let before = state.runtime.snapshot();
     let effective = saved.snapshot.effective.clone();
 
+    // A successful settings write is independently authoritative even when a
+    // later source/port restart fails.
+    state
+        .browser_bridge
+        .reconcile_shortcuts(effective.shortcuts.clone());
+    crate::browser_bridge::emit_browser_bootstrap(app);
+
     let status = if matches!(impact, ApplyImpact::RestartRuntime) {
         let generation = state.runtime.claim_generation();
         state.runtime.publish_starting(saved.snapshot, generation);
@@ -200,7 +213,7 @@ fn apply_saved(
         // updating only authored/active appearance fields.
         state
             .runtime
-            .publish_authoritative_appearance(saved.snapshot);
+            .publish_authoritative_restart_free_settings(saved.snapshot);
         if before.active.is_some() {
             ApplyStatus::SavedNoRestart
         } else {
@@ -267,6 +280,7 @@ pub(crate) fn get_settings_snapshot(
         APPEARANCE_EVENT,
         state.appearance.envelope(&snapshot.settings),
     );
+    crate::browser_bridge::emit_browser_bootstrap(&app);
     Ok(snapshot)
 }
 
@@ -447,6 +461,10 @@ pub(crate) async fn save_and_apply_settings(
     expected_revision: Option<ContentRevision>,
 ) -> Result<RuntimeApplyResult, CommandError> {
     authorize_settings(&window)?;
+    app.state::<AppState>()
+        .browser_bridge
+        .set_capture_active(false);
+    crate::browser_bridge::emit_browser_bootstrap(&app);
     let task_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = task_app.state::<AppState>();
@@ -469,6 +487,10 @@ pub(crate) async fn rebase_stale_settings(
     stale_revision: ContentRevision,
 ) -> Result<RuntimeApplyResult, CommandError> {
     authorize_settings(&window)?;
+    app.state::<AppState>()
+        .browser_bridge
+        .set_capture_active(false);
+    crate::browser_bridge::emit_browser_bootstrap(&app);
     let task_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = task_app.state::<AppState>();
@@ -490,6 +512,10 @@ pub(crate) async fn replace_malformed_settings(
     expected_revision: ContentRevision,
 ) -> Result<RuntimeApplyResult, CommandError> {
     authorize_settings(&window)?;
+    app.state::<AppState>()
+        .browser_bridge
+        .set_capture_active(false);
+    crate::browser_bridge::emit_browser_bootstrap(&app);
     let task_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = task_app.state::<AppState>();

@@ -145,6 +145,15 @@ same contract over staged/final artifacts.
 
 ## Automated gates
 
+The shared browser-chrome command catalog, page adapter, controlled Find/Search
+surfaces, and host capability boundary are confirmed by the actual-key
+Chromium harness described in
+[`browser-navigation.md`](browser-navigation.md). The harness starts a real
+native zfb dev server on an ephemeral loopback port, drives rendered routes with
+Playwright `page.keyboard.press(...)`, and owns process-group teardown. Its
+Tauri bootstrap is a deterministic page seam, so this evidence is intentionally
+separate from native macOS menu delivery.
+
 Run the focused current-toolchain gates with:
 
 ```sh
@@ -155,6 +164,8 @@ pnpm --dir app run typecheck
 pnpm --dir app run check:zfb
 pnpm --dir app run test:run
 pnpm --dir app run test:theme-packs
+pnpm --dir app exec playwright install chromium
+pnpm run test:browser-navigation
 pnpm --dir app exec zfb build
 pnpm run test:runtime-digest
 pnpm run test:runtime-files
@@ -174,13 +185,15 @@ generation/watch/live smoke, no-home scoping, readiness classification,
 boot-lazy neutralization, refresh/retry generations, workspace refresh tokens,
 native binary resolution, and process-group teardown.
 
-`pnpm b4push` is the repository's real nine-step sequence: zfb pin check; frozen
+`pnpm b4push` is the repository's real ten-step sequence: zfb pin check; frozen
 app install and installed-tree validation; app typecheck/zfb check/Vitest; Rust
 fmt; Linux-boundary clippy and tests with `--exclude ccresdoc`; native zfb build;
-the staged runtime digest/verification and serialized two-launch probe; and the
-frozen compatibility evidence/package/config/check/build fixture. Theme-pack
-validation and its standalone Node test are explicit focused gates above and
-are not silently implied by b4push's Vitest step.
+the staged runtime digest/verification and serialized two-launch probe; the
+frozen compatibility evidence/package/config/check/build fixture; and the
+actual-key Chromium browser-navigation confirmation. Install Chromium before
+the local b4push run; CI provisions the pinned browser with `--with-deps` in a
+separate step. Theme-pack validation and its standalone Node test are explicit
+focused gates above and are not silently implied by b4push's Vitest step.
 
 The staged runtime gate is:
 
@@ -209,6 +222,12 @@ scripts/test-macos-package.sh
 It must be run on macOS arm64 and must not be pointed at an installed app. On
 Linux the script reports the host-gate skip; Linux can run the staged native
 probe and static package assertions but cannot claim the Tauri/WebView launch.
+The additional native browser-chrome acceptance items (once-only primary and
+alternate accelerator arbitration, Settings capture suspension/restoration,
+full menu/action coverage, and ordinary-browser lifetime) are recorded in the
+[`macOS browser-navigation checklist`](macos-browser-navigation.md). Its
+`macos-arm64-browser-chrome-native` marker remains `PENDING` until a fresh
+macOS arm64 release-machine result replaces it.
 
 ## Residual visual handoff
 

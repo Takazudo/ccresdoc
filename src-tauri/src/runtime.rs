@@ -887,16 +887,18 @@ impl ApplyCoordinator {
         operation()
     }
 
-    /// Publish a freshly reloaded TOML appearance without restarting the docs
-    /// server or changing its active source/port contract.
-    pub fn publish_authoritative_appearance(&self, snapshot: SettingsSnapshot) {
+    /// Publish freshly reloaded restart-free settings without restarting the
+    /// docs server or changing its active source/port contract.
+    pub fn publish_authoritative_restart_free_settings(&self, snapshot: SettingsSnapshot) {
         let mut state = lock_unpoisoned(&self.state);
         let mode = snapshot.effective.appearance_mode.clone();
         let pack = snapshot.effective.theme_pack.clone();
+        let shortcuts = snapshot.effective.shortcuts.clone();
         state.authored = snapshot;
         if let Some(active) = state.active.as_mut() {
             active.appearance_mode = mode;
             active.theme_pack = pack;
+            active.shortcuts = shortcuts;
         }
     }
 
@@ -918,9 +920,11 @@ impl ApplyCoordinator {
                 state.authored = saved.snapshot;
                 let appearance_mode = state.authored.effective.appearance_mode.clone();
                 let theme_pack = state.authored.effective.theme_pack.clone();
+                let shortcuts = state.authored.effective.shortcuts.clone();
                 if let Some(active) = state.active.as_mut() {
                     active.appearance_mode = appearance_mode;
                     active.theme_pack = theme_pack;
+                    active.shortcuts = shortcuts;
                 }
                 let status = ApplyStatus::SavedNoRestart;
                 return Ok(RuntimeApplyResult {
@@ -998,6 +1002,7 @@ mod tests {
             preferred_port: port,
             effective_port: port,
             fallback_to_free_port: true,
+            shortcuts: SettingsDraft::defaults().shortcuts,
         };
         SettingsSnapshot {
             config_path: PathBuf::from("/tmp/config.toml"),
@@ -1670,7 +1675,7 @@ mod tests {
         let mut edited = settings("/new-authored-but-not-active", 6000);
         edited.effective.appearance_mode = AppearanceMode::Dark;
         edited.effective.theme_pack = "paper".into();
-        coordinator.publish_authoritative_appearance(edited);
+        coordinator.publish_authoritative_restart_free_settings(edited);
         let current = coordinator.snapshot();
         let active = current.active.unwrap();
         assert_eq!(active.claude_dir, Some(PathBuf::from("/old")));
@@ -1761,13 +1766,44 @@ mod tests {
         assert_eq!(second.status, ApplyStatus::SavedNoRestart);
         assert_eq!(restarts.load(Ordering::SeqCst), 1);
 
-        let mut source_switch = second.snapshot.authored.authored.clone();
-        source_switch.claude_dir = source_b.to_string_lossy().into_owned();
+        let mut only_shortcuts = second.snapshot.authored.authored.clone();
+        only_shortcuts
+            .shortcuts
+            .iter_mut()
+            .find(|entry| entry.command_id == "home")
+            .unwrap()
+            .bindings = vec!["Alt+Home".into()];
         let third = coordinator
             .apply_settings(
                 &store,
-                &source_switch,
+                &only_shortcuts,
                 second.snapshot.authored.revision.as_ref(),
+                |_, _| unreachable!("shortcut-only save must not restart"),
+            )
+            .unwrap();
+        assert_eq!(third.status, ApplyStatus::SavedNoRestart);
+        assert_eq!(restarts.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            third
+                .snapshot
+                .active
+                .as_ref()
+                .unwrap()
+                .shortcuts
+                .iter()
+                .find(|entry| entry.command_id == "home")
+                .unwrap()
+                .bindings,
+            ["Alt+Home"]
+        );
+
+        let mut source_switch = third.snapshot.authored.authored.clone();
+        source_switch.claude_dir = source_b.to_string_lossy().into_owned();
+        let fourth = coordinator
+            .apply_settings(
+                &store,
+                &source_switch,
+                third.snapshot.authored.revision.as_ref(),
                 |_, effective| {
                     restarts.fetch_add(1, Ordering::SeqCst);
                     assert_eq!(
@@ -1783,10 +1819,10 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(third.status, ApplyStatus::SavedNotActive);
+        assert_eq!(fourth.status, ApplyStatus::SavedNotActive);
         assert_eq!(restarts.load(Ordering::SeqCst), 2);
         assert_eq!(
-            third.snapshot.active.unwrap().claude_dir,
+            fourth.snapshot.active.unwrap().claude_dir,
             Some(std::fs::canonicalize(&source_a).unwrap())
         );
     }

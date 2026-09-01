@@ -15,6 +15,7 @@ tauri-plugin-dialog = "2"
 ccresdoc-claude-md = { path = "../crates/ccresdoc-claude-md" }
 html5ever = "0.38"
 libc = "0.2"
+muda = { version = "0.19", default-features = false }
 # issue #58: open external http(s) links in the OS browser from on_navigation
 open = "5"
 serde = { version = "1", features = ["derive"] }
