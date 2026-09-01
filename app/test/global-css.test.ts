@@ -45,4 +45,21 @@ describe("package CSS foundation", () => {
     expect(css).not.toMatch(/data-ccresdoc-load-controls-ready[^\n]*SidebarTree/);
     expect(css).not.toMatch(/\[data-zfb-island\][^\n]*button/);
   });
+
+  it("coordinates the browser toolbar and package sticky offsets", () => {
+    expect(css).toContain("--ccresdoc-browser-toolbar-h: 3.25rem");
+    expect(css).toContain("--ccresdoc-complete-chrome-offset:");
+    for (const selector of [
+      "header[data-header]",
+      "#desktop-sidebar",
+      "nav[data-zd-toc]",
+      '[data-zfb-island="FindInPageInit"] > div',
+      "[data-sidebar-resizer]",
+    ]) expect(css).toContain(selector);
+    expect(css).toContain("@media (pointer: coarse)");
+    expect(css).toContain("--ccresdoc-toolbar-control-size: 2.75rem");
+    expect(css).toContain("@media (hover: hover)");
+    expect(css).toContain("@media (prefers-reduced-motion: no-preference)");
+    expect(css).not.toMatch(/\.ccresdoc-browser-toolbar__path[^}]*max-inline-size/s);
+  });
 });
