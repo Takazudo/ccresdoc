@@ -17,6 +17,7 @@ export const RUNTIME_APP_FILES = Object.freeze([
   "package.json",
   "pnpm-lock.yaml",
   "pnpm-workspace.yaml",
+  "patches/@takazudo__zudo-doc@5.12.1.patch",
   "tsconfig.json",
   "zfb.config.ts",
   "pages/404.tsx",
@@ -170,6 +171,7 @@ function privacySurfaceFiles(root) {
     "tsconfig.json",
     "zfb.config.ts",
     "pages",
+    "patches",
     "public",
     "src",
     "dist",
@@ -225,6 +227,7 @@ export function assertAllowlistedInventory(root) {
   }
   const sourceSurfaceFiles = [
     ...["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.json", "zfb.config.ts"],
+    ...walkFiles(join(root, "patches")).map((path) => `patches/${path}`),
     ...walkFiles(join(root, "pages")).map((path) => `pages/${path}`),
     ...walkFiles(join(root, "src")).map((path) => `src/${path}`),
   ].sort();

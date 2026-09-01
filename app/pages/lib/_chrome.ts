@@ -9,8 +9,10 @@ import {
   createHeaderWithDefaults,
 } from "@takazudo/zudo-doc/header-with-defaults";
 import { FindInPageInit } from "@takazudo/zudo-doc/find-in-page";
+import { SearchWidget } from "@takazudo/zudo-doc/search-widget";
+import type { SearchWidgetSlotProps } from "@takazudo/zudo-doc/chrome-bindings";
 import { routeContext } from "./_route-context";
-import { SearchShortcutBoundary, SettingsHeaderButton } from "./_settings-button";
+import { SettingsHeaderButton } from "./_settings-button";
 import { AppearanceBridge } from "@/appearance/bridge";
 import { CCResDocBrowserToolbar } from "@/browser-chrome/toolbar";
 
@@ -31,11 +33,21 @@ function BrowserToolbarIsland() {
   );
 }
 
+function ControlledSearchWidget(props: Record<string, unknown>) {
+  const searchProps = props as unknown as SearchWidgetSlotProps;
+  return h(SearchWidget, {
+    ...searchProps,
+    base: routeContext.withBase("/"),
+    disableBuiltInShortcut: true,
+  });
+}
+
 const PackageHeaderBase = createHeaderWithDefaults({
   ...routeContext,
   components: {},
   hostBindings: {
     headerRightComponents: { "ccresdoc-settings": SettingsHeaderButtonIsland },
+    SearchWidget: ControlledSearchWidget,
   },
   withBase: (path: string) =>
     routeContext.withBase(path === "/" ? "/docs/" : path),
@@ -48,8 +60,7 @@ function PackageHeader(props: Parameters<typeof PackageHeaderBase>[0]) {
 function AppearanceBodyEnd() {
   return [
     Island({ when: "load", children: h(AppearanceBridge, {}) }),
-    Island({ when: "load", children: h(FindInPageInit, {}) }),
-    Island({ when: "load", children: h(SearchShortcutBoundary, {}) }),
+    Island({ when: "load", children: h(FindInPageInit, { disableBuiltInShortcut: true }) }),
   ];
 }
 

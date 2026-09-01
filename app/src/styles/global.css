@@ -225,6 +225,60 @@ nav[data-zd-toc] {
   top: var(--ccresdoc-complete-chrome-offset) !important;
 }
 
+[data-find-in-page-bar] {
+  max-inline-size: min(100vw, 30rem);
+}
+
+.find-in-page-control {
+  display: inline-flex;
+  min-block-size: 2rem;
+  min-inline-size: 2rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-muted);
+  border-radius: 0.25rem;
+  background: var(--color-bg);
+  color: var(--color-fg);
+}
+
+.find-in-page-control:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .find-in-page-control:hover {
+    background: var(--color-surface);
+  }
+}
+
+@media (max-width: 30rem) {
+  [data-find-in-page-bar] {
+    left: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+
+  [data-find-in-page-bar] input[type="search"] {
+    inline-size: auto;
+    flex: 1 1 7rem;
+  }
+}
+
+@media (pointer: coarse) {
+  .find-in-page-control {
+    min-block-size: 2.75rem;
+    min-inline-size: 2.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .find-in-page-control {
+    transition: background-color 150ms, color 150ms;
+  }
+}
+
 [data-sidebar-resizer] {
   top: var(--ccresdoc-complete-chrome-offset) !important;
 }
@@ -271,6 +325,12 @@ html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="SettingsHeaderBu
 
   .find-match-active {
     outline-color: HighlightText;
+  }
+
+  .find-in-page-control {
+    border-color: ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
   }
 
   html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="ThemeToggle"] button,

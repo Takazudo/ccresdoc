@@ -1,6 +1,8 @@
 "use client";
 
 import { navigate } from "@takazudo/zfb-runtime";
+import { openFindInPage } from "@takazudo/zudo-doc/find-in-page";
+import { openSearch } from "@takazudo/zudo-doc/search-widget-script";
 import catalog from "./command-catalog.json";
 import { ManagedHistoryController } from "./history";
 import type {
@@ -107,7 +109,6 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
   private shortcutEntries: ShortcutEntry[] = [];
   private nativeOwned = new Set<string>();
   private seenNativeInvocations = new Set<string>();
-  private dispatchingFind = false;
   private pendingNavigationType: "push" | "replace" | "traverse" | undefined;
   private started = false;
   private stopCallbacks: Unlisten[] = [];
@@ -210,9 +211,9 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
         await this.copyPath();
         return true;
       case "search-documentation": {
-        const button = document.querySelector<HTMLElement>("[data-open-search]");
-        button?.click();
-        return Boolean(button);
+        if (!document.querySelector("site-search")) return false;
+        openSearch({ refresh: true });
+        return true;
       }
       case "find-in-page":
         if (this.snapshot.mode === "browser") {
@@ -220,12 +221,7 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
           if (!query) return false;
           return typeof this.root.find === "function" ? this.root.find(query) : false;
         }
-        this.dispatchingFind = true;
-        document.dispatchEvent(new KeyboardEvent("keydown", {
-          key: "f", metaKey: /Mac|iPhone|iPad/.test(navigator.platform),
-          ctrlKey: !/Mac|iPhone|iPad/.test(navigator.platform), bubbles: true, cancelable: true,
-        }));
-        this.dispatchingFind = false;
+        openFindInPage();
         return true;
     }
   }
@@ -319,7 +315,7 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
   }
 
   private handleKeyDown = (event: KeyboardEvent): void => {
-    if (this.dispatchingFind || this.snapshot.bootstrap !== "ready" || editingTarget(event) || event.defaultPrevented) return;
+    if (this.snapshot.bootstrap !== "ready" || editingTarget(event) || event.defaultPrevented) return;
     const binding = eventBinding(event);
     if (this.nativeOwned.has(binding)) return;
     const entry = this.shortcutEntries.find((candidate) =>

@@ -1,0 +1,524 @@
+diff --git a/dist/find-in-page/find-bar.js b/dist/find-in-page/find-bar.js
+index b71df736d473cdfaa6d749d0b5c4591d3fc3b685..d8c5f2a418704f7c7bec1062e20530621ae8f525 100644
+--- a/dist/find-in-page/find-bar.js
++++ b/dist/find-in-page/find-bar.js
+@@ -53,13 +53,17 @@ function FindBar({ visible, onClose, findInPage, containerSelector }) {
+     [onClose, findInPage]
+   );
+   if (!visible) return null;
+-  return /* @__PURE__ */ jsxs("div", { className: "fixed top-[3.5rem] right-0 z-dropdown flex items-center gap-hsp-sm py-hsp-xs px-hsp-md bg-surface border-b border-l border-muted rounded-bl-lg shadow-md", children: [
++  return /* @__PURE__ */ jsxs("div", { "data-find-in-page-bar": true, className: "fixed top-[3.5rem] right-0 z-dropdown flex max-w-full items-center gap-hsp-xs py-hsp-xs px-hsp-sm bg-surface border-b border-l border-muted rounded-bl-lg shadow-md", children: [
+     /* @__PURE__ */ jsx(
+       "input",
+       {
+         ref: inputRef,
+-        className: "w-[12rem] py-[4px] px-hsp-sm rounded text-small bg-bg border border-muted text-fg outline-none focus:border-accent",
+-        type: "text",
++        className: "min-w-0 w-[12rem] py-[4px] px-hsp-sm rounded text-small bg-bg border border-muted text-fg outline-none focus:border-accent",
++        type: "search",
++        autocomplete: "off",
++        autocorrect: "off",
++        autocapitalize: "off",
++        spellcheck: "false",
+         value: query,
+         placeholder: "Find in page...",
+         "aria-label": "Find in page",
+@@ -70,41 +74,44 @@ function FindBar({ visible, onClose, findInPage, containerSelector }) {
+         onKeyDown: handleKeyDown
+       }
+     ),
+-    /* @__PURE__ */ jsx("span", { className: "text-caption whitespace-nowrap min-w-[3rem] text-center text-fg/60", children: matchInfo ? `${matchInfo.activeMatchOrdinal}/${matchInfo.matches}` : "" }),
++    /* @__PURE__ */ jsx("span", { className: "text-caption whitespace-nowrap min-w-[3rem] text-center text-fg/60", "aria-live": "polite", children: matchInfo ? `${matchInfo.activeMatchOrdinal}/${matchInfo.matches}` : "" }),
+     /* @__PURE__ */ jsx(
+       "button",
+       {
+         type: "button",
+-        className: "py-hsp-2xs px-hsp-sm rounded text-caption bg-bg border border-muted text-fg hover:bg-surface",
++        className: "find-in-page-control",
+         onClick: () => {
+           const result = findInPage.prev();
+           setMatchInfo(toMatchInfo(result));
+         },
+         title: "Previous (Shift+Enter)",
+-        children: "Prev"
++        "aria-label": "Previous match (Shift+Enter)",
++        children: /* @__PURE__ */ jsx("svg", { viewBox: "0 0 24 24", width: 18, height: 18, fill: "none", stroke: "currentColor", "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true", children: /* @__PURE__ */ jsx("path", { d: "m18 15-6-6-6 6" }) })
+       }
+     ),
+     /* @__PURE__ */ jsx(
+       "button",
+       {
+         type: "button",
+-        className: "py-hsp-2xs px-hsp-sm rounded text-caption bg-bg border border-muted text-fg hover:bg-surface",
++        className: "find-in-page-control",
+         onClick: () => {
+           const result = findInPage.next();
+           setMatchInfo(toMatchInfo(result));
+         },
+         title: "Next (Enter)",
+-        children: "Next"
++        "aria-label": "Next match (Enter)",
++        children: /* @__PURE__ */ jsx("svg", { viewBox: "0 0 24 24", width: 18, height: 18, fill: "none", stroke: "currentColor", "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true", children: /* @__PURE__ */ jsx("path", { d: "m6 9 6 6 6-6" }) })
+       }
+     ),
+     /* @__PURE__ */ jsx(
+       "button",
+       {
+         type: "button",
+-        className: "py-hsp-2xs px-hsp-sm rounded text-caption bg-bg border border-muted text-fg hover:bg-surface",
++        className: "find-in-page-control",
+         onClick: onClose,
+         title: "Close (Esc)",
+-        children: "Close"
++        "aria-label": "Close find in page (Escape)",
++        children: /* @__PURE__ */ jsx("svg", { viewBox: "0 0 24 24", width: 18, height: 18, fill: "none", stroke: "currentColor", "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true", children: /* @__PURE__ */ jsx("path", { d: "M18 6 6 18M6 6l12 12" }) })
+       }
+     )
+   ] });
+diff --git a/dist/find-in-page/find-in-page.js b/dist/find-in-page/find-in-page.js
+index 5f050fcdd99632ec101912ed8b4f57d0712618c5..c71969765537805b3cf4b2d52770a4aa7f5033e1 100644
+--- a/dist/find-in-page/find-in-page.js
++++ b/dist/find-in-page/find-in-page.js
+@@ -3,6 +3,52 @@ const ACTIVE_CLASS = "find-match-active";
+ const MATCH_ATTR = "data-find-match";
+ const ACTIVE_ATTR = "data-find-active";
+ const EMPTY_RESULT = Object.freeze({ matches: 0, activeMatchOrdinal: 0 });
++const EXCLUDED_SELECTOR = [
++  "script",
++  "style",
++  "noscript",
++  "template",
++  "button",
++  "input",
++  "select",
++  "textarea",
++  "option",
++  "[hidden]",
++  "[inert]",
++  "[aria-hidden='true']",
++  "dialog:not([open])",
++  "details:not([open]) > :not(summary)",
++  "[contenteditable]:not([contenteditable='false'])",
++  "[role='button']",
++  "[role='checkbox']",
++  "[role='combobox']",
++  "[role='dialog']",
++  "[role='listbox']",
++  "[role='menu']",
++  "[role='option']",
++  "[role='radio']",
++  "[role='searchbox']",
++  "[role='slider']",
++  "[role='spinbutton']",
++  "[role='switch']",
++  "[role='tab']",
++  "[role='textbox']",
++  "[data-find-in-page-bar]",
++  "[data-ccresdoc-browser-toolbar-shell]"
++].join(",");
++function isVisibleContent(node, container) {
++  const parent = node.parentElement;
++  if (!parent || !node.isConnected || !container.contains(node)) return false;
++  if (parent.closest(EXCLUDED_SELECTOR)) return false;
++  for (let element = parent; element && element !== container; element = element.parentElement) {
++    const style = getComputedStyle(element);
++    if (style.display === "none" || style.visibility === "hidden" || style.contentVisibility === "hidden") {
++      return false;
++    }
++  }
++  const containerStyle = getComputedStyle(container);
++  return containerStyle.display !== "none" && containerStyle.visibility !== "hidden" && containerStyle.contentVisibility !== "hidden";
++}
+ function createFindInPage() {
+   let matchElements = [];
+   let activeIndex = -1;
+@@ -32,9 +78,13 @@ function createFindInPage() {
+     activeIndex = index;
+     if (activeIndex >= 0 && activeIndex < matchElements.length) {
+       const current = matchElements[activeIndex];
++      if (!current.isConnected) {
++        clearMarks();
++        return;
++      }
+       current.classList.add(ACTIVE_CLASS);
+       current.setAttribute(ACTIVE_ATTR, "true");
+-      current.scrollIntoView?.({ block: "center" });
++      current.scrollIntoView?.({ block: "center", behavior: "auto" });
+     }
+   }
+   function currentResult() {
+@@ -55,7 +105,7 @@ function createFindInPage() {
+     const walker = document.createTreeWalker(
+       container,
+       NodeFilter.SHOW_TEXT,
+-      null
++      { acceptNode: (node2) => isVisibleContent(node2, container) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT }
+     );
+     const textNodes = [];
+     let node;
+@@ -75,7 +125,7 @@ function createFindInPage() {
+       }
+       if (positions.length === 0) continue;
+       const parent = textNode.parentNode;
+-      if (!parent) continue;
++      if (!parent || !textNode.isConnected || !container.contains(textNode)) continue;
+       let remainingNode = textNode;
+       const nodeMarks = [];
+       for (let i = positions.length - 1; i >= 0; i--) {
+diff --git a/dist/find-in-page/index.d.ts b/dist/find-in-page/index.d.ts
+index fa6b8a8f8d9169d392f67fd58323db4782b3d281..782168c987e37c66086b9ecb40b735441037d60d 100644
+--- a/dist/find-in-page/index.d.ts
++++ b/dist/find-in-page/index.d.ts
+@@ -1,11 +1,19 @@
+ import type { JSX } from "preact";
++export { createFindInPage } from "./find-in-page.js";
++export declare const FIND_IN_PAGE_COMMAND_EVENT = "zudo-doc:find-in-page-command";
++export declare function openFindInPage(): void;
++export declare function closeFindInPage(): void;
++export interface FindInPageInitProps {
++    /** Disable the package-owned Cmd/Ctrl+F listener when the host dispatches commands. */
++    disableBuiltInShortcut?: boolean;
++}
+ /**
+  * `displayName` pinned explicitly (matching
+  * `AiChatModal`/`ImageEnlarge`/`MermaidEnlarge`/`DesignTokenPanelBootstrap`)
+  * so zfb's `captureComponentName` emits a stable
+  * `data-zfb-island="FindInPageInit"` marker independent of minification.
+  */
+-export declare function FindInPageInit(): JSX.Element | null;
++export declare function FindInPageInit(props?: FindInPageInitProps): JSX.Element | null;
+ export declare namespace FindInPageInit {
+     var displayName: string;
+ }
+diff --git a/dist/find-in-page/index.js b/dist/find-in-page/index.js
+index 44723773bd006f86e7fc95539834210338d04c1e..b9e3e394dfd21f89174da8a988dea7c646e821c1 100644
+--- a/dist/find-in-page/index.js
++++ b/dist/find-in-page/index.js
+@@ -4,7 +4,17 @@ import { useState, useEffect, useRef } from "preact/compat";
+ import { FindBar } from "./find-bar.js";
+ import { createFindInPage } from "./find-in-page.js";
+ const CONTENT_SELECTOR = "article.zd-content";
+-function FindInPageInit() {
++const FIND_IN_PAGE_COMMAND_EVENT = "zudo-doc:find-in-page-command";
++function dispatchFindCommand(action) {
++  document.dispatchEvent(new CustomEvent(FIND_IN_PAGE_COMMAND_EVENT, { detail: { action } }));
++}
++function openFindInPage() {
++  dispatchFindCommand("open");
++}
++function closeFindInPage() {
++  dispatchFindCommand("close");
++}
++function FindInPageInit({ disableBuiltInShortcut = false } = {}) {
+   const [isTauri, setIsTauri] = useState(false);
+   const [visible, setVisible] = useState(false);
+   const findInPageRef = useRef(createFindInPage());
+@@ -14,7 +24,7 @@ function FindInPageInit() {
+     }
+   }, []);
+   useEffect(() => {
+-    if (!isTauri) return;
++    if (!isTauri || disableBuiltInShortcut) return;
+     const handler = (e) => {
+       if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+         e.preventDefault();
+@@ -23,14 +33,37 @@ function FindInPageInit() {
+     };
+     document.addEventListener("keydown", handler);
+     return () => document.removeEventListener("keydown", handler);
+-  }, [isTauri]);
++  }, [isTauri, disableBuiltInShortcut]);
+   useEffect(() => {
+-    const handler = () => {
++    const stop = () => {
+       findInPageRef.current.stop();
++    };
++    const close = () => {
++      stop();
+       setVisible(false);
+     };
+-    document.addEventListener("zfb:before-preparation", handler);
+-    return () => document.removeEventListener("zfb:before-preparation", handler);
++    const command = (event) => {
++      const action = event.detail?.action;
++      if (action === "open") {
++        setVisible(true);
++        const input = document.querySelector("[data-find-in-page-bar] input[aria-label='Find in page']");
++        if (input instanceof HTMLInputElement) {
++          input.focus();
++          input.select();
++        }
++      }
++      else if (action === "close") close();
++      else if (action === "toggle") setVisible((current) => !current);
++    };
++    document.addEventListener(FIND_IN_PAGE_COMMAND_EVENT, command);
++    document.addEventListener("zfb:before-preparation", close);
++    document.addEventListener("zfb:after-swap", close);
++    return () => {
++      document.removeEventListener(FIND_IN_PAGE_COMMAND_EVENT, command);
++      document.removeEventListener("zfb:before-preparation", close);
++      document.removeEventListener("zfb:after-swap", close);
++      stop();
++    };
+   }, []);
+   if (!isTauri) return null;
+   return /* @__PURE__ */ jsx(
+@@ -45,5 +78,9 @@ function FindInPageInit() {
+ }
+ FindInPageInit.displayName = "FindInPageInit";
+ export {
+-  FindInPageInit
++  FIND_IN_PAGE_COMMAND_EVENT,
++  FindInPageInit,
++  closeFindInPage,
++  createFindInPage,
++  openFindInPage
+ };
+diff --git a/dist/search-widget/index.d.ts b/dist/search-widget/index.d.ts
+index f3d8b71be6a1104b804e786e722f97101ba59957..c95b4faa020ca954e57306963aa3997e1aef810b 100644
+--- a/dist/search-widget/index.d.ts
++++ b/dist/search-widget/index.d.ts
+@@ -2,6 +2,8 @@
+ /** @jsxImportSource preact */
+ import type { JSX } from "preact";
+ export interface SearchWidgetProps {
++    /** Disable the package-owned Cmd/Ctrl+K listener when the host dispatches commands. */
++    disableBuiltInShortcut?: boolean;
+     /** Locale-aware placeholder: "Type to search..." / 「検索したい単語を入力」 */
+     placeholderText: string;
+     /** Locale-aware shortcut hint: "to open search from anywhere" / 「いつでも検索バーを開ける」 */
+diff --git a/dist/search-widget/index.js b/dist/search-widget/index.js
+index abdab5014c8c12804fe4fb4f1e51e4f1f710e5be..29b5c42f30ce96c673aa5a304ec95e22717fe50a 100644
+--- a/dist/search-widget/index.js
++++ b/dist/search-widget/index.js
+@@ -9,7 +9,8 @@ function SearchWidget(props) {
+     searchUnavailableText,
+     loadingIndexText,
+     noResultsText,
+-    base
++    base,
++    disableBuiltInShortcut = false
+   } = props;
+   return /* @__PURE__ */ jsxs(Fragment, { children: [
+     /* @__PURE__ */ jsxs(
+@@ -20,6 +21,7 @@ function SearchWidget(props) {
+         "data-search-unavailable": searchUnavailableText,
+         "data-loading-index": loadingIndexText,
+         "data-no-results": noResultsText,
++        "data-disable-built-in-shortcut": disableBuiltInShortcut ? "true" : void 0,
+         children: [
+           /* @__PURE__ */ jsx(
+             "button",
+@@ -81,10 +83,12 @@ function SearchWidget(props) {
+                     "input",
+                     {
+                       "data-search-input": true,
+-                      type: "text",
++                      type: "search",
+                       placeholder: placeholderText,
+                       class: "w-full bg-transparent text-body text-fg outline-none placeholder:text-muted",
+                       autocomplete: "off",
++                      autocorrect: "off",
++                      autocapitalize: "off",
+                       spellcheck: false
+                     }
+                   ),
+diff --git a/dist/search-widget-script/generated-script.js b/dist/search-widget-script/generated-script.js
+index ec254edd83f3b72c477858e30330830d9a8dde4a..04902a829a881dfdddff483a4a707df9d74cda99 100644
+--- a/dist/search-widget-script/generated-script.js
++++ b/dist/search-widget-script/generated-script.js
+@@ -3,6 +3,7 @@ function buildSearchWidgetScript() {
+   if (customElements.get("site-search")) return; // guard double-registration
+
+   var PAGE_SIZE = 10;
++  var SEARCH_COMMAND_EVENT = "zudo-doc:search-command";
+
+   // Allowlist-based href sanitizer: only relative paths and http(s) URLs are
+   // permitted. Anything else (e.g. javascript:, data:) falls back to "#" so a
+@@ -107,6 +108,7 @@ function buildSearchWidgetScript() {
+       this._countNarrow = null;
+       this._entries = null;
+       this._loading = false;
++      this._loadGeneration = 0;
+       this._indexUnavailable = false;
+       this._debounce = null;
+       this._currentQuery = "";
+@@ -138,6 +140,7 @@ function buildSearchWidgetScript() {
+       // SPA navigation a non-persisted <site-search> element would leak
+       // one document listener per nav without this hook.
+       this._afterNavHandler = null;
++      this._commandHandler = null;
+     }
+
+     connectedCallback() {
+@@ -167,7 +170,10 @@ function buildSearchWidgetScript() {
+       // Wire open/close handlers
+       var self = this;
+       if (this._openBtn) {
+-        this._openBtn.addEventListener("click", function() { self.openDialog(); });
++        this._openBtn.addEventListener("click", function() {
++          self.refreshIndex();
++          self.openDialog();
++        });
+       }
+       if (this._closeBtn) {
+         this._closeBtn.addEventListener("click", function() { self.closeDialog(); });
+@@ -203,13 +209,24 @@ function buildSearchWidgetScript() {
+       }
+
+       // Global keyboard shortcut (\u2318K / Ctrl+K to open)
+-      this._keydownHandler = function(e) {
+-        if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+-          e.preventDefault();
+-          self.openDialog();
+-        }
++      if (this.dataset.disableBuiltInShortcut !== "true") {
++        this._keydownHandler = function(e) {
++          if ((e.metaKey || e.ctrlKey) && e.key === "k") {
++            e.preventDefault();
++            self.openDialog();
++          }
++        };
++        document.addEventListener("keydown", this._keydownHandler);
++      }
++
++      this._commandHandler = function(e) {
++        var detail = e.detail || {};
++        if (detail.refresh) self.refreshIndex();
++        if (detail.action === "open") self.openDialog();
++        else if (detail.action === "close") self.closeDialog();
++        else if (detail.action === "refresh" && self._dialog && self._dialog.open) self.openDialog();
+       };
+-      document.addEventListener("keydown", this._keydownHandler);
++      document.addEventListener(SEARCH_COMMAND_EVENT, this._commandHandler);
+
+       // View-Transitions compat: re-run on the v2 after-navigate event.
+       // Stored on the instance so disconnectedCallback can detach it on
+@@ -228,6 +245,14 @@ function buildSearchWidgetScript() {
+     }
+
+     disconnectedCallback() {
++      this._loadGeneration++;
++      this._loading = false;
++      if (this._debounce) {
++        clearTimeout(this._debounce);
++        this._debounce = null;
++      }
++      if (this._dialog && this._dialog.open) this.closeDialog();
++      else document.documentElement.style.overflow = "";
+       if (this._keydownHandler) {
+         document.removeEventListener("keydown", this._keydownHandler);
+         this._keydownHandler = null;
+@@ -236,6 +261,10 @@ function buildSearchWidgetScript() {
+         document.removeEventListener("zfb:after-swap", this._afterNavHandler);
+         this._afterNavHandler = null;
+       }
++      if (this._commandHandler) {
++        document.removeEventListener(SEARCH_COMMAND_EVENT, this._commandHandler);
++        this._commandHandler = null;
++      }
+       if (this._resultsClickHandler && this._results) {
+         this._results.removeEventListener("click", this._resultsClickHandler);
+         this._resultsClickHandler = null;
+@@ -246,7 +275,7 @@ function buildSearchWidgetScript() {
+     openDialog() {
+       if (!this._dialog) return;
+       document.documentElement.style.overflow = "hidden";
+-      this._dialog.showModal();
++      if (!this._dialog.open) this._dialog.showModal();
+       if (this._input) {
+         this._input.focus();
+         this._input.select();
+@@ -258,10 +287,25 @@ function buildSearchWidgetScript() {
+
+     closeDialog() {
+       if (!this._dialog) return;
+-      this._dialog.close();
++      if (this._dialog.open) this._dialog.close();
+       document.documentElement.style.overflow = "";
+     }
+
++    refreshIndex() {
++      if (this._debounce) {
++        clearTimeout(this._debounce);
++        this._debounce = null;
++      }
++      this.teardownSentinel();
++      this._entries = null;
++      this._indexUnavailable = false;
++      this._loading = false;
++      this._allResults = [];
++      this._shownCount = 0;
++      this.updateCount();
++      if (!this._loading) this.loadIndex();
++    }
++
+     handleInput() {
+       var self = this;
+       if (this._debounce) clearTimeout(this._debounce);
+@@ -272,6 +316,7 @@ function buildSearchWidgetScript() {
+       if (this._loading) return;
+       this._loading = true;
+       var self = this;
++      var generation = ++this._loadGeneration;
+       var base = this.dataset.base || "/";
+       fetch(base + "search-index.json")
+         .then(function(r) {
+@@ -279,6 +324,7 @@ function buildSearchWidgetScript() {
+           return r.json();
+         })
+         .then(function(data) {
++          if (generation !== self._loadGeneration) return;
+           self._entries = Array.isArray(data) ? data : (data.entries || []);
+           prepareLc(self._entries);
+           self._loading = false;
+@@ -291,6 +337,7 @@ function buildSearchWidgetScript() {
+           }
+         })
+         .catch(function() {
++          if (generation !== self._loadGeneration) return;
+           self._loading = false;
+           self._indexUnavailable = true;
+           if (self._results) {
+diff --git a/dist/search-widget-script/index.d.ts b/dist/search-widget-script/index.d.ts
+index 063ba1f9112babc8bf4c0746bb6920b20a0702f0..8d79d4846cd23a2c40fe7d24b72750ae961225cc 100644
+--- a/dist/search-widget-script/index.d.ts
++++ b/dist/search-widget-script/index.d.ts
+@@ -1 +1,9 @@
+ export { SEARCH_WIDGET_SCRIPT } from "./generated-script.js";
++export declare const SEARCH_COMMAND_EVENT = "zudo-doc:search-command";
++export interface OpenSearchOptions {
++    /** Refresh the package-owned index before opening. Defaults to true. */
++    refresh?: boolean;
++}
++export declare function openSearch(options?: OpenSearchOptions): void;
++export declare function closeSearch(): void;
++export declare function refreshSearch(): void;
+diff --git a/dist/search-widget-script/index.js b/dist/search-widget-script/index.js
+index 25532b98ee684a75066db9873b9aaf87993b4b79..be588834a674bf73e0d1d49de5ca573c4fb0ebf6 100644
+--- a/dist/search-widget-script/index.js
++++ b/dist/search-widget-script/index.js
+@@ -1,4 +1,21 @@
+ import { SEARCH_WIDGET_SCRIPT } from "./generated-script.js";
++const SEARCH_COMMAND_EVENT = "zudo-doc:search-command";
++function dispatchSearchCommand(action, refresh = false) {
++  document.dispatchEvent(new CustomEvent(SEARCH_COMMAND_EVENT, { detail: { action, refresh } }));
++}
++function openSearch(options = {}) {
++  dispatchSearchCommand("open", options.refresh !== false);
++}
++function closeSearch() {
++  dispatchSearchCommand("close");
++}
++function refreshSearch() {
++  dispatchSearchCommand("refresh", true);
++}
+ export {
+-  SEARCH_WIDGET_SCRIPT
++  SEARCH_COMMAND_EVENT,
++  SEARCH_WIDGET_SCRIPT,
++  closeSearch,
++  openSearch,
++  refreshSearch
+ };
