@@ -13,7 +13,7 @@ const checkInstalled = process.argv.includes("--installed");
 const zudoDocPatch = {
   version: "5.12.1",
   path: "patches/@takazudo__zudo-doc@5.12.1.patch",
-  hash: "cababf75541c4028cbc76a029df3372f873fda178726b3aa469d234e283fcb05",
+  hash: "845bacae4edff6b516c1a26ac5d15d07ed4583f0dd908a883661be56463cbe53",
 };
 
 const required = {

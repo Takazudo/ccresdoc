@@ -3,7 +3,7 @@
 CCResDoc pins `@takazudo/zudo-doc` to `5.12.1` and applies the consumer-local
 patch at `app/patches/@takazudo__zudo-doc@5.12.1.patch`. The patch SHA-256 and
 pnpm lock hash are both
-`cababf75541c4028cbc76a029df3372f873fda178726b3aa469d234e283fcb05`.
+`845bacae4edff6b516c1a26ac5d15d07ed4583f0dd908a883661be56463cbe53`.
 `scripts/validate-dependencies.mjs` checks the version, registration, patch
 bytes, lock resolution, and installed public controllers.
 

@@ -330,10 +330,10 @@ index ec254edd83f3b72c477858e30330830d9a8dde4a..04902a829a881dfdddff483a4a707df9
 +++ b/dist/search-widget-script/generated-script.js
 @@ -3,6 +3,7 @@ function buildSearchWidgetScript() {
    if (customElements.get("site-search")) return; // guard double-registration
- 
+
    var PAGE_SIZE = 10;
 +  var SEARCH_COMMAND_EVENT = "zudo-doc:search-command";
- 
+
    // Allowlist-based href sanitizer: only relative paths and http(s) URLs are
    // permitted. Anything else (e.g. javascript:, data:) falls back to "#" so a
 @@ -107,6 +108,7 @@ function buildSearchWidgetScript() {
@@ -350,7 +350,7 @@ index ec254edd83f3b72c477858e30330830d9a8dde4a..04902a829a881dfdddff483a4a707df9
        this._afterNavHandler = null;
 +      this._commandHandler = null;
      }
- 
+
      connectedCallback() {
 @@ -167,7 +170,10 @@ function buildSearchWidgetScript() {
        // Wire open/close handlers
@@ -366,7 +366,7 @@ index ec254edd83f3b72c477858e30330830d9a8dde4a..04902a829a881dfdddff483a4a707df9
          this._closeBtn.addEventListener("click", function() { self.closeDialog(); });
 @@ -203,13 +209,24 @@ function buildSearchWidgetScript() {
        }
- 
+
        // Global keyboard shortcut (\u2318K / Ctrl+K to open)
 -      this._keydownHandler = function(e) {
 -        if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -392,12 +392,12 @@ index ec254edd83f3b72c477858e30330830d9a8dde4a..04902a829a881dfdddff483a4a707df9
        };
 -      document.addEventListener("keydown", this._keydownHandler);
 +      document.addEventListener(SEARCH_COMMAND_EVENT, this._commandHandler);
- 
+
        // View-Transitions compat: re-run on the v2 after-navigate event.
        // Stored on the instance so disconnectedCallback can detach it on
 @@ -228,6 +245,14 @@ function buildSearchWidgetScript() {
      }
- 
+
      disconnectedCallback() {
 +      this._loadGeneration++;
 +      this._loading = false;
@@ -431,14 +431,14 @@ index ec254edd83f3b72c477858e30330830d9a8dde4a..04902a829a881dfdddff483a4a707df9
          this._input.focus();
          this._input.select();
 @@ -258,10 +287,25 @@ function buildSearchWidgetScript() {
- 
+
      closeDialog() {
        if (!this._dialog) return;
 -      this._dialog.close();
 +      if (this._dialog.open) this._dialog.close();
        document.documentElement.style.overflow = "";
      }
- 
+
 +    refreshIndex() {
 +      if (this._debounce) {
 +        clearTimeout(this._debounce);
