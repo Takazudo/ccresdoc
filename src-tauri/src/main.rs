@@ -2549,6 +2549,7 @@ mod tests {
                 preferred_port: settings::DEFAULT_PORT,
                 effective_port: settings::DEFAULT_PORT,
                 fallback_to_free_port: true,
+                shortcuts: settings::default_shortcut_entries(),
             };
             let candidate = build_candidate(&workspace, &effective, generation, "").unwrap();
             assert_eq!(candidate.root.join("claude-md").exists(), claude_enabled);
@@ -2603,6 +2604,7 @@ mod tests {
             preferred_port: settings::DEFAULT_PORT,
             effective_port: settings::DEFAULT_PORT,
             fallback_to_free_port: true,
+            shortcuts: settings::default_shortcut_entries(),
         };
         let error = build_candidate(&workspace, &effective, 9, "").unwrap_err();
         assert!(error.contains("Codex candidate generation failed"));

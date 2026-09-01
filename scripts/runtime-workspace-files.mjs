@@ -26,6 +26,7 @@ export const RUNTIME_APP_FILES = Object.freeze([
   "pages/lib/_route-context.ts",
   "pages/lib/_settings-button.ts",
   "src/appearance/bridge.tsx",
+  "src/browser-chrome/command-catalog.json",
   "src/config/settings.ts",
   "src/config/theme-pack-slugs.json",
   "src/content/docs/index.mdx",

@@ -11,8 +11,9 @@ use tauri_plugin_dialog::DialogExt;
 use crate::appearance::{AppearanceEnvelope, AppearanceSource, AppearanceValue, APPEARANCE_EVENT};
 use crate::runtime::{ApplyStatus, RuntimeApplyResult, RuntimePhase, RuntimeSnapshot};
 use crate::settings::{
-    AppearanceMode, ApplyImpact, ContentRevision, EffectiveSettings, LoadStatus, SaveError,
-    SaveResult, SettingField, SettingsDiagnostic, SettingsDraft, SettingsSnapshot,
+    browser_command_catalog, AppearanceMode, ApplyImpact, CommandCatalog, ContentRevision,
+    EffectiveSettings, LoadStatus, SaveError, SaveResult, SettingField, SettingsDiagnostic,
+    SettingsDraft, SettingsSnapshot,
 };
 use crate::settings_window::{open_or_focus_settings, SETTINGS_WINDOW_LABEL};
 use crate::{launch, AppState};
@@ -115,13 +116,14 @@ pub struct CompleteSettingsSnapshot {
     pub actions: ActionAvailability,
     pub defaults: SettingsDraft,
     pub theme_packs: Vec<String>,
+    pub shortcut_catalog: CommandCatalog,
 }
 
 fn complete_snapshot(state: &AppState) -> CompleteSettingsSnapshot {
     let mut settings = state.settings_store.load();
     state
         .runtime
-        .publish_authoritative_appearance(settings.clone());
+        .publish_authoritative_restart_free_settings(settings.clone());
     // A valid legacy value is a first-save draft candidate only. It never
     // changes file status/revision and disappears when the exact origin does.
     if settings.status == LoadStatus::Missing {
@@ -139,6 +141,7 @@ fn complete_snapshot(state: &AppState) -> CompleteSettingsSnapshot {
         actions,
         defaults: SettingsDraft::defaults(),
         theme_packs: state.settings_store.available_theme_packs(),
+        shortcut_catalog: browser_command_catalog(),
     }
 }
 
@@ -200,7 +203,7 @@ fn apply_saved(
         // updating only authored/active appearance fields.
         state
             .runtime
-            .publish_authoritative_appearance(saved.snapshot);
+            .publish_authoritative_restart_free_settings(saved.snapshot);
         if before.active.is_some() {
             ApplyStatus::SavedNoRestart
         } else {
