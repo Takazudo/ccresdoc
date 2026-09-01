@@ -275,6 +275,7 @@ dependencies = [
  "filetime",
  "html5ever",
  "libc",
+ "muda",
  "open",
  "serde",
  "serde_json",

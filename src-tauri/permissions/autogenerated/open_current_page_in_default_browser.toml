@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-current-page-in-default-browser"
+description = "Enables the open_current_page_in_default_browser command without any pre-configured scope."
+commands.allow = ["open_current_page_in_default_browser"]
+
+[[permission]]
+identifier = "deny-open-current-page-in-default-browser"
+description = "Denies the open_current_page_in_default_browser command without any pre-configured scope."
+commands.deny = ["open_current_page_in_default_browser"]
