@@ -1548,6 +1548,8 @@ fn reserved_shortcuts() -> Vec<(&'static str, NormalizedShortcut)> {
         ("Actual Size", "Mod+0"),
         ("Zoom In", "Mod+="),
         ("Zoom Out", "Mod+-"),
+        ("Toggle Developer Tools", "Mod+Alt+I"),
+        ("Minimize", "Mod+M"),
         ("Hide", "Mod+H"),
         ("Hide Others", "Mod+Alt+H"),
         ("Quit", "Mod+Q"),
@@ -1681,11 +1683,9 @@ fn merge_shortcuts(doc: &mut DocumentMut, entries: &[ShortcutEntry]) {
         .into_iter()
         .map(|entry| (entry.command_id, entry.bindings))
         .collect::<BTreeMap<_, _>>();
-    let has_custom_data = entries.iter().any(|entry| {
-        defaults
-            .get(&entry.command_id)
-            .map_or(true, |bindings| bindings != &entry.bindings)
-    });
+    let has_custom_data = entries
+        .iter()
+        .any(|entry| defaults.get(&entry.command_id) != Some(&entry.bindings));
     if doc.get("shortcuts").is_none() && !has_custom_data {
         return;
     }
@@ -2748,6 +2748,18 @@ mod tests {
             .1
             .iter()
             .any(|diagnostic| { diagnostic.message.contains("reserved action Settings") }));
+
+        draft
+            .shortcuts
+            .iter_mut()
+            .find(|entry| entry.command_id == "home")
+            .unwrap()
+            .bindings = vec!["Mod+Alt+I".into()];
+        assert!(store.validate(&draft).1.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("reserved action Toggle Developer Tools")
+        }));
     }
 
     #[test]
