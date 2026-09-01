@@ -18,6 +18,7 @@
 //! nothing is left holding its effective port. Closing Settings only hides it.
 
 pub mod appearance;
+pub mod browser_bridge;
 mod menu;
 pub mod runtime;
 mod search_index_publication;
@@ -150,6 +151,7 @@ struct AppState {
     runtime: Arc<runtime::ApplyCoordinator>,
     settings_store: SettingsStore,
     appearance: appearance::AppearanceState,
+    browser_bridge: browser_bridge::BrowserBridge,
     /// Read by the navigation callback without consulting Tauri state.
     effective_port: Arc<AtomicU16>,
     /// Set before exit teardown. Publication handshakes with this flag so a
@@ -265,7 +267,9 @@ fn navigate_fresh_main_to_docs(app_handle: &AppHandle) {
 /// runs from this page's error panel, so both paths converge on the same launch
 /// lease and semantic-readiness classifier.
 fn navigate_to_loading(app_handle: &AppHandle) {
-    app_handle.state::<AppState>().appearance.clear_candidate();
+    let state = app_handle.state::<AppState>();
+    state.appearance.clear_candidate();
+    state.browser_bridge.deactivate();
     if let Some(w) = app_handle.get_webview_window("main") {
         if let Ok(url) = LOADING_URL.parse::<tauri::Url>() {
             let _ = w.navigate(url);
@@ -1644,6 +1648,7 @@ fn recover_previous_runtime(
         .store(choice.effective_port, Ordering::SeqCst);
     state.runtime.publish_ready(active, choice, generation);
     state.runtime.publish_generated(counts, generation);
+    state.browser_bridge.activate(generation);
     Ok(())
 }
 
@@ -1791,6 +1796,7 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
         kill_sidecar(&mut old.sidecar, &log_path);
     }
     state.effective_port.store(0, Ordering::SeqCst);
+    state.browser_bridge.deactivate();
 
     let docs_dir = workspace.join("src").join("content").join("docs");
     let backup_dir = workspace
@@ -2077,6 +2083,7 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
                 .effective_port
                 .store(choice.effective_port, Ordering::SeqCst);
             state.runtime.publish_ready(desired, choice, my_gen);
+            state.browser_bridge.activate(my_gen);
             state
                 .runtime
                 .publish_generated(candidate.counts.clone(), my_gen);
@@ -2248,6 +2255,8 @@ fn main() {
     let settings_snapshot = settings_store.load();
     let appearance_seed =
         appearance::bootstrap_seed(&settings_snapshot, settings_store.available_theme_packs());
+    let browser_bridge =
+        browser_bridge::BrowserBridge::new(settings_snapshot.effective.shortcuts.clone());
     let runtime = Arc::new(runtime::ApplyCoordinator::new(settings_snapshot));
     let effective_port = Arc::new(AtomicU16::new(0));
     let app_state = AppState {
@@ -2257,6 +2266,7 @@ fn main() {
         runtime,
         settings_store,
         appearance: appearance::AppearanceState::default(),
+        browser_bridge,
         effective_port: effective_port.clone(),
         shutting_down: AtomicBool::new(false),
     };
@@ -2269,6 +2279,11 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
+            browser_bridge::get_browser_bootstrap,
+            browser_bridge::update_browser_navigation_state,
+            browser_bridge::set_shortcut_capture_active,
+            browser_bridge::open_current_page_in_default_browser,
+            browser_bridge::reload_documentation,
             settings_commands::retry_launch,
             settings_commands::open_settings_window,
             settings_commands::get_settings_snapshot,
@@ -2298,7 +2313,11 @@ fn main() {
             log_to(&log_path, "setup: starting CCResDoc");
 
             // ── Menu ──
-            app.set_menu(menu::build(app)?)?;
+            let built_menu = menu::build(app)?;
+            app.set_menu(built_menu.menu)?;
+            app.state::<AppState>()
+                .browser_bridge
+                .install_handles(built_menu.browser);
 
             app.on_menu_event(|app_handle, event| match event.id().as_ref() {
                 SETTINGS_MENU_ID => {
@@ -2308,10 +2327,6 @@ fn main() {
                             &format!("open Settings failed: {error}"),
                         );
                     }
-                }
-                "refresh" => {
-                    navigate_to_loading(app_handle);
-                    start_launch(app_handle);
                 }
                 "devtools" => {
                     if let Some(w) = app_handle.get_webview_window("main") {
@@ -2333,7 +2348,34 @@ fn main() {
                     let z = (*state.zoom.lock().unwrap() - 0.1).max(0.1);
                     apply_zoom(app_handle, z);
                 }
-                _ => {}
+                menu_id => {
+                    let Some(command_id) = menu::browser_command_id(menu_id) else {
+                        return;
+                    };
+                    if browser_bridge::emit_native_command(app_handle, command_id).is_none() {
+                        return;
+                    }
+                    match command_id {
+                        "reload-documentation" => {
+                            navigate_to_loading(app_handle);
+                            start_launch(app_handle);
+                        }
+                        "open-in-default-browser" => {
+                            let app = app_handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let Some(window) = app.get_webview_window("main") else {
+                                    return;
+                                };
+                                let _ = browser_bridge::open_current_page_in_default_browser(
+                                    window,
+                                    app.clone(),
+                                )
+                                .await;
+                            });
+                        }
+                        _ => {}
+                    }
+                }
             });
 
             // ── Window ──
@@ -2385,6 +2427,8 @@ fn main() {
                     {
                         api.prevent_close();
                         let state = app_handle.state::<AppState>();
+                        state.browser_bridge.set_capture_active(false);
+                        browser_bridge::emit_browser_bootstrap(app_handle);
                         state.appearance.clear_preview();
                         let authoritative = state.settings_store.load();
                         let _ = app_handle.emit(
@@ -2403,10 +2447,12 @@ fn main() {
                     }
                 }
                 LifecycleAction::StopForMainClose => {
+                    app_handle.state::<AppState>().browser_bridge.deactivate();
                     let log_path = log_path(app_handle);
                     teardown(app_handle, &resources_for_exit, &log_path, false);
                 }
                 LifecycleAction::Shutdown => {
+                    app_handle.state::<AppState>().browser_bridge.deactivate();
                     let log_path = log_path(app_handle);
                     teardown(app_handle, &resources_for_exit, &log_path, true);
                 }
@@ -2442,6 +2488,20 @@ fn main() {
                     }
                 }
                 LifecycleAction::Ignore => {}
+            }
+            if let tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Focused(false),
+                ..
+            } = &event
+            {
+                if label == SETTINGS_WINDOW_LABEL {
+                    app_handle
+                        .state::<AppState>()
+                        .browser_bridge
+                        .set_capture_active(false);
+                    browser_bridge::emit_browser_bootstrap(app_handle);
+                }
             }
         });
 }
@@ -3091,6 +3151,11 @@ mod tests {
         )
         .unwrap();
         let commands = [
+            "get_browser_bootstrap",
+            "update_browser_navigation_state",
+            "set_shortcut_capture_active",
+            "open_current_page_in_default_browser",
+            "reload_documentation",
             "retry_launch",
             "open_settings_window",
             "get_settings_snapshot",
@@ -3130,6 +3195,19 @@ mod tests {
         assert!(main_permissions.contains(&serde_json::json!("allow-open-settings-window")));
         assert!(main_permissions.contains(&serde_json::json!("allow-retry-launch")));
         assert!(main_permissions.contains(&serde_json::json!("allow-update-appearance")));
+        for browser_permission in [
+            "allow-get-browser-bootstrap",
+            "allow-update-browser-navigation-state",
+            "allow-open-current-page-in-default-browser",
+            "allow-reload-documentation",
+        ] {
+            assert!(main_permissions.contains(&serde_json::json!(browser_permission)));
+            assert!(!settings_permissions.contains(&serde_json::json!(browser_permission)));
+        }
+        assert!(!main_permissions.contains(&serde_json::json!("allow-set-shortcut-capture-active")));
+        assert!(
+            settings_permissions.contains(&serde_json::json!("allow-set-shortcut-capture-active"))
+        );
         for privileged in [
             "allow-get-settings-snapshot",
             "allow-preview-appearance",
@@ -3147,8 +3225,13 @@ mod tests {
         assert!(!settings_permissions.contains(&serde_json::json!("allow-update-appearance")));
         assert!(settings_permissions.contains(&serde_json::json!("core:event:allow-listen")));
         assert!(settings_permissions.contains(&serde_json::json!("core:event:allow-unlisten")));
+        assert!(main_permissions.contains(&serde_json::json!("core:event:allow-listen")));
+        assert!(main_permissions.contains(&serde_json::json!("core:event:allow-unlisten")));
+        assert!(!main_permissions.contains(&serde_json::json!("core:default")));
         assert!(!settings_permissions.contains(&serde_json::json!("core:event:default")));
         assert!(!settings_permissions.contains(&serde_json::json!("core:event:allow-emit")));
+        assert!(!main_permissions.contains(&serde_json::json!("core:event:default")));
+        assert!(!main_permissions.contains(&serde_json::json!("core:event:allow-emit")));
         assert!(!settings.to_string().contains('*'));
         assert!(!settings.to_string().to_ascii_lowercase().contains("test"));
     }

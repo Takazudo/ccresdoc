@@ -6,7 +6,12 @@
     "urls": ["http://localhost:*/*", "http://127.0.0.1:*/*"]
   },
   "permissions": [
-    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-get-browser-bootstrap",
+    "allow-update-browser-navigation-state",
+    "allow-open-current-page-in-default-browser",
+    "allow-reload-documentation",
     "allow-retry-launch",
     "allow-open-settings-window",
     "allow-update-appearance"

@@ -30,7 +30,7 @@ pub struct CommandError {
 }
 
 impl CommandError {
-    fn new(code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -122,6 +122,9 @@ pub struct CompleteSettingsSnapshot {
 fn complete_snapshot(state: &AppState) -> CompleteSettingsSnapshot {
     let mut settings = state.settings_store.load();
     state
+        .browser_bridge
+        .reconcile_shortcuts(settings.effective.shortcuts.clone());
+    state
         .runtime
         .publish_authoritative_restart_free_settings(settings.clone());
     // A valid legacy value is a first-save draft candidate only. It never
@@ -187,6 +190,13 @@ fn apply_saved(
     let impact = saved.impact.clone();
     let before = state.runtime.snapshot();
     let effective = saved.snapshot.effective.clone();
+
+    // A successful settings write is independently authoritative even when a
+    // later source/port restart fails.
+    state
+        .browser_bridge
+        .reconcile_shortcuts(effective.shortcuts.clone());
+    crate::browser_bridge::emit_browser_bootstrap(app);
 
     let status = if matches!(impact, ApplyImpact::RestartRuntime) {
         let generation = state.runtime.claim_generation();
@@ -270,6 +280,7 @@ pub(crate) fn get_settings_snapshot(
         APPEARANCE_EVENT,
         state.appearance.envelope(&snapshot.settings),
     );
+    crate::browser_bridge::emit_browser_bootstrap(&app);
     Ok(snapshot)
 }
 
@@ -450,6 +461,10 @@ pub(crate) async fn save_and_apply_settings(
     expected_revision: Option<ContentRevision>,
 ) -> Result<RuntimeApplyResult, CommandError> {
     authorize_settings(&window)?;
+    app.state::<AppState>()
+        .browser_bridge
+        .set_capture_active(false);
+    crate::browser_bridge::emit_browser_bootstrap(&app);
     let task_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = task_app.state::<AppState>();
@@ -472,6 +487,10 @@ pub(crate) async fn rebase_stale_settings(
     stale_revision: ContentRevision,
 ) -> Result<RuntimeApplyResult, CommandError> {
     authorize_settings(&window)?;
+    app.state::<AppState>()
+        .browser_bridge
+        .set_capture_active(false);
+    crate::browser_bridge::emit_browser_bootstrap(&app);
     let task_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = task_app.state::<AppState>();
@@ -493,6 +512,10 @@ pub(crate) async fn replace_malformed_settings(
     expected_revision: ContentRevision,
 ) -> Result<RuntimeApplyResult, CommandError> {
     authorize_settings(&window)?;
+    app.state::<AppState>()
+        .browser_bridge
+        .set_capture_active(false);
+    crate::browser_bridge::emit_browser_bootstrap(&app);
     let task_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = task_app.state::<AppState>();
