@@ -941,7 +941,8 @@ async function assertMoreAndToolbarActions(page) {
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-browser-command")), "settings", "End focuses the last menu action");
   await page.keyboard.press("Home");
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-browser-command")), "search-documentation", "Home focuses the first menu action");
-  await page.mouse.click(2, 500);
+  await page.getByRole("heading", { name: "CCResDoc Resources", exact: true }).click();
+  await menu(page).waitFor({ state: "hidden", timeout: browserTimeoutMs });
   assert.equal(await menu(page).isVisible(), false, "outside click closes More");
 
   await trigger.click();

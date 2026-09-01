@@ -84,6 +84,26 @@ describe("browser toolbar", () => {
     expect(document.activeElement?.getAttribute("data-browser-command")).toBe("copy-page-path");
   });
 
+  it("closes More on an outside press even when the target stops propagation", async () => {
+    const { root } = mount();
+    const trigger = root.querySelector<HTMLButtonElement>("[data-browser-command='more']")!;
+    const menu = root.querySelector<HTMLElement>("[role='menu']")!;
+    const outside = document.createElement("button");
+    outside.addEventListener("pointerdown", (event) => event.stopPropagation());
+    document.body.append(outside);
+    roots.push(outside);
+
+    act(() => { trigger.click(); });
+    await Promise.resolve();
+    expect(menu.hidden).toBe(false);
+
+    act(() => {
+      outside.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    });
+    await Promise.resolve();
+    expect(menu.hidden).toBe(true);
+  });
+
   it("routes direct and overflow actions through the same adapter", () => {
     const { root, execute } = mount();
     root.querySelector<HTMLButtonElement>("[data-browser-command='back']")!.click();

@@ -84,10 +84,12 @@ function BrowserToolbarMarkup({ snapshot, adapter }: {
       if (event.target instanceof Node && !toolbarRef.current?.contains(event.target)) closeMenu();
     };
     const beforeNavigate = () => closeMenu();
-    document.addEventListener("pointerdown", outside);
+    // Observe outside presses in capture phase so an unrelated control cannot
+    // strand the menu open by stopping pointer propagation in its own handler.
+    document.addEventListener("pointerdown", outside, true);
     document.addEventListener("zfb:before-preparation", beforeNavigate);
     return () => {
-      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("pointerdown", outside, true);
       document.removeEventListener("zfb:before-preparation", beforeNavigate);
     };
   }, [menuOpen]);
