@@ -36,6 +36,21 @@ Key facts:
   coordinator owns overview/status pages and transactional rollback; each
   enabled source owns one watcher, and `zfb dev` content-watch HMRs the result.
 
+## Open in an ordinary browser
+
+The app owns a loopback documentation server. **Open in Default Browser** opens
+the current live `/docs/...` URL only while CCResDoc and that server remain
+running; quitting the app ends that live URL. An ordinary browser page has no
+Tauri bridge or privileged capability. History, Home, Find, Search, and Copy
+remain available there, while Settings, Reload Documentation, and Open in
+Default Browser are disabled. Reload Documentation is a native host restart
+and semantic-readiness flow, not a normal browser `location.reload()`.
+
+The shared toolbar/shortcut contract, actual-key browser harness, Find patch
+boundary, and macOS arm64 acceptance marker are documented in
+[`docs/architecture/browser-navigation.md`](docs/architecture/browser-navigation.md)
+and [`docs/architecture/macos-browser-navigation.md`](docs/architecture/macos-browser-navigation.md).
+
 ## Settings contract
 
 Settings are a human-editable TOML document. The path is resolved in this order:
@@ -292,10 +307,12 @@ The final automated and host-only acceptance matrix is documented in
 ## CI
 
 GitHub Actions runs frozen published frontend dependency, type, zfb-check,
-Vitest, and native-build gates alongside `cargo fmt --check`,
-`cargo clippy --workspace --exclude ccresdoc`, and `cargo test --workspace
---exclude ccresdoc`. The `ccresdoc` (src-tauri) crate is excluded because
-webkit2gtk is not available on ubuntu-latest.
+Vitest, and native-build gates alongside a separately named actual-key
+Chromium browser-navigation step. CI installs the pinned Playwright Chromium
+with its Ubuntu dependencies before that ten-minute step. Rust runs
+`cargo fmt --check`, `cargo clippy --workspace --exclude ccresdoc`, and
+`cargo test --workspace --exclude ccresdoc`. The `ccresdoc` (src-tauri) crate is
+excluded because webkit2gtk is not available on ubuntu-latest.
 
 ## Before pushing
 
@@ -306,7 +323,9 @@ pnpm b4push
 Runs all reliable cross-platform checks locally: frozen dependency install and
 validation, strict TypeScript, `zfb check`, Vitest, native zfb build, cargo fmt,
 clippy/tests for the pure-Rust generator, the pruned node-free runtime lifecycle,
-and the independent compatibility fixture. The `ccresdoc` Tauri crate is
+the independent compatibility fixture, and actual-key Chromium browser
+navigation. Install the browser once with
+`pnpm --dir app exec playwright install chromium`. The `ccresdoc` Tauri crate is
 excluded from Linux clippy/test because it requires webkit2gtk/gtk3. A release
 still requires the separate `scripts/test-macos-package.sh` macOS-arm64
 packaged app/WebView gate and the real-WebView visual checks listed in the

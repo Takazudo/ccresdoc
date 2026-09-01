@@ -21,6 +21,8 @@
     "test:settings": "pnpm -C app run test:settings",
     "test:hydration-readiness": "node scripts/confirm-hydration-readiness.mjs",
     "test:search-shortcuts": "node scripts/confirm-search-shortcuts.mjs",
+    "test:browser-navigation": "node scripts/confirm-browser-navigation.mjs",
+    "test:browser-navigation-contract": "node scripts/confirm-browser-navigation.mjs --contracts",
     "test:macos-settings": "bash scripts/test-macos-settings.sh",
     "test:runtime-digest": "node --test scripts/runtime-workspace-digest.test.mjs",
     "test:runtime-files": "node --test scripts/runtime-workspace-files.test.mjs",
