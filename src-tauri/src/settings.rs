@@ -6,18 +6,245 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
-use toml_edit::{value, DocumentMut, Item, Table};
+use toml_edit::{value, Array, DocumentMut, Item, Table, Value};
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 1;
 pub const DEFAULT_PORT: u16 = 4892;
 pub const DEFAULT_THEME_PACK: &str = "default";
+pub const COMMAND_CATALOG_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandMenuMetadata {
+    pub name: String,
+    pub order: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserCommandMetadata {
+    pub command_id: String,
+    pub label: String,
+    pub group: String,
+    pub menu: CommandMenuMetadata,
+    pub default_bindings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandCatalog {
+    pub version: u32,
+    pub commands: Vec<BrowserCommandMetadata>,
+}
+
+pub fn browser_command_catalog() -> CommandCatalog {
+    let catalog: CommandCatalog = serde_json::from_str(include_str!(
+        "../../app/src/browser-chrome/command-catalog.json"
+    ))
+    .expect("bundled browser command catalog must be valid JSON");
+    assert_eq!(
+        catalog.version, COMMAND_CATALOG_VERSION,
+        "browser command catalog version must match the Rust consumer"
+    );
+    catalog
+}
+
+pub fn default_shortcut_entries() -> Vec<ShortcutEntry> {
+    browser_command_catalog()
+        .commands
+        .into_iter()
+        .map(|command| ShortcutEntry {
+            command_id: command.command_id,
+            bindings: command.default_bindings,
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutEntry {
+    /// Command IDs are opaque data. In particular, serde must never apply case
+    /// conversion to IDs containing underscores.
+    pub command_id: String,
+    pub bindings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedShortcut {
+    modifiers: BTreeSet<ShortcutModifier>,
+    key: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ShortcutModifier {
+    Mod,
+    Ctrl,
+    Alt,
+    Shift,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("{message}")]
+pub struct ShortcutParseError {
+    message: String,
+}
+
+impl NormalizedShortcut {
+    pub fn as_portable_string(&self) -> String {
+        let mut components = Vec::new();
+        for modifier in [
+            ShortcutModifier::Mod,
+            ShortcutModifier::Ctrl,
+            ShortcutModifier::Alt,
+            ShortcutModifier::Shift,
+        ] {
+            if self.modifiers.contains(&modifier) {
+                components.push(match modifier {
+                    ShortcutModifier::Mod => "Mod",
+                    ShortcutModifier::Ctrl => "Ctrl",
+                    ShortcutModifier::Alt => "Alt",
+                    ShortcutModifier::Shift => "Shift",
+                });
+            }
+        }
+        components.push(&self.key);
+        components.join("+")
+    }
+
+    /// Tauri accepts `CmdOrCtrl` as its platform-neutral Command/Control
+    /// modifier. Storage and frontend display continue to use neutral `Mod`.
+    pub fn to_tauri_accelerator(&self) -> String {
+        self.as_portable_string().replacen("Mod", "CmdOrCtrl", 1)
+    }
+
+    fn conflicts_with(&self, other: &Self) -> bool {
+        if self.key != other.key {
+            return false;
+        }
+        let exact = self.modifiers == other.modifiers;
+        let non_macos = resolved_modifiers(&self.modifiers, false)
+            == resolved_modifiers(&other.modifiers, false);
+        let macos =
+            resolved_modifiers(&self.modifiers, true) == resolved_modifiers(&other.modifiers, true);
+        exact || non_macos || macos
+    }
+}
+
+fn resolved_modifiers(
+    modifiers: &BTreeSet<ShortcutModifier>,
+    macos: bool,
+) -> BTreeSet<&'static str> {
+    modifiers
+        .iter()
+        .map(|modifier| match modifier {
+            ShortcutModifier::Mod if macos => "cmd",
+            ShortcutModifier::Mod | ShortcutModifier::Ctrl => "ctrl",
+            ShortcutModifier::Alt => "alt",
+            ShortcutModifier::Shift => "shift",
+        })
+        .collect()
+}
+
+pub fn normalize_shortcut_binding(raw: &str) -> Result<NormalizedShortcut, ShortcutParseError> {
+    if raw.is_empty() || raw.trim() != raw || raw.chars().any(char::is_whitespace) {
+        return Err(shortcut_parse_error(
+            "binding must be one shortcut without surrounding whitespace or a chord",
+        ));
+    }
+    let components = raw.split('+').collect::<Vec<_>>();
+    if components.is_empty() || components.iter().any(|part| part.is_empty()) {
+        return Err(shortcut_parse_error(
+            "binding must contain one key and valid modifiers",
+        ));
+    }
+    let (raw_key, raw_modifiers) = components
+        .split_last()
+        .expect("non-empty components checked above");
+    let mut modifiers = BTreeSet::new();
+    for raw_modifier in raw_modifiers {
+        let modifier = match raw_modifier.to_ascii_lowercase().as_str() {
+            "mod" => ShortcutModifier::Mod,
+            "ctrl" | "control" => ShortcutModifier::Ctrl,
+            "alt" | "option" => ShortcutModifier::Alt,
+            "shift" => ShortcutModifier::Shift,
+            _ => {
+                return Err(shortcut_parse_error(format!(
+                    "unknown modifier '{raw_modifier}'; use Mod, Ctrl, Alt, or Shift"
+                )))
+            }
+        };
+        if !modifiers.insert(modifier) {
+            return Err(shortcut_parse_error(format!(
+                "modifier '{raw_modifier}' appears more than once"
+            )));
+        }
+    }
+    if modifiers.contains(&ShortcutModifier::Mod) && modifiers.contains(&ShortcutModifier::Ctrl) {
+        return Err(shortcut_parse_error(
+            "Mod and Ctrl cannot be combined because they are the same modifier off macOS",
+        ));
+    }
+    let key = normalize_shortcut_key(raw_key)?;
+    if modifiers.is_empty() && (raw_key.chars().count() == 1 || key == "Space") {
+        return Err(shortcut_parse_error(
+            "bare printable keys are not supported; add a modifier",
+        ));
+    }
+    Ok(NormalizedShortcut { modifiers, key })
+}
+
+fn normalize_shortcut_key(raw: &str) -> Result<String, ShortcutParseError> {
+    if raw.chars().count() == 1 {
+        let character = raw.chars().next().expect("one character");
+        if character.is_ascii_alphabetic() {
+            return Ok(character.to_ascii_uppercase().to_string());
+        }
+        if character.is_ascii_digit() || ",./;'[]\\-=`".contains(character) {
+            return Ok(character.to_string());
+        }
+        return Err(shortcut_parse_error(format!("unsupported key '{raw}'")));
+    }
+    let lower = raw.to_ascii_lowercase();
+    let normalized = match lower.as_str() {
+        "escape" | "esc" => "Escape".into(),
+        "enter" | "return" => "Enter".into(),
+        "tab" => "Tab".into(),
+        "space" => "Space".into(),
+        "backspace" => "Backspace".into(),
+        "delete" | "del" => "Delete".into(),
+        "insert" => "Insert".into(),
+        "home" => "Home".into(),
+        "end" => "End".into(),
+        "pageup" => "PageUp".into(),
+        "pagedown" => "PageDown".into(),
+        "arrowup" | "up" => "ArrowUp".into(),
+        "arrowdown" | "down" => "ArrowDown".into(),
+        "arrowleft" | "left" => "ArrowLeft".into(),
+        "arrowright" | "right" => "ArrowRight".into(),
+        _ if lower
+            .strip_prefix('f')
+            .and_then(|number| number.parse::<u8>().ok())
+            .is_some_and(|number| (1..=24).contains(&number)) =>
+        {
+            lower.to_ascii_uppercase()
+        }
+        _ => return Err(shortcut_parse_error(format!("unsupported key '{raw}'"))),
+    };
+    Ok(normalized)
+}
+
+fn shortcut_parse_error(message: impl Into<String>) -> ShortcutParseError {
+    ShortcutParseError {
+        message: message.into(),
+    }
+}
 
 pub fn bundled_theme_pack_slugs() -> Vec<String> {
     serde_json::from_str(include_str!("../../app/src/config/theme-pack-slugs.json"))
@@ -116,6 +343,8 @@ pub struct SettingsDraft {
     pub theme_pack: String,
     pub preferred_port: i64,
     pub fallback_to_free_port: bool,
+    #[serde(default = "default_shortcut_entries")]
+    pub shortcuts: Vec<ShortcutEntry>,
 }
 
 impl SettingsDraft {
@@ -130,6 +359,7 @@ impl SettingsDraft {
             theme_pack: DEFAULT_THEME_PACK.into(),
             preferred_port: i64::from(DEFAULT_PORT),
             fallback_to_free_port: true,
+            shortcuts: default_shortcut_entries(),
         }
     }
 }
@@ -145,6 +375,7 @@ pub struct EffectiveSettings {
     pub preferred_port: u16,
     pub effective_port: u16,
     pub fallback_to_free_port: bool,
+    pub shortcuts: Vec<ShortcutEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,6 +409,8 @@ pub enum DiagnosticKind {
     InvalidSourcePath,
     UnreadableSourcePath,
     ThemePackUnavailable,
+    InvalidShortcut,
+    ShortcutConflict,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -232,6 +465,7 @@ pub enum SettingField {
     ThemePack,
     PreferredPort,
     FallbackToFreePort,
+    Shortcuts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -478,7 +712,7 @@ impl SettingsStore {
             }
             _ => {}
         }
-        self.ensure_valid_draft(draft)?;
+        let draft = self.normalized_draft(draft)?;
 
         let mut doc = match self.read_state() {
             ReadState::Missing => DocumentMut::new(),
@@ -486,8 +720,8 @@ impl SettingsStore {
             ReadState::Present { doc: Err(_), .. } => return Err(SaveError::Malformed),
             ReadState::Unreadable(error) => return Err(SaveError::Unreadable(error.to_string())),
         };
-        merge_fields(&mut doc, draft, &SettingField::all());
-        let impact = impact_between(&before.authored, draft, &SettingField::all());
+        merge_fields(&mut doc, &draft, &SettingField::all());
+        let impact = impact_between(&before.authored, &draft, &SettingField::all());
         self.write_document(&doc, expected_revision)?;
         Ok(SaveResult {
             snapshot: self.load(),
@@ -516,7 +750,7 @@ impl SettingsStore {
             } => {
                 let mut candidate = latest.authored.clone();
                 copy_dirty(&mut candidate, draft, dirty_fields);
-                self.ensure_valid_draft(&candidate)?;
+                let candidate = self.normalized_draft(&candidate)?;
                 let impact = impact_between(&latest.authored, &candidate, dirty_fields);
                 merge_fields(&mut doc, &candidate, dirty_fields);
                 let latest_revision = ContentRevision::from_bytes(&bytes);
@@ -541,9 +775,9 @@ impl SettingsStore {
         if before.status != LoadStatus::Malformed {
             return Err(SaveError::ReplacementNotAllowed);
         }
-        self.ensure_valid_draft(draft)?;
+        let draft = self.normalized_draft(draft)?;
         let mut doc = DocumentMut::new();
-        merge_fields(&mut doc, draft, &SettingField::all());
+        merge_fields(&mut doc, &draft, &SettingField::all());
         self.write_document(&doc, Some(expected_revision))?;
         Ok(SaveResult {
             snapshot: self.load(),
@@ -700,6 +934,9 @@ impl SettingsStore {
                 &mut diagnostics,
             );
         }
+        if validate_section(doc, "shortcuts", &mut diagnostics) {
+            read_shortcut_entries(doc, &mut authored.shortcuts, &mut diagnostics);
+        }
 
         let (effective, mut semantic) = self.validate_and_project(&authored);
         diagnostics.append(&mut semantic);
@@ -744,6 +981,7 @@ impl SettingsStore {
             preferred_port: DEFAULT_PORT,
             effective_port: DEFAULT_PORT,
             fallback_to_free_port: true,
+            shortcuts: default_shortcut_entries(),
         }
     }
 
@@ -799,6 +1037,8 @@ impl SettingsStore {
             ));
             DEFAULT_THEME_PACK.into()
         };
+        let (shortcuts, mut shortcut_diagnostics) = validate_shortcut_entries(&draft.shortcuts);
+        diagnostics.append(&mut shortcut_diagnostics);
         (
             EffectiveSettings {
                 claude_resources: draft.claude_resources,
@@ -810,6 +1050,7 @@ impl SettingsStore {
                 preferred_port: port,
                 effective_port: port,
                 fallback_to_free_port: draft.fallback_to_free_port,
+                shortcuts,
             },
             diagnostics,
         )
@@ -851,6 +1092,26 @@ impl SettingsStore {
         } else {
             Err(SaveError::Validation(blocking))
         }
+    }
+
+    fn normalized_draft(&self, draft: &SettingsDraft) -> Result<SettingsDraft, SaveError> {
+        self.ensure_valid_draft(draft)?;
+        let (effective, _) = self.validate_and_project(draft);
+        let known = browser_command_catalog()
+            .commands
+            .into_iter()
+            .map(|command| command.command_id)
+            .collect::<BTreeSet<_>>();
+        let mut normalized = draft.clone();
+        normalized.shortcuts = effective.shortcuts;
+        normalized.shortcuts.extend(
+            draft
+                .shortcuts
+                .iter()
+                .filter(|entry| !known.contains(&entry.command_id))
+                .cloned(),
+        );
+        Ok(normalized)
     }
 
     fn ensure_revision(
@@ -944,6 +1205,7 @@ impl SettingField {
             Self::ThemePack,
             Self::PreferredPort,
             Self::FallbackToFreePort,
+            Self::Shortcuts,
         ]
         .into_iter()
         .collect()
@@ -1103,6 +1365,218 @@ fn read_bool(
     }
 }
 
+fn read_shortcut_entries(
+    doc: &DocumentMut,
+    target: &mut Vec<ShortcutEntry>,
+    diagnostics: &mut Vec<SettingsDiagnostic>,
+) {
+    let known = browser_command_catalog()
+        .commands
+        .into_iter()
+        .map(|command| command.command_id)
+        .collect::<BTreeSet<_>>();
+    let mut authored = BTreeMap::<String, Result<Vec<String>, ()>>::new();
+    let Some(section) = doc.get("shortcuts") else {
+        return;
+    };
+    if let Some(table) = section.as_table() {
+        for (command_id, item) in table.iter() {
+            authored.insert(command_id.into(), shortcut_array_from_item(item));
+        }
+    } else if let Some(table) = section.as_inline_table() {
+        for (command_id, item) in table.iter() {
+            authored.insert(command_id.into(), shortcut_array_from_value(item));
+        }
+    }
+
+    for entry in target.iter_mut() {
+        if let Some(value) = authored.remove(&entry.command_id) {
+            match value {
+                Ok(bindings) => entry.bindings = bindings,
+                Err(()) => diagnostics.push(invalid_type(
+                    &format!("shortcuts.{}", entry.command_id),
+                    "an array of strings",
+                )),
+            }
+        }
+    }
+    for (command_id, bindings) in authored {
+        if known.contains(&command_id) {
+            continue;
+        }
+        if let Ok(bindings) = bindings {
+            target.push(ShortcutEntry {
+                command_id,
+                bindings,
+            });
+        }
+        // Unknown values belong to a future writer. Their exact TOML remains
+        // in the lossless document and Rust deliberately does not diagnose or
+        // rewrite them.
+    }
+}
+
+fn shortcut_array_from_item(item: &Item) -> Result<Vec<String>, ()> {
+    item.as_array()
+        .ok_or(())?
+        .iter()
+        .map(|value| value.as_str().map(str::to_owned).ok_or(()))
+        .collect()
+}
+
+fn shortcut_array_from_value(item: &toml_edit::Value) -> Result<Vec<String>, ()> {
+    item.as_array()
+        .ok_or(())?
+        .iter()
+        .map(|value| value.as_str().map(str::to_owned).ok_or(()))
+        .collect()
+}
+
+fn validate_shortcut_entries(
+    entries: &[ShortcutEntry],
+) -> (Vec<ShortcutEntry>, Vec<SettingsDiagnostic>) {
+    let catalog = browser_command_catalog();
+    let mut supplied = BTreeMap::<&str, &ShortcutEntry>::new();
+    let mut diagnostics = Vec::new();
+    for entry in entries {
+        if supplied.insert(&entry.command_id, entry).is_some() {
+            diagnostics.push(shortcut_diagnostic(
+                DiagnosticKind::InvalidShortcut,
+                &entry.command_id,
+                format!(
+                    "shortcut command '{}' appears more than once",
+                    entry.command_id
+                ),
+            ));
+        }
+    }
+
+    let reserved = reserved_shortcuts();
+    let mut claimed = Vec::<(String, String, NormalizedShortcut)>::new();
+    let mut effective = Vec::new();
+    for command in &catalog.commands {
+        let bindings = supplied
+            .get(command.command_id.as_str())
+            .map(|entry| entry.bindings.as_slice())
+            .unwrap_or(command.default_bindings.as_slice());
+        let mut normalized = Vec::<NormalizedShortcut>::new();
+        for raw in bindings {
+            match normalize_shortcut_binding(raw) {
+                Ok(binding) => {
+                    if normalized
+                        .iter()
+                        .any(|existing| existing.conflicts_with(&binding))
+                    {
+                        diagnostics.push(shortcut_diagnostic(
+                            DiagnosticKind::InvalidShortcut,
+                            &command.command_id,
+                            format!("'{raw}' duplicates another binding for {}", command.label),
+                        ));
+                        continue;
+                    }
+                    for (reserved_name, reserved_binding) in &reserved {
+                        if binding.conflicts_with(reserved_binding) {
+                            diagnostics.push(shortcut_diagnostic(
+                                DiagnosticKind::ShortcutConflict,
+                                &command.command_id,
+                                format!(
+                                    "{} conflicts with reserved action {reserved_name} ({})",
+                                    command.label,
+                                    reserved_binding.as_portable_string()
+                                ),
+                            ));
+                        }
+                    }
+                    for (other_id, other_label, other_binding) in &claimed {
+                        if binding.conflicts_with(other_binding) {
+                            diagnostics.push(shortcut_diagnostic(
+                                DiagnosticKind::ShortcutConflict,
+                                &command.command_id,
+                                format!(
+                                    "{} conflicts with {other_label} ({other_id}) on {}",
+                                    command.label,
+                                    binding.as_portable_string()
+                                ),
+                            ));
+                            diagnostics.push(shortcut_diagnostic(
+                                DiagnosticKind::ShortcutConflict,
+                                other_id,
+                                format!(
+                                    "{other_label} conflicts with {} ({}) on {}",
+                                    command.label,
+                                    command.command_id,
+                                    binding.as_portable_string()
+                                ),
+                            ));
+                        }
+                    }
+                    claimed.push((
+                        command.command_id.clone(),
+                        command.label.clone(),
+                        binding.clone(),
+                    ));
+                    normalized.push(binding);
+                }
+                Err(error) => diagnostics.push(shortcut_diagnostic(
+                    DiagnosticKind::InvalidShortcut,
+                    &command.command_id,
+                    format!("invalid binding '{raw}' for {}: {error}", command.label),
+                )),
+            }
+        }
+        effective.push(ShortcutEntry {
+            command_id: command.command_id.clone(),
+            bindings: normalized
+                .iter()
+                .map(NormalizedShortcut::as_portable_string)
+                .collect(),
+        });
+    }
+    (effective, diagnostics)
+}
+
+fn reserved_shortcuts() -> Vec<(&'static str, NormalizedShortcut)> {
+    [
+        ("Settings", "Mod+,"),
+        ("Undo", "Mod+Z"),
+        ("Redo", "Mod+Shift+Z"),
+        ("Redo", "Mod+Y"),
+        ("Cut", "Mod+X"),
+        ("Copy", "Mod+C"),
+        ("Paste", "Mod+V"),
+        ("Select All", "Mod+A"),
+        ("Actual Size", "Mod+0"),
+        ("Zoom In", "Mod+="),
+        ("Zoom Out", "Mod+-"),
+        ("Toggle Developer Tools", "Mod+Alt+I"),
+        ("Minimize", "Mod+M"),
+        ("Hide", "Mod+H"),
+        ("Hide Others", "Mod+Alt+H"),
+        ("Quit", "Mod+Q"),
+    ]
+    .into_iter()
+    .map(|(name, binding)| {
+        (
+            name,
+            normalize_shortcut_binding(binding).expect("reserved shortcuts are valid"),
+        )
+    })
+    .collect()
+}
+
+fn shortcut_diagnostic(
+    kind: DiagnosticKind,
+    command_id: &str,
+    message: String,
+) -> SettingsDiagnostic {
+    diagnostic(
+        kind,
+        Some(&format!("shortcuts.{command_id}")),
+        message,
+        true,
+    )
+}
+
 fn invalid_type(field: &str, expected: &str) -> SettingsDiagnostic {
     diagnostic(
         DiagnosticKind::InvalidType,
@@ -1199,6 +1673,42 @@ fn merge_fields(doc: &mut DocumentMut, draft: &SettingsDraft, fields: &BTreeSet<
             value(draft.fallback_to_free_port),
         );
     }
+    if fields.contains(&SettingField::Shortcuts) {
+        merge_shortcuts(doc, &draft.shortcuts);
+    }
+}
+
+fn merge_shortcuts(doc: &mut DocumentMut, entries: &[ShortcutEntry]) {
+    let defaults = default_shortcut_entries()
+        .into_iter()
+        .map(|entry| (entry.command_id, entry.bindings))
+        .collect::<BTreeMap<_, _>>();
+    let has_custom_data = entries
+        .iter()
+        .any(|entry| defaults.get(&entry.command_id) != Some(&entry.bindings));
+    if doc.get("shortcuts").is_none() && !has_custom_data {
+        return;
+    }
+    for entry in entries {
+        let known = defaults.contains_key(&entry.command_id);
+        let already_present = item_at(doc, &["shortcuts", &entry.command_id]).is_some();
+        if known || !already_present {
+            set_section_value(
+                doc,
+                "shortcuts",
+                &entry.command_id,
+                shortcut_array_item(&entry.bindings),
+            );
+        }
+    }
+}
+
+fn shortcut_array_item(bindings: &[String]) -> Item {
+    let mut array = Array::new();
+    for binding in bindings {
+        array.push(binding.as_str());
+    }
+    Item::Value(Value::Array(array))
 }
 
 fn set_value_preserving_decor(target: &mut Item, mut replacement: Item) {
@@ -1224,6 +1734,7 @@ fn copy_dirty(target: &mut SettingsDraft, source: &SettingsDraft, fields: &BTree
             SettingField::FallbackToFreePort => {
                 target.fallback_to_free_port = source.fallback_to_free_port
             }
+            SettingField::Shortcuts => target.shortcuts.clone_from(&source.shortcuts),
         }
     }
 }
@@ -2155,6 +2666,203 @@ mod tests {
     }
 
     #[test]
+    fn command_catalog_defaults_and_native_conversion_share_one_contract() {
+        let catalog = browser_command_catalog();
+        assert_eq!(catalog.version, COMMAND_CATALOG_VERSION);
+        assert_eq!(catalog.commands.len(), 8);
+        assert_eq!(default_shortcut_entries()[0].bindings, ["Mod+["]);
+        for command in catalog.commands {
+            for binding in command.default_bindings {
+                let normalized = normalize_shortcut_binding(&binding).unwrap();
+                assert_eq!(normalized.as_portable_string(), binding);
+                assert_eq!(
+                    normalized.to_tauri_accelerator(),
+                    binding.replacen("Mod", "CmdOrCtrl", 1)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shortcut_parser_normalizes_and_rejects_v1_ambiguities() {
+        assert_eq!(
+            normalize_shortcut_binding("shift+mod+r")
+                .unwrap()
+                .as_portable_string(),
+            "Mod+Shift+R"
+        );
+        assert_eq!(
+            normalize_shortcut_binding("F12")
+                .unwrap()
+                .as_portable_string(),
+            "F12"
+        );
+        for invalid in [
+            "K",
+            "Space",
+            "Mod",
+            "Mod+",
+            "Mod+K Mod+C",
+            "Mod+K, Mod+C",
+            "Meta+K",
+            "Mod+Mod+K",
+            "Mod+Ctrl+K",
+            "Mod+Unknown",
+        ] {
+            assert!(
+                normalize_shortcut_binding(invalid).is_err(),
+                "{invalid} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn shortcut_validation_names_command_and_reserved_conflicts() {
+        let (_root, store) = fixture();
+        let mut draft = SettingsDraft::defaults();
+        draft
+            .shortcuts
+            .iter_mut()
+            .find(|entry| entry.command_id == "home")
+            .unwrap()
+            .bindings = vec!["Mod+F".into(), "Ctrl+K".into()];
+        let (_, diagnostics) = store.validate(&draft);
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.kind == DiagnosticKind::ShortcutConflict
+                && diagnostic.field.as_deref() == Some("shortcuts.home")
+                && diagnostic.message.contains("Find in Page")
+        }));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.kind == DiagnosticKind::ShortcutConflict
+                && diagnostic.message.contains("Search Documentation")
+        }));
+
+        draft
+            .shortcuts
+            .iter_mut()
+            .find(|entry| entry.command_id == "home")
+            .unwrap()
+            .bindings = vec!["Mod+,".into()];
+        assert!(store
+            .validate(&draft)
+            .1
+            .iter()
+            .any(|diagnostic| { diagnostic.message.contains("reserved action Settings") }));
+
+        draft
+            .shortcuts
+            .iter_mut()
+            .find(|entry| entry.command_id == "home")
+            .unwrap()
+            .bindings = vec!["Mod+Alt+I".into()];
+        assert!(store.validate(&draft).1.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("reserved action Toggle Developer Tools")
+        }));
+    }
+
+    #[test]
+    fn optional_shortcuts_persist_normalized_known_values_and_preserve_unknown_data() {
+        let (root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        let original = format!(
+            "{}\n[shortcuts]\nback = [\"alt+left\"] # known\nfuture_command_v2 = {{ chord = [\"Mod+K\", \"Mod+C\"] }} # untouched\nfuture_array_id = [\"future+syntax\"]\n",
+            valid_toml(root.path().join("home").as_path())
+        );
+        fs::write(store.path(), &original).unwrap();
+        let loaded = store.load();
+        assert_eq!(loaded.status, LoadStatus::Valid);
+        assert!(loaded.authored.shortcuts.iter().any(|entry| {
+            entry.command_id == "future_array_id" && entry.bindings == ["future+syntax"]
+        }));
+        let result = store
+            .save(&loaded.authored, loaded.revision.as_ref())
+            .unwrap();
+        assert_eq!(result.impact, ApplyImpact::None);
+        let saved = fs::read_to_string(store.path()).unwrap();
+        assert!(saved.contains("back = [\"Alt+ArrowLeft\"] # known"));
+        assert!(
+            saved.contains("future_command_v2 = { chord = [\"Mod+K\", \"Mod+C\"] } # untouched")
+        );
+        assert!(saved.contains("future_array_id = [\"future+syntax\"]"));
+        assert!(result.snapshot.authored.shortcuts.iter().any(|entry| {
+            entry.command_id == "future_array_id" && entry.bindings == ["future+syntax"]
+        }));
+    }
+
+    #[test]
+    fn shortcut_rebase_and_malformed_replacement_keep_opaque_ids_restart_free() {
+        let (root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(store.path(), valid_toml(root.path().join("home").as_path())).unwrap();
+        let stale = store.load();
+        let mut draft = stale.authored.clone();
+        draft.shortcuts.push(ShortcutEntry {
+            command_id: "future_command_id".into(),
+            bindings: vec!["future+binding".into()],
+        });
+        draft
+            .shortcuts
+            .iter_mut()
+            .find(|entry| entry.command_id == "home")
+            .unwrap()
+            .bindings = vec!["Alt+Home".into()];
+        fs::write(
+            store.path(),
+            format!(
+                "{}\n[future]\nexternal = \"preserve\"\n",
+                valid_toml(root.path().join("home").as_path())
+            ),
+        )
+        .unwrap();
+        let result = store
+            .rebase_dirty(
+                &draft,
+                &[SettingField::Shortcuts].into_iter().collect(),
+                stale.revision.as_ref().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(result.impact, ApplyImpact::None);
+        let rebased = fs::read_to_string(store.path()).unwrap();
+        assert!(rebased.contains("external = \"preserve\""));
+        assert!(rebased.contains("future_command_id = [\"future+binding\"]"));
+
+        fs::write(store.path(), "schema_version = 1\n[broken\n").unwrap();
+        let malformed = store.load();
+        let replaced = store
+            .replace_malformed(&draft, malformed.revision.as_ref().unwrap())
+            .unwrap();
+        assert!(replaced.snapshot.authored.shortcuts.iter().any(|entry| {
+            entry.command_id == "future_command_id" && entry.bindings == ["future+binding"]
+        }));
+    }
+
+    #[test]
+    fn invalid_known_shortcut_toml_is_field_addressable_but_unknown_values_are_ignored() {
+        let (root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(
+            store.path(),
+            format!(
+                "{}\n[shortcuts]\nback = \"Mod+[\"\nunknown_future = 42\n",
+                valid_toml(root.path().join("home").as_path())
+            ),
+        )
+        .unwrap();
+        let loaded = store.load();
+        assert_eq!(loaded.status, LoadStatus::Invalid);
+        assert!(loaded.validation.iter().any(|diagnostic| {
+            diagnostic.field.as_deref() == Some("shortcuts.back")
+                && diagnostic.kind == DiagnosticKind::InvalidType
+        }));
+        assert!(!loaded
+            .validation
+            .iter()
+            .any(|diagnostic| { diagnostic.field.as_deref() == Some("shortcuts.unknown_future") }));
+    }
+
+    #[test]
     fn wire_types_have_stable_serialization_fixture() {
         let (_root, store) = fixture();
         let snapshot = store.load();
@@ -2169,6 +2877,7 @@ mod tests {
         assert_eq!(wire["effective"]["codex_dir"], serde_json::Value::Null);
         assert_eq!(wire["effective"]["preferred_port"], 4892);
         assert_eq!(wire["active"]["effective_port"], 4892);
+        assert_eq!(wire["effective"]["shortcuts"][0]["commandId"], "back");
         assert_eq!(
             serde_json::to_value(SettingField::ClaudeDir).unwrap(),
             "claude_dir"
@@ -2208,7 +2917,8 @@ mod tests {
                 "appearance_mode": "system",
                 "theme_pack": "default",
                 "preferred_port": 4892,
-                "fallback_to_free_port": true
+                "fallback_to_free_port": true,
+                "shortcuts": default_shortcut_entries()
             })
         );
         let validation = vec![SettingsDiagnostic {
@@ -2220,5 +2930,25 @@ mod tests {
         }];
         let validation_wire = serde_json::to_value(validation).unwrap();
         assert_eq!(validation_wire[0]["location"]["line"], 2);
+
+        let opaque = ShortcutEntry {
+            command_id: "future_command_id".into(),
+            bindings: vec!["future+syntax".into()],
+        };
+        let opaque_wire = serde_json::to_value(&opaque).unwrap();
+        assert_eq!(opaque_wire["commandId"], "future_command_id");
+        assert_eq!(
+            serde_json::from_value::<ShortcutEntry>(opaque_wire).unwrap(),
+            opaque
+        );
+
+        let mut legacy_wire = serde_json::to_value(SettingsDraft::defaults()).unwrap();
+        legacy_wire.as_object_mut().unwrap().remove("shortcuts");
+        assert_eq!(
+            serde_json::from_value::<SettingsDraft>(legacy_wire)
+                .unwrap()
+                .shortcuts,
+            default_shortcut_entries()
+        );
     }
 }

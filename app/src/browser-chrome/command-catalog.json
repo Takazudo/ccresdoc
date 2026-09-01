@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "commands": [
+    {
+      "commandId": "back",
+      "label": "Back",
+      "group": "navigation",
+      "menu": { "name": "History", "order": 10 },
+      "defaultBindings": ["Mod+["]
+    },
+    {
+      "commandId": "forward",
+      "label": "Forward",
+      "group": "navigation",
+      "menu": { "name": "History", "order": 20 },
+      "defaultBindings": ["Mod+]"]
+    },
+    {
+      "commandId": "home",
+      "label": "Home",
+      "group": "navigation",
+      "menu": { "name": "History", "order": 30 },
+      "defaultBindings": []
+    },
+    {
+      "commandId": "reload-documentation",
+      "label": "Reload Documentation",
+      "group": "navigation",
+      "menu": { "name": "View", "order": 10 },
+      "defaultBindings": ["Mod+R"]
+    },
+    {
+      "commandId": "find-in-page",
+      "label": "Find in Page",
+      "group": "discovery",
+      "menu": { "name": "Edit", "order": 10 },
+      "defaultBindings": ["Mod+F"]
+    },
+    {
+      "commandId": "search-documentation",
+      "label": "Search Documentation",
+      "group": "discovery",
+      "menu": { "name": "Edit", "order": 20 },
+      "defaultBindings": ["Mod+K"]
+    },
+    {
+      "commandId": "copy-page-path",
+      "label": "Copy Page Path",
+      "group": "page",
+      "menu": { "name": "File", "order": 10 },
+      "defaultBindings": []
+    },
+    {
+      "commandId": "open-in-default-browser",
+      "label": "Open in Default Browser",
+      "group": "page",
+      "menu": { "name": "File", "order": 20 },
+      "defaultBindings": []
+    }
+  ]
+}
