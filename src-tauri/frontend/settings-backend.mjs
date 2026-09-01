@@ -12,6 +12,7 @@ export const BACKEND_METHODS = Object.freeze([
   "pickSourceDirectory",
   "openConfigFile",
   "revealConfigFile",
+  "setShortcutCaptureActive",
 ]);
 
 /**
@@ -25,6 +26,7 @@ export const BACKEND_METHODS = Object.freeze([
  *   themePack: string,
  *   preferredPort: number,
  *   fallbackToFreePort: boolean
+ *   shortcuts: Array<{commandId: string, bindings: string[]}>
  * }} SettingsDraft
  * @typedef {"claudeResources"|"codexResources"|"claudeDir"|"codexDir"|"appearanceMode"|"themePack"|"preferredPort"|"fallbackToFreePort"} DirtyField
  * @typedef {{code: string, message: string, details: unknown}} BackendError
@@ -90,6 +92,7 @@ export function createBackendAdapter(invoke, listen) {
     pickSourceDirectory: () => call("pick_source_directory"),
     openConfigFile: () => call("open_config_file"),
     revealConfigFile: () => call("reveal_config_file"),
+    setShortcutCaptureActive: (active) => call("set_shortcut_capture_active", { active }),
   });
 }
 

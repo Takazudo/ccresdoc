@@ -6,20 +6,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The bundled editor is deliberately framework-free and shared verbatim with Tauri.
 import { createSettingsEditor, DEFAULT_DRAFT } from "../../src-tauri/frontend/settings-shell.mjs";
 import { openSettingsFromDocs, SettingsHeaderButton } from "../pages/lib/_chrome";
+import shortcutCatalog from "../src/browser-chrome/command-catalog.json";
 
 const htmlPath = resolve(process.cwd(), "../src-tauri/frontend/settings.html");
 const shellHtml = readFileSync(htmlPath, "utf8").match(/<main[\s\S]*<\/main>/)?.[0] ?? "";
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+const defaultShortcuts = () => shortcutCatalog.commands.map(({ commandId, defaultBindings }) => ({ commandId, bindings: [...defaultBindings] }));
 
 function snapshot(overrides: Record<string, unknown> = {}) {
   const base = {
     settings: {
       configPath: "/Users/test/.config/ccresdoc/config.toml", fileExists: true, status: "valid", revision: "sha256:one",
-      authored: { ...DEFAULT_DRAFT }, effective: { ...DEFAULT_DRAFT, claudeDir: "/Users/test/.claude", effectivePort: 4892 },
+      authored: { ...DEFAULT_DRAFT, shortcuts: defaultShortcuts() }, effective: { ...DEFAULT_DRAFT, shortcuts: defaultShortcuts(), claudeDir: "/Users/test/.claude", effectivePort: 4892 },
       active: { usesAuthoredSettings: true, sourceIsAuthored: true, preferredPort: 4892, effectivePort: 4892 }, validation: [],
     },
-    runtime: { phase: "ready", active: { ...DEFAULT_DRAFT, claudeDir: "/Users/test/.claude", effectivePort: 4892 }, fallbackUsed: false, diagnostic: null },
-    actions: { canSave: true, canRebase: true, canReplaceMalformed: false }, defaults: { ...DEFAULT_DRAFT }, themePacks: ["default", "paper"],
+    runtime: { phase: "ready", active: { ...DEFAULT_DRAFT, shortcuts: defaultShortcuts(), claudeDir: "/Users/test/.claude", effectivePort: 4892 }, fallbackUsed: false, diagnostic: null },
+    actions: { canSave: true, canRebase: true, canReplaceMalformed: false }, defaults: { ...DEFAULT_DRAFT, shortcuts: defaultShortcuts() }, themePacks: ["default", "paper"], shortcutCatalog,
   };
   return { ...base, ...overrides } as any;
 }
@@ -38,6 +40,7 @@ function setup(initial = snapshot(), withNativeHide = false) {
     rebaseStale: vi.fn(async (...args) => { calls.push(["rebase", ...args]); return { status: "active" }; }),
     replaceMalformed: vi.fn(async (...args) => { calls.push(["replace", ...args]); current = snapshot(); return { status: "saved_not_active" }; }),
     pickSourceDirectory: vi.fn(async (): Promise<string | null> => null), openConfigFile: vi.fn(async () => {}), revealConfigFile: vi.fn(async () => {}),
+    setShortcutCaptureActive: vi.fn(async () => {}),
   };
   const close = vi.fn();
   const hide = vi.fn(async () => {});
@@ -58,6 +61,72 @@ describe("bundled Settings editor", () => {
     expect(document.querySelector("#claude-source-status")?.textContent).toBe("~/.claude / /Users/test/.claude / /Users/test/.claude");
     expect(document.querySelector("#port-status")?.textContent).toBe("4892 / 4892");
     expect((document.querySelector("#save-settings") as HTMLButtonElement).disabled).toBe(true);
+    expect([...document.querySelectorAll(".shortcut-group h3")].map((node) => node.textContent)).toEqual(["Navigation", "Discovery", "Page"]);
+    expect(document.querySelectorAll(".shortcut-row")).toHaveLength(shortcutCatalog.commands.length);
+  });
+
+  it("captures only after native accelerators suspend, preserves unknown entries, and saves shortcut arrays without an early snapshot mutation", async () => {
+    const authored = [...defaultShortcuts(), { commandId: "future-command-v2", bindings: ["future+syntax"] }];
+    const current = setup(snapshot({ settings: { ...snapshot().settings, authored: { ...DEFAULT_DRAFT, shortcuts: authored } } }));
+    let releaseSuspend!: () => void;
+    current.backend.setShortcutCaptureActive.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseSuspend = resolve; }));
+    await current.editor.load(); await flush();
+    const backRow = document.querySelector('[data-shortcut-command="back"]')!;
+    (backRow.querySelector(".shortcut-add") as HTMLButtonElement).click();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", ctrlKey: true, bubbles: true, cancelable: true }));
+    expect(current.editor.state.draft.shortcuts.find((entry: any) => entry.commandId === "back").bindings).toEqual(["Mod+["]);
+    releaseSuspend(); await flush();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Control", ctrlKey: true, bubbles: true, cancelable: true }));
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", ctrlKey: true, bubbles: true, cancelable: true }));
+    await flush(); await flush();
+    expect(current.backend.setShortcutCaptureActive.mock.calls).toEqual([[true], [false]]);
+    expect((current.editor.state.snapshot as any).settings.authored.shortcuts.find((entry: any) => entry.commandId === "back").bindings).toEqual(["Mod+["]);
+    expect(current.editor.state.draft.shortcuts.find((entry: any) => entry.commandId === "back").bindings).toEqual(["Mod+[", "Mod+B"]);
+    expect(current.editor.state.draft.shortcuts.find((entry: any) => entry.commandId === "future-command-v2").bindings).toEqual(["future+syntax"]);
+    await current.editor.submit(); await flush();
+    const saved = current.backend.saveAndApply.mock.calls[0][0];
+    expect(saved.shortcuts.find((entry: any) => entry.commandId === "future-command-v2").bindings).toEqual(["future+syntax"]);
+    (document.querySelector("#reset-defaults") as HTMLButtonElement).click(); await flush();
+    expect(current.editor.state.draft.shortcuts.find((entry: any) => entry.commandId === "future-command-v2").bindings).toEqual(["future+syntax"]);
+  });
+
+  it("keeps capture focus on duplicate/conflict feedback and Escape cancels before ambient close", async () => {
+    const current = setup();
+    current.backend.validateDraft.mockImplementation(async (draft) => {
+      const reserved = draft.shortcuts.find((entry: any) => entry.commandId === "home")?.bindings.includes("Mod+Q");
+      return { valid: !reserved, effective: draft, diagnostics: reserved ? [{ kind: "shortcut_conflict", field: "shortcuts.home", message: "Home conflicts with reserved action Quit (Mod+Q)", blocking: true }] : [] };
+    });
+    await current.editor.load(); await flush();
+    const homeAdd = document.querySelector('[data-shortcut-command="home"] .shortcut-add') as HTMLButtonElement;
+    homeAdd.click(); await flush();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "q", ctrlKey: true, bubbles: true, cancelable: true })); await flush(); await flush();
+    expect(document.querySelector('[data-shortcut-command="home"] .shortcut-status')?.textContent).toContain("Home conflicts with reserved action Quit");
+    expect(document.querySelector('[data-shortcut-command="home"] .shortcut-add')?.getAttribute("aria-errormessage")).toBe("shortcut-home-status");
+    expect(document.activeElement).toBe(document.querySelector('[data-shortcut-command="home"] .shortcut-add'));
+    expect((document.querySelector("#save-settings") as HTMLButtonElement).disabled).toBe(true);
+
+    const forwardBefore = [...current.editor.state.draft.shortcuts.find((entry: any) => entry.commandId === "forward").bindings];
+    (document.querySelector('[data-shortcut-command="forward"] .shortcut-add') as HTMLButtonElement).click(); await flush();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await flush();
+    expect(current.close).not.toHaveBeenCalled();
+    expect(current.editor.state.draft.shortcuts.find((entry: any) => entry.commandId === "forward").bindings).toEqual(forwardBefore);
+    expect(current.backend.setShortcutCaptureActive.mock.calls.slice(-2)).toEqual([[true], [false]]);
+  });
+
+  it("supports chip removal, command/all reset, and suspension cleanup on native close", async () => {
+    const current = setup(); await current.editor.load(); await flush();
+    const backRow = document.querySelector('[data-shortcut-command="back"]')!;
+    (backRow.querySelector(".shortcut-chip") as HTMLButtonElement).click(); await flush();
+    expect(current.editor.state.draft.shortcuts.find((entry: any) => entry.commandId === "back").bindings).toEqual([]);
+    (document.querySelector('[data-shortcut-command="back"] .shortcut-reset') as HTMLButtonElement).click(); await flush();
+    expect(current.editor.state.draft.shortcuts.find((entry: any) => entry.commandId === "back").bindings).toEqual(["Mod+["]);
+    (document.querySelector('[data-shortcut-command="back"] .shortcut-chip') as HTMLButtonElement).click(); await flush();
+    (document.querySelector("#reset-all-shortcuts") as HTMLButtonElement).click(); await flush();
+    expect(current.editor.state.draft.shortcuts.find((entry: any) => entry.commandId === "back").bindings).toEqual(["Mod+["]);
+    (document.querySelector('[data-shortcut-command="back"] .shortcut-add') as HTMLButtonElement).click(); await flush();
+    window.dispatchEvent(new Event("ccresdoc-settings-native-close")); await flush();
+    expect(current.backend.setShortcutCaptureActive.mock.calls.slice(-2)).toEqual([[true], [false]]);
+    expect(current.editor.state.dirty.size).toBe(0);
   });
 
   it("keeps authored and effective ports distinct when the runtime falls back", async () => {
@@ -138,7 +207,7 @@ describe("bundled Settings editor", () => {
 
   it("enforces malformed replacement, future read-only, unavailable theme, and stale rebase recovery", async () => {
     const malformed = snapshot({ settings: { ...snapshot().settings, status: "malformed", validation: [{ kind: "malformed_syntax", field: null, message: "expected value", blocking: true, location: { line: 4, column: 2 } }] }, actions: { canSave: false, canRebase: false, canReplaceMalformed: true } });
-    const recovery = setup(malformed); await recovery.editor.load(); await flush(); expect((document.querySelector("#save-settings") as HTMLButtonElement).disabled).toBe(true); expect(document.querySelector("#diagnostics")?.textContent).toContain("line 4, column 2"); await recovery.editor.replaceMalformed(); expect(recovery.backend.replaceMalformed).toHaveBeenCalledWith(DEFAULT_DRAFT, "sha256:one");
+    const recovery = setup(malformed); await recovery.editor.load(); await flush(); expect((document.querySelector("#save-settings") as HTMLButtonElement).disabled).toBe(true); expect(document.querySelector("#diagnostics")?.textContent).toContain("line 4, column 2"); await recovery.editor.replaceMalformed(); expect(recovery.backend.replaceMalformed).toHaveBeenCalledWith(snapshot().defaults, "sha256:one");
 
     const future = setup(snapshot({ settings: { ...snapshot().settings, status: "unsupported_version" }, actions: { canSave: false, canRebase: false, canReplaceMalformed: false } })); await future.editor.load(); await flush(); expect((document.querySelector("#claude-dir") as HTMLInputElement).disabled).toBe(true); expect((document.querySelector("#replace-malformed") as HTMLButtonElement).disabled).toBe(true);
 
