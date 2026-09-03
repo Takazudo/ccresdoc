@@ -419,11 +419,30 @@ async function installTauriHarness(context) {
     window.__ccresdocEmitBootstrap = (payload) => {
       for (const listener of listeners.get("ccresdoc://browser-bootstrap") ?? []) listener({ payload });
     };
+    let appearance = { mode: "system", themePack: "default" };
     window.__TAURI__ = {
       core: {
         invoke: async (command, args) => {
           window.__ccresdocTauriCalls.push({ command, args });
           if (command === "get_browser_bootstrap") return bootstrap;
+          // AppearanceBridge routes every theme change through update_appearance and
+          // reverts the DOM to the last authoritative value when the call rejects, so
+          // a stub returning undefined makes the theme toggle silently snap back.
+          // Shape mirrors Rust's AppearanceEnvelope (src-tauri/src/appearance.rs).
+          if (command === "update_appearance") {
+            const request = args?.request ?? {};
+            appearance = {
+              mode: request.mode ?? appearance.mode,
+              themePack: request.themePack ?? appearance.themePack,
+            };
+            return {
+              appearance: { ...appearance },
+              authoritative: { ...appearance },
+              revision: null,
+              source: "authoritative",
+              authoritativeSource: "authoritative",
+            };
+          }
           return undefined;
         },
       },
