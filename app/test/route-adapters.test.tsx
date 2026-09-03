@@ -294,6 +294,71 @@ describe("host-owned package route adapters", () => {
     expect(mobileProps.backToMenuLabel).toBeDefined();
   });
 
+  it("wraps the toolbar row and package header in one non-persisted chrome region", () => {
+    const docsRoot = routeItems.find((item) => item.params.slug.length === 0);
+    expect(docsRoot).toBeDefined();
+    const shell = document.createElement("div");
+    shell.innerHTML = render(
+      <DocsPage params={docsRoot!.params} {...docsRoot!.props} />,
+    );
+
+    const region = shell.querySelector<HTMLElement>("[data-ccresdoc-chrome-region]");
+    expect(region).not.toBeNull();
+    // A persist key here would nest both children under a persisted ancestor,
+    // and zfb lifts persist roots as a flat list — the nested pair would be
+    // dropped on swap.
+    expect(region!.hasAttribute("data-zfb-transition-persist")).toBe(false);
+    expect(region!.closest("[data-zfb-transition-persist]")).toBeNull();
+
+    const children = Array.from(region!.children);
+    expect(children).toHaveLength(2);
+    expect(children[0].getAttribute("data-zfb-island")).toBe("CCResDocBrowserToolbar");
+    expect(children[0].hasAttribute("data-ccresdoc-browser-toolbar-shell")).toBe(true);
+    expect(children[0].getAttribute("data-zfb-transition-persist")).toBe(
+      "ccresdoc-browser-toolbar",
+    );
+    expect(children[1].tagName).toBe("HEADER");
+    expect(children[1].hasAttribute("data-header")).toBe(true);
+    expect(children[1].getAttribute("data-zfb-transition-persist")).toBe("header-en");
+  });
+
+  it("keeps both chrome persist roots through a real client-router body swap", async () => {
+    const { swapFunctions } = await import("@takazudo/zfb-runtime/client-router");
+    const parseDocument = (slug: string) => {
+      const item = routeItems.find(
+        (candidate) => candidate.params.slug.join("/") === slug,
+      );
+      expect(item).toBeDefined();
+      return new DOMParser().parseFromString(
+        render(<DocsPage params={item!.params} {...item!.props} />),
+        "text/html",
+      );
+    };
+
+    const liveBody = document.importNode(parseDocument("").body, true);
+    document.body.replaceWith(liveBody);
+    const liveToolbar = document.querySelector(
+      '[data-zfb-transition-persist="ccresdoc-browser-toolbar"]',
+    );
+    const liveHeader = document.querySelector(
+      '[data-zfb-transition-persist="header-en"]',
+    );
+    expect(liveToolbar).not.toBeNull();
+    expect(liveHeader).not.toBeNull();
+
+    const incomingBody = document.importNode(parseDocument("claude").body, true);
+    swapFunctions.swapBodyElement(incomingBody, document.body);
+
+    // Node identity survives, and both roots land inside the freshly swapped-in
+    // (non-persisted) region wrapper rather than the discarded old one.
+    expect(liveToolbar!.isConnected).toBe(true);
+    expect(liveHeader!.isConnected).toBe(true);
+    const region = incomingBody.querySelector("[data-ccresdoc-chrome-region]");
+    expect(region).not.toBeNull();
+    expect(liveToolbar!.parentElement).toBe(region);
+    expect(liveHeader!.parentElement).toBe(region);
+  });
+
   it("marks the current tab and scopes each landing sidebar by category prefix", () => {
     const claude = routeItems.find(
       (candidate) => candidate.params.slug.join("/") === "claude",

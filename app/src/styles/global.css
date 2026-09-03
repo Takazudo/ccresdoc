@@ -27,14 +27,33 @@
   --ccresdoc-toolbar-control-gap: var(--spacing-vsp-3xs);
 }
 
-/* App-owned browser chrome. The persisted outer shell keeps this one load
- * island alive while zfb replaces the rest of the body. */
-[data-ccresdoc-browser-toolbar-shell] {
+/* App-owned chrome region: the browser toolbar row and the package header pin
+ * to the viewport as one unit. This wrapper owns the sticky positioning and
+ * the region's stacking context. It deliberately carries no zfb persist key —
+ * both children are persist roots, and zfb lifts persist roots as a flat list,
+ * so nesting them under a persisted ancestor would drop them on swap. */
+[data-ccresdoc-chrome-region] {
   position: sticky;
   top: 0;
   z-index: var(--z-index-dropdown);
 }
 
+/* The package header carries its own `sticky top-0` utilities. Inside the
+ * region it sits in normal flow beneath the toolbar row, but stays a
+ * positioned containing block: theme packs anchor absolutely positioned
+ * decorative ::after hairlines to it, which `position: static` would reparent
+ * to the viewport. Its z-toolbar (20) still loses to the toolbar overflow
+ * menu's --z-index-dropdown (30) inside the shared region context. */
+[data-ccresdoc-chrome-region] > header[data-header] {
+  position: relative;
+  top: auto;
+}
+
+/* App-owned browser toolbar row. The [data-ccresdoc-browser-toolbar-shell]
+ * island marker is intentionally left unstyled: keeping it unpositioned lets
+ * the overflow menu resolve against the region wrapper instead of a
+ * shell-local stacking context. The marker still carries weight outside CSS —
+ * zudo-doc's find-in-page excludes this subtree by that exact selector. */
 .ccresdoc-browser-toolbar {
   display: flex;
   align-items: center;
@@ -195,37 +214,44 @@
   }
 }
 
-/* The package header remains in normal flow below the app row, while every
- * fixed/sticky package surface consumes the same complete offset token. */
-header[data-header] {
-  top: var(--ccresdoc-browser-toolbar-h) !important;
-}
+/* Chrome-offset block. zudo-doc hardcodes the bare 3.5rem header height into
+ * these package-owned surfaces, so each rule below has to reach into a
+ * package-internal selector and outrank a hardcoded utility (or, for the
+ * resizer, a runtime inline style) with !important. */
 
+/* doc-layout.js pins the desktop sidebar with literal `top-[3.5rem]` and
+ * `h-[calc(100vh-3.5rem)]` utilities; the package exposes no offset token. */
 #desktop-sidebar {
   top: var(--ccresdoc-complete-chrome-offset) !important;
   height: calc(100vh - var(--ccresdoc-complete-chrome-offset)) !important;
 }
 
+/* doc-layout.js gives the content column a literal
+ * `min-h-[calc(100vh-3.5rem)]` utility, which would leave a scroll tail. */
 .zd-sidebar-content-wrapper > .flex {
   min-height: calc(100vh - var(--ccresdoc-complete-chrome-offset)) !important;
 }
 
+/* toc.js hardcodes `sticky top-[3.5rem] h-[calc(100vh-3.5rem)]` on the TOC
+ * rail, which is package-owned markup with no host slot. */
 nav[data-zd-toc] {
   top: var(--ccresdoc-complete-chrome-offset) !important;
   height: calc(100vh - var(--ccresdoc-complete-chrome-offset)) !important;
 }
 
+/* sidebar-toggle-island hardcodes `fixed top-[3.5rem] h-[calc(100vh-3.5rem)]`
+ * on the mobile drawer it renders inside the package header. */
 [data-zfb-island="SidebarToggle"] > div,
 [data-zd-mobile-sidebar] {
   top: var(--ccresdoc-complete-chrome-offset) !important;
   height: calc(100vh - var(--ccresdoc-complete-chrome-offset)) !important;
 }
 
-[data-zfb-island="FindInPageInit"] > div {
-  top: var(--ccresdoc-complete-chrome-offset) !important;
-}
-
+/* find-bar.js hardcodes `fixed top-[3.5rem]`. Targeted through the controlled
+ * patch's stable [data-find-in-page-bar] hook rather than the island wrapper,
+ * which is an implementation detail of where the bar happens to mount. */
 [data-find-in-page-bar] {
+  top: var(--ccresdoc-complete-chrome-offset) !important;
   max-inline-size: min(100vw, 30rem);
 }
 
@@ -279,6 +305,8 @@ nav[data-zd-toc] {
   }
 }
 
+/* sidebar-resizer/index.js assigns `top: 3.5rem` as a runtime inline style on
+ * the handle it creates; only !important outranks an inline declaration. */
 [data-sidebar-resizer] {
   top: var(--ccresdoc-complete-chrome-offset) !important;
 }
