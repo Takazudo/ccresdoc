@@ -6,32 +6,36 @@ import { createMockBackend } from "./settings-backend.mock.mjs";
 test("adapter uses exact commands and camelCase arguments", async () => {
   const calls = [];
   const backend = createBackendAdapter((command, args) => { calls.push({ command, args }); return { ok: true }; });
-  const draft = { schemaVersion: 1 };
+  // ShortcutEntry is rename_all = "camelCase" on the Rust side, unlike the rest
+  // of SettingsDraft -- a realistic draft must carry shortcuts to catch a
+  // blind top-to-bottom key mapper rewriting `commandId` to `command_id`.
+  const draft = { schemaVersion: 1, shortcuts: [{ commandId: "back", bindings: ["Mod+["] }] };
+  const wireDraft = { schema_version: 1, shortcuts: [{ commandId: "back", bindings: ["Mod+["] }] };
   await backend.validateDraft(draft);
   await backend.previewAppearance("dark", "default");
   await backend.clearAppearancePreview();
   await backend.saveAndApply(draft, "sha256:one");
-  await backend.rebaseStale(draft, new Set(["claudeResources", "codexResources", "claudeDir", "codexDir"]), "sha256:stale");
+  await backend.rebaseStale(draft, new Set(["claudeResources", "codexResources", "claudeDir", "codexDir", "shortcuts"]), "sha256:stale");
   await backend.replaceMalformed(draft, "sha256:bad");
   await backend.setShortcutCaptureActive(true);
   assert.deepEqual(calls, [
-    { command: "validate_settings_draft", args: { draft: { schema_version: 1 } } },
+    { command: "validate_settings_draft", args: { draft: wireDraft } },
     { command: "preview_appearance", args: { mode: "dark", themePack: "default" } },
     { command: "clear_appearance_preview", args: undefined },
-    { command: "save_and_apply_settings", args: { draft: { schema_version: 1 }, expectedRevision: "sha256:one" } },
-    { command: "rebase_stale_settings", args: { draft: { schema_version: 1 }, dirtyFields: ["claude_resources", "codex_resources", "claude_dir", "codex_dir"], staleRevision: "sha256:stale" } },
-    { command: "replace_malformed_settings", args: { draft: { schema_version: 1 }, expectedRevision: "sha256:bad" } },
+    { command: "save_and_apply_settings", args: { draft: wireDraft, expectedRevision: "sha256:one" } },
+    { command: "rebase_stale_settings", args: { draft: wireDraft, dirtyFields: ["claude_resources", "codex_resources", "claude_dir", "codex_dir", "shortcuts"], staleRevision: "sha256:stale" } },
+    { command: "replace_malformed_settings", args: { draft: wireDraft, expectedRevision: "sha256:bad" } },
     { command: "set_shortcut_capture_active", args: { active: true } },
   ]);
 });
 
 test("adapter normalizes nested Rust snapshots to camelCase", async () => {
   const backend = createBackendAdapter(() => ({
-    settings: { config_path: "/config", authored: { codex_resources: false, codex_dir: "~/.codex", fallback_to_free_port: true }, effective: { codex_dir: null } },
+    settings: { config_path: "/config", authored: { codex_resources: false, codex_dir: "~/.codex", fallback_to_free_port: true, shortcuts: [{ commandId: "back", bindings: ["Mod+["] }] }, effective: { codex_dir: null } },
     runtime: { fallback_used: false, active: { effective_port: 53003 } },
   }));
   assert.deepEqual(await backend.getSnapshot(), {
-    settings: { configPath: "/config", authored: { codexResources: false, codexDir: "~/.codex", fallbackToFreePort: true }, effective: { codexDir: null } },
+    settings: { configPath: "/config", authored: { codexResources: false, codexDir: "~/.codex", fallbackToFreePort: true, shortcuts: [{ commandId: "back", bindings: ["Mod+["] }] }, effective: { codexDir: null } },
     runtime: { fallbackUsed: false, active: { effectivePort: 53003 } },
   });
 });

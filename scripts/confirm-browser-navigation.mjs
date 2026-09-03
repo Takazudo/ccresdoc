@@ -66,8 +66,9 @@ Options:
   --contracts  Run repository/runtime contract checks without starting zfb or Chromium
   --help    Show this help
 
-Set CCRESDOC_BROWSER_ARTIFACT_DIR to capture desktop, narrow, and narrow-Find
-review screenshots without changing the pass/fail contract.`);
+Set CCRESDOC_BROWSER_ARTIFACT_DIR to capture desktop, narrow, narrow-Find, and
+desktop/narrow dark-mode review screenshots without changing the pass/fail
+contract.`);
 }
 
 function parseOptions() {
@@ -418,11 +419,30 @@ async function installTauriHarness(context) {
     window.__ccresdocEmitBootstrap = (payload) => {
       for (const listener of listeners.get("ccresdoc://browser-bootstrap") ?? []) listener({ payload });
     };
+    let appearance = { mode: "system", themePack: "default" };
     window.__TAURI__ = {
       core: {
         invoke: async (command, args) => {
           window.__ccresdocTauriCalls.push({ command, args });
           if (command === "get_browser_bootstrap") return bootstrap;
+          // AppearanceBridge routes every theme change through update_appearance and
+          // reverts the DOM to the last authoritative value when the call rejects, so
+          // a stub returning undefined makes the theme toggle silently snap back.
+          // Shape mirrors Rust's AppearanceEnvelope (src-tauri/src/appearance.rs).
+          if (command === "update_appearance") {
+            const request = args?.request ?? {};
+            appearance = {
+              mode: request.mode ?? appearance.mode,
+              themePack: request.themePack ?? appearance.themePack,
+            };
+            return {
+              appearance: { ...appearance },
+              authoritative: { ...appearance },
+              revision: null,
+              source: "authoritative",
+              authoritativeSource: "authoritative",
+            };
+          }
           return undefined;
         },
       },
@@ -1019,6 +1039,187 @@ async function assertResponsiveGeometry(page, origin) {
   await page.setViewportSize({ width: 1280, height: 900 });
 }
 
+// Resolves a CSS length (including a var()/calc() custom property) to a
+// pixel number the way the layout engine actually resolves it, by reading
+// back the computed style of a throwaway probe element instead of
+// re-deriving the arithmetic in JS. Used by the chrome-offset assertions
+// below so they track the real cascade rather than a second hardcoded copy
+// of it.
+async function chromeOffsetPx(page) {
+  return page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.cssText = "position:fixed;visibility:hidden;left:0;top:var(--ccresdoc-complete-chrome-offset)";
+    document.body.append(probe);
+    const px = parseFloat(getComputedStyle(probe).top);
+    probe.remove();
+    return px;
+  });
+}
+
+async function assertStickyChromeRegion(page, origin) {
+  await openPage(page, origin, appRoutes.root);
+  const region = page.locator("[data-ccresdoc-chrome-region]");
+  const position = await region.evaluate((element) => getComputedStyle(element).position);
+  assert.equal(position, "sticky", "the chrome region wrapper must use sticky positioning");
+
+  // The checked-in landing routes are too short to scroll on their own, so a
+  // spacer is injected to make the assertion meaningful; without it
+  // window.scrollY would stay 0 and the geometry comparison below would pass
+  // vacuously regardless of whether sticky positioning actually works.
+  await page.evaluate(() => {
+    const spacer = document.createElement("div");
+    spacer.id = "browser-navigation-scroll-spacer-232";
+    spacer.style.cssText = "block-size:3000px";
+    document.body.append(spacer);
+  });
+  try {
+    const beforeScrollY = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.scrollTo(0, 1500));
+    await page.waitForFunction((before) => window.scrollY > before, beforeScrollY, { timeout: browserTimeoutMs });
+    const afterScrollY = await page.evaluate(() => window.scrollY);
+    assert(afterScrollY > beforeScrollY, `the scroll must actually move the viewport before geometry is compared: before=${beforeScrollY}, after=${afterScrollY}`);
+    const box = await region.boundingBox();
+    assert(box, "the chrome region must have geometry after scrolling");
+    assert(Math.abs(box.y) <= 1, `the sticky chrome region must stay pinned to the viewport top after scrolling, got y=${box.y}`);
+  } finally {
+    await page.evaluate(() => {
+      document.querySelector("#browser-navigation-scroll-spacer-232")?.remove();
+      window.scrollTo(0, 0);
+    });
+  }
+}
+
+async function assertChromeAdjacency(page, origin) {
+  await openPage(page, origin, appRoutes.root);
+  const toolbarBox = await toolbar(page).boundingBox();
+  const headerBox = await page.locator("header[data-header]").boundingBox();
+  assert(toolbarBox && headerBox, "toolbar and header must have geometry");
+  const gap = headerBox.y - (toolbarBox.y + toolbarBox.height);
+  assert(Math.abs(gap) <= 1, `toolbar and header must be vertically flush with zero gap and zero overlap, got gap=${gap}`);
+}
+
+async function assertChromeOffsetDriftGuard(page, origin) {
+  await openPage(page, origin, appRoutes.root);
+  const offsetPx = await chromeOffsetPx(page);
+  const regionHeight = await page.locator("[data-ccresdoc-chrome-region]").evaluate((element) => element.getBoundingClientRect().height);
+  assert(
+    Math.abs(offsetPx - regionHeight) <= 1,
+    `--ccresdoc-complete-chrome-offset (${offsetPx}px) must equal the chrome region's measured height (${regionHeight}px) — this is the drift guard that replaces a rejected ResizeObserver`,
+  );
+}
+
+// The chrome region wrapper is deliberately NOT a zfb persist root (see the
+// comment above ChromeRegion in pages/lib/_chrome.ts): it is expected to be
+// a brand-new node after every soft navigation. Its two children each carry
+// their own independent persist key and must keep node identity. The footer
+// is a third, separate persist root and must also survive (issue #232's R3
+// no-regression requirement).
+async function assertChromeNodeIdentity(page, origin) {
+  await openPage(page, origin, appRoutes.root);
+  await page.evaluate(() => {
+    window.__ccresdocChromeIdentity = {
+      wrapper: document.querySelector("[data-ccresdoc-chrome-region]"),
+      toolbarShell: document.querySelector("[data-ccresdoc-browser-toolbar-shell]"),
+      header: document.querySelector("header[data-header]"),
+      footer: document.querySelector("footer[data-zfb-transition-persist]"),
+    };
+  });
+  await routeViaHeader(page, appRoutes.claude);
+  const identity = await page.evaluate(() => ({
+    wrapperReplaced: window.__ccresdocChromeIdentity.wrapper !== document.querySelector("[data-ccresdoc-chrome-region]"),
+    toolbarPersisted: window.__ccresdocChromeIdentity.toolbarShell === document.querySelector("[data-ccresdoc-browser-toolbar-shell]"),
+    headerPersisted: window.__ccresdocChromeIdentity.header === document.querySelector("header[data-header]"),
+    footerPersisted: window.__ccresdocChromeIdentity.footer === document.querySelector("footer[data-zfb-transition-persist]"),
+  }));
+  assert.equal(identity.wrapperReplaced, true, "the non-persisted chrome region wrapper must be a new node after a soft navigation");
+  assert.equal(identity.toolbarPersisted, true, "the browser toolbar shell must keep its own node identity across a soft navigation");
+  assert.equal(identity.headerPersisted, true, "the package header must keep its own node identity across a soft navigation");
+  assert.equal(identity.footerPersisted, true, "the footer must keep its existing persisted node identity across a soft navigation (no regression)");
+}
+
+async function assertChromeOffsetConsumers(page, origin) {
+  await openPage(page, origin, appRoutes.root);
+  const offsetPx = await chromeOffsetPx(page);
+
+  const sidebar = page.locator("#desktop-sidebar");
+  assert.equal(await sidebar.count(), 1, "desktop sidebar #desktop-sidebar must mount before its chrome offset can be checked");
+  const sidebarTop = await sidebar.evaluate((element) => element.getBoundingClientRect().top);
+  assert(sidebarTop >= offsetPx - 1, `desktop sidebar must start at/below the combined chrome height (${offsetPx}px), got top=${sidebarTop}`);
+
+  const resizer = page.locator("[data-sidebar-resizer]");
+  assert.equal(await resizer.count(), 1, "sidebar resizer handle [data-sidebar-resizer] must mount (settings.sidebarResizer is enabled)");
+  const resizerTop = await resizer.evaluate((element) => element.getBoundingClientRect().top);
+  assert(resizerTop >= offsetPx - 1, `sidebar resizer handle must start at/below the combined chrome height (${offsetPx}px), got top=${resizerTop}`);
+
+  // No checked-in route renders real TOC headings — zudo-doc only mounts
+  // its TOC island when `tocHeadings.length > 0`, and the checked-in
+  // landing MDX files contain no prose headings. So this checks the
+  // `nav[data-zd-toc]` CSS contract with a synthetic probe element carrying
+  // that exact selector instead of a rendered TOC: selector-level coverage
+  // only, not an exercise of the real TOC island.
+  const tocProbeTop = await page.evaluate(() => {
+    const probe = document.createElement("nav");
+    probe.setAttribute("data-zd-toc", "");
+    probe.style.cssText = "position:fixed;visibility:hidden;left:0";
+    document.body.append(probe);
+    const top = parseFloat(getComputedStyle(probe).top);
+    probe.remove();
+    return top;
+  });
+  assert(Math.abs(tocProbeTop - offsetPx) <= 1, `[data-zd-toc] must resolve its top offset to the combined chrome height (${offsetPx}px), got ${tocProbeTop}px`);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await delay(50);
+  const drawerToggle = page.locator('button[aria-label="Open sidebar"]').first();
+  await drawerToggle.waitFor({ state: "visible", timeout: browserTimeoutMs });
+  await drawerToggle.click();
+  const drawer = page.locator("[data-zd-mobile-sidebar]");
+  await page.waitForFunction(() => document.querySelector("[data-zd-mobile-sidebar]")?.hasAttribute("inert") === false, undefined, { timeout: browserTimeoutMs });
+  const drawerOffsetPx = await chromeOffsetPx(page);
+  const drawerTop = await drawer.evaluate((element) => element.getBoundingClientRect().top);
+  assert(drawerTop >= drawerOffsetPx - 1, `mobile sidebar drawer must start at/below the combined chrome height (${drawerOffsetPx}px), got top=${drawerTop}`);
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1280, height: 900 });
+}
+
+async function assertOverflowMenuPaintsAboveHeader(page, origin) {
+  await openPage(page, origin, appRoutes.root);
+  await command(page, "more").click();
+  const menuBox = await menu(page).boundingBox();
+  const headerBox = await page.locator("header[data-header]").boundingBox();
+  assert(menuBox && headerBox, "overflow menu and header must have geometry");
+  const overlapTop = Math.max(menuBox.y, headerBox.y);
+  const overlapBottom = Math.min(menuBox.y + menuBox.height, headerBox.y + headerBox.height);
+  assert(overlapBottom > overlapTop, `overflow menu must visually overlap the header row to exercise the stacking order: menu=${JSON.stringify(menuBox)}, header=${JSON.stringify(headerBox)}`);
+  const point = { x: menuBox.x + menuBox.width / 2, y: (overlapTop + overlapBottom) / 2 };
+  const hitInsideMenu = await page.evaluate(({ x, y }) => {
+    const hit = document.elementFromPoint(x, y);
+    const menuElement = document.querySelector('nav.ccresdoc-browser-toolbar [role="menu"]');
+    return Boolean(hit && menuElement && menuElement.contains(hit));
+  }, point);
+  assert(hitInsideMenu, `the overflow menu must paint above the header at the overlapping point ${JSON.stringify(point)}`);
+  await page.keyboard.press("Escape");
+}
+
+async function assertThemeArtifacts(page, origin) {
+  if (!artifactDir) return;
+  await openPage(page, origin, appRoutes.root);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const toDark = page.locator('[data-zfb-island="ThemeToggle"] button[aria-label^="Switch to dark"]').first();
+  await toDark.waitFor({ state: "visible", timeout: browserTimeoutMs });
+  await toDark.click();
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", undefined, { timeout: browserTimeoutMs });
+  await page.screenshot({ path: join(artifactDir, "browser-toolbar-desktop-dark.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await delay(50);
+  await page.screenshot({ path: join(artifactDir, "browser-toolbar-narrow-dark.png") });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const toLight = page.locator('[data-zfb-island="ThemeToggle"] button[aria-label^="Switch to light"]').first();
+  await toLight.waitFor({ state: "visible", timeout: browserTimeoutMs });
+  await toLight.click();
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "light", undefined, { timeout: browserTimeoutMs });
+}
+
 async function assertCoarseTargets(browser, origin) {
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
@@ -1138,6 +1339,13 @@ async function run() {
         await assertShortcutReconfiguration(page);
         await assertMoreAndToolbarActions(page);
         await assertResponsiveGeometry(page, server.origin);
+        await assertStickyChromeRegion(page, server.origin);
+        await assertChromeAdjacency(page, server.origin);
+        await assertChromeOffsetDriftGuard(page, server.origin);
+        await assertChromeNodeIdentity(page, server.origin);
+        await assertChromeOffsetConsumers(page, server.origin);
+        await assertOverflowMenuPaintsAboveHeader(page, server.origin);
+        await assertThemeArtifacts(page, server.origin);
       } finally {
         await context.close();
       }

@@ -59,7 +59,15 @@ function mapKeys(value, rename) {
 const snakeToCamelKey = (key) => key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
 const camelToSnakeKey = (key) => key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 const fromWire = (value) => mapKeys(value, snakeToCamelKey);
-const draftToWire = (draft) => mapKeys(draft, camelToSnakeKey);
+// SettingsDraft has no #[serde(rename_all)] so only its top-level keys are
+// snake_case on the wire; its `shortcuts` entries are ShortcutEntry, which IS
+// `rename_all = "camelCase"` and shares that camelCase shape with
+// BrowserBootstrap.shortcut_entries, consumed unmapped by
+// app/src/browser-chrome/adapter.ts -- so shortcuts must pass through unmapped
+// rather than being blindly recursed into snake_case like the rest of the draft.
+const draftToWire = (draft) => Object.fromEntries(
+  Object.entries(draft).map(([key, value]) => [camelToSnakeKey(key), value]),
+);
 
 export function createBackendAdapter(invoke, listen) {
   if (typeof invoke !== "function") throw new TypeError("invoke must be a function");
