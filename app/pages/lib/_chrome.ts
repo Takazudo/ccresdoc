@@ -2,7 +2,7 @@
 // markup and behavior. The host binding changes only product-level slots; the
 // package derives desktop/mobile navigation and scoped sidebars from settings.
 
-import { Fragment, h } from "preact";
+import { h } from "preact";
 import { Island } from "@takazudo/zfb";
 import { createChrome } from "@takazudo/zudo-doc/chrome";
 import {
@@ -54,8 +54,23 @@ const PackageHeaderBase = createHeaderWithDefaults({
     routeContext.withBase(path === "/" ? "/docs/" : path),
 });
 
-function PackageHeader(props: Parameters<typeof PackageHeaderBase>[0]) {
-  return h(Fragment, {}, h(BrowserToolbarIsland, {}), h(PackageHeaderBase, props));
+// The browser toolbar row and the package header are one fixed chrome unit.
+// The host-owned wrapper carries the sticky positioning and the stacking
+// context; both children keep their own independent persist keys.
+//
+// The wrapper itself must NEVER carry data-zfb-transition-persist. zfb's
+// swapBodyElement flat-enumerates persist roots and lifts each one
+// independently, so a nested child root's swap target is discarded together
+// with the incoming ancestor subtree it lives in; zudo-doc's
+// nested-island-props-refresh drops nested roots outright for the same reason.
+// A persisted wrapper would also defeat the header's locale-keyed replacement.
+function ChromeRegion(props: Parameters<typeof PackageHeaderBase>[0]) {
+  return h(
+    "div",
+    { "data-ccresdoc-chrome-region": true },
+    h(BrowserToolbarIsland, {}),
+    h(PackageHeaderBase, props),
+  );
 }
 
 function AppearanceBodyEnd() {
@@ -74,7 +89,7 @@ export const {
   composeMetaTitle,
   renderDocPage,
 } = createChrome(routeContext, {
-  Header: PackageHeader,
+  Header: ChromeRegion,
   BodyEndIslands: AppearanceBodyEnd,
   headerRightComponents: { "ccresdoc-settings": SettingsHeaderButtonIsland },
 });
