@@ -80,9 +80,13 @@ describe("package CSS foundation", () => {
       while (open > 0 && !lines[open].trimEnd().endsWith("{")) open -= 1;
       let selector = open;
       while (selector > 0 && lines[selector - 1].trimEnd().endsWith(",")) selector -= 1;
+      // A rule nested in an at-rule (@media, @supports) is documented above the
+      // at-rule, not between it and the selector — keep walking past openers.
+      let comment = selector - 1;
+      while (comment > 0 && lines[comment].trimStart().startsWith("@")) comment -= 1;
       // Each rule reaching into a package-internal selector must say why.
       expect(
-        lines[selector - 1]?.trimEnd().endsWith("*/"),
+        lines[comment]?.trimEnd().endsWith("*/"),
         `undocumented !important rule: ${lines[selector]?.trim()}`,
       ).toBe(true);
       documented.add(selector);

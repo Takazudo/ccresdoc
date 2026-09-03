@@ -1141,7 +1141,9 @@ async function assertChromeOffsetConsumers(page, origin) {
   await openPage(page, origin, appRoutes.root);
   const offsetPx = await chromeOffsetPx(page);
 
-  const sidebarTop = await page.locator("#desktop-sidebar").evaluate((element) => element.getBoundingClientRect().top);
+  const sidebar = page.locator("#desktop-sidebar");
+  assert.equal(await sidebar.count(), 1, "desktop sidebar #desktop-sidebar must mount before its chrome offset can be checked");
+  const sidebarTop = await sidebar.evaluate((element) => element.getBoundingClientRect().top);
   assert(sidebarTop >= offsetPx - 1, `desktop sidebar must start at/below the combined chrome height (${offsetPx}px), got top=${sidebarTop}`);
 
   const resizer = page.locator("[data-sidebar-resizer]");
