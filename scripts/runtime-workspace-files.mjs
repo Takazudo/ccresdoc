@@ -17,7 +17,7 @@ export const RUNTIME_APP_FILES = Object.freeze([
   "package.json",
   "pnpm-lock.yaml",
   "pnpm-workspace.yaml",
-  "patches/@takazudo__zudo-doc@5.12.1.patch",
+  "patches/@takazudo__zudo-doc@5.17.2.patch",
   "tsconfig.json",
   "zfb.config.ts",
   "pages/404.tsx",

@@ -97,14 +97,27 @@ function fontPaths(css, slug) {
 }
 
 export function inspectThemePackInputs({ manifest = catalog, sourceRoot = packageThemePacksRoot } = {}) {
-  if (manifest?.schemaVersion !== 1 || !Array.isArray(manifest.packs)) {
-    fail("catalog must have schemaVersion 1 and a packs array");
+  if (manifest?.schemaVersion !== 2 || !Array.isArray(manifest.packs)) {
+    fail("catalog must have schemaVersion 2 and a packs array");
   }
   if (manifest.packs.length === 0) fail("catalog must contain at least the default pack");
 
   const slugs = new Set();
   const packs = [];
-  for (const meta of manifest.packs) {
+  for (const entry of manifest.packs) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      fail("catalog contains an invalid pack entry");
+    }
+    if (typeof entry.hasStylesheet !== "boolean") {
+      fail(`catalog pack has an invalid hasStylesheet flag: ${JSON.stringify(entry?.slug)}`);
+    }
+    const meta = entry.meta;
+    if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+      fail(`catalog pack has invalid metadata: ${JSON.stringify(entry?.slug)}`);
+    }
+    if (entry.slug !== meta.slug) {
+      fail(`catalog entry slug differs from pack metadata: ${JSON.stringify(entry.slug)}`);
+    }
     if (meta?.schemaVersion !== 1) fail(`pack metadata has an unsupported schemaVersion: ${meta?.slug ?? "(unknown)"}`);
     if (!slugPattern.test(meta.slug ?? "")) fail(`catalog contains an invalid slug: ${JSON.stringify(meta?.slug)}`);
     if (slugs.has(meta.slug)) fail(`catalog contains duplicate slug: ${meta.slug}`);
@@ -129,11 +142,13 @@ export function inspectThemePackInputs({ manifest = catalog, sourceRoot = packag
 
     const cssPath = join(packRoot, "pack.css");
     if (meta.slug === "default") {
+      if (entry.hasStylesheet) fail('reserved pack "default" must declare hasStylesheet: false');
       if (existsSync(cssPath)) fail('reserved pack "default" must be metadata-only (pack.css is forbidden)');
       packs.push({ meta, metaPath, cssPath: null, fonts: [] });
       continue;
     }
 
+    if (!entry.hasStylesheet) fail(`pack "${meta.slug}" must declare hasStylesheet: true`);
     assertFile(cssPath, `pack "${meta.slug}" stylesheet`);
     const css = readFileSync(cssPath, "utf8");
     if (css.trim().length === 0) fail(`pack "${meta.slug}" stylesheet is empty`);

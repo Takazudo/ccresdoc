@@ -1,6 +1,6 @@
 export const probeSettings = {
   siteName: "CCResDoc compatibility probe",
-  siteDescription: "zfb 2.10.1 + zudo-doc 5.12.1 node-free architecture probe",
+  siteDescription: "zfb 2.15.1 + zudo-doc 5.17.2 node-free architecture probe",
   port: 4892,
   base: "/",
   trailingSlash: true,

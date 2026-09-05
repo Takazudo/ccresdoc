@@ -39,7 +39,13 @@ function fixture() {
     fonts: { sans: "Fixture", mono: "System", loaded: ["Fixture"] },
     preview,
   };
-  const manifest = { schemaVersion: 1, packs: [defaultMeta, inkMeta] };
+  const manifest = {
+    schemaVersion: 2,
+    packs: [
+      { slug: "default", meta: defaultMeta, hasStylesheet: false },
+      { slug: "ink", meta: inkMeta, hasStylesheet: true },
+    ],
+  };
   mkdirSync(join(sourceRoot, "default"), { recursive: true });
   mkdirSync(join(sourceRoot, "ink", "fonts"), { recursive: true });
   writeFileSync(join(sourceRoot, "default", "meta.json"), JSON.stringify(defaultMeta));
@@ -84,7 +90,7 @@ test("validation reports missing, stale, and byte-mismatched generated assets", 
 test("source validation rejects catalog drift and missing referenced fonts", () => {
   const options = fixture();
   const drifted = structuredClone(options.manifest);
-  drifted.packs[1].version = "9.9.9";
+  drifted.packs[1].meta.version = "9.9.9";
   assert.throws(() => syncThemePacks({ ...options, manifest: drifted }), /metadata differs from the public catalog/);
 
   rmSync(join(options.sourceRoot, "ink", "fonts", "fixture.woff2"));
@@ -99,6 +105,21 @@ test("default stays metadata-only and non-default packs require CSS", () => {
   rmSync(join(options.sourceRoot, "default", "pack.css"));
   rmSync(join(options.sourceRoot, "ink", "pack.css"));
   assert.throws(() => syncThemePacks(options), /stylesheet is missing/);
+});
+
+test("catalog v2 entry fields agree with the package metadata and assets", () => {
+  const options = fixture();
+  const mismatchedSlug = structuredClone(options.manifest);
+  mismatchedSlug.packs[1].slug = "other";
+  assert.throws(() => syncThemePacks({ ...options, manifest: mismatchedSlug }), /entry slug differs/);
+
+  const missingStylesheetFlag = structuredClone(options.manifest);
+  missingStylesheetFlag.packs[1].hasStylesheet = false;
+  assert.throws(() => syncThemePacks({ ...options, manifest: missingStylesheetFlag }), /must declare hasStylesheet: true/);
+
+  const legacyCatalog = structuredClone(options.manifest);
+  legacyCatalog.schemaVersion = 1;
+  assert.throws(() => syncThemePacks({ ...options, manifest: legacyCatalog }), /schemaVersion 2/);
 });
 
 test("the input digest changes with catalog, CSS, font, and sync implementation bytes", () => {
@@ -117,8 +138,8 @@ test("the input digest changes with catalog, CSS, font, and sync implementation 
   assert.notEqual(fontChanged, cssChanged);
 
   const catalogChanged = structuredClone(options.manifest);
-  catalogChanged.packs[1].version = "2.3.5";
-  writeFileSync(join(options.sourceRoot, "ink", "meta.json"), JSON.stringify(catalogChanged.packs[1]));
+  catalogChanged.packs[1].meta.version = "2.3.5";
+  writeFileSync(join(options.sourceRoot, "ink", "meta.json"), JSON.stringify(catalogChanged.packs[1].meta));
   const metadataChanged = themePackInputDigest({ ...digestOptions, manifest: catalogChanged });
   assert.notEqual(metadataChanged, fontChanged);
 
@@ -129,11 +150,11 @@ test("the input digest changes with catalog, CSS, font, and sync implementation 
 test("validation rejects malformed metadata and font declarations", () => {
   const options = fixture();
   const invalid = structuredClone(options.manifest);
-  invalid.packs[1].preview.dark.syntax.keyword = "";
-  writeFileSync(join(options.sourceRoot, "ink", "meta.json"), JSON.stringify(invalid.packs[1]));
+  invalid.packs[1].meta.preview.dark.syntax.keyword = "";
+  writeFileSync(join(options.sourceRoot, "ink", "meta.json"), JSON.stringify(invalid.packs[1].meta));
   assert.throws(() => syncThemePacks({ ...options, manifest: invalid }), /invalid dark syntax preview metadata/);
 
-  writeFileSync(join(options.sourceRoot, "ink", "meta.json"), JSON.stringify(options.manifest.packs[1]));
+  writeFileSync(join(options.sourceRoot, "ink", "meta.json"), JSON.stringify(options.manifest.packs[1].meta));
   writeFileSync(join(options.sourceRoot, "ink", "pack.css"), '@font-face { font-family: "Other"; src: url("./fonts/fixture.woff2") }\n');
   assert.throws(() => syncThemePacks(options), /fonts.loaded has no matching @font-face: Fixture/);
 });
