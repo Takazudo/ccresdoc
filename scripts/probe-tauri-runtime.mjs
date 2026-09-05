@@ -163,7 +163,7 @@ async function assertThemeAssetParity() {
 
   for (const pack of sourceThemeCatalog.packs) {
     if (pack.slug === "default") continue;
-    const css = await fetchOk(`/theme-packs/${pack.slug}/pack.css?v=${encodeURIComponent(pack.version)}`);
+    const css = await fetchOk(`/theme-packs/${pack.slug}/pack.css?v=${encodeURIComponent(pack.meta.version)}`);
     servedFiles += 1;
     const referencedFonts = new Set();
     for (const match of css.matchAll(fontUrlPattern)) {
@@ -179,7 +179,7 @@ async function assertThemeAssetParity() {
     // Every generated font-bearing pack must expose the families its catalog
     // metadata promises. The CSS check catches a stale index/CSS pair even if
     // all the files happen to be present.
-    for (const family of pack.fonts.loaded) {
+    for (const family of pack.meta.fonts.loaded) {
       const escaped = family.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       assert.match(css, new RegExp(`font-family:\\s*["']${escaped}["']`));
     }
