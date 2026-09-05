@@ -4,7 +4,12 @@ import { ProbeCounter } from "@/components/probe-counter";
 const EmptyNav = () => null;
 
 export const mdxComponents = createMdxComponents({
-  settings: { base: "/", imageEnlarge: false },
+  settings: {
+    base: "/",
+    imageEnlarge: false,
+    assetViewerDir: "assets",
+    assetViewerRoutePrefix: "files",
+  },
   locale: "en",
   currentSlug: "probe",
   navData: {

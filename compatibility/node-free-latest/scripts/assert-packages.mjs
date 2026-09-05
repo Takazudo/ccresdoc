@@ -6,10 +6,10 @@ import { compile } from "@takazudo/zfb-md-wasm";
 import { probeRoot, resolveNativeBinary } from "./native-binary.mjs";
 
 const expected = {
-  "@takazudo/zfb": "2.10.1",
-  "@takazudo/zfb-md-wasm": "2.10.1",
-  "@takazudo/zfb-runtime": "2.10.1",
-  "@takazudo/zudo-doc": "5.12.1",
+  "@takazudo/zfb": "2.15.1",
+  "@takazudo/zfb-md-wasm": "2.15.1",
+  "@takazudo/zfb-runtime": "2.15.1",
+  "@takazudo/zudo-doc": "5.17.2",
   katex: "0.16.22",
   preact: "10.29.1",
   "preact-render-to-string": "6.6.7",
@@ -43,13 +43,13 @@ assert.ok(mdWasmManifest.exports["./parse"], "focused parse entrypoint is export
 const lockfile = readFileSync(join(probeRoot, "pnpm-lock.yaml"), "utf8");
 for (const platformPackage of platformPackages) {
   assert.ok(lockfile.includes(`'${platformPackage}':`), `${platformPackage} importer pin`);
-  assert.ok(lockfile.includes(`'${platformPackage}@2.10.1':`), `${platformPackage} locked package`);
+  assert.ok(lockfile.includes(`'${platformPackage}@2.15.1':`), `${platformPackage} locked package`);
 }
 
 const workspace = readFileSync(join(probeRoot, "pnpm-workspace.yaml"), "utf8");
 for (const [name, version] of [
   ...Object.entries(expected).filter(([name]) => name.startsWith("@takazudo/")),
-  ...platformPackages.map((name) => [name, "2.10.1"]),
+  ...platformPackages.map((name) => [name, "2.15.1"]),
 ]) {
   assert.ok(
     workspace.includes(`  - "${name}@${version}"`),

@@ -418,8 +418,9 @@ describe("host-owned package route adapters", () => {
     expect(props).toEqual({
       active: "default",
       base: "/",
+      pendingUntilHydrated: true,
       order: themePackCatalog.packs.map(
-        ({ slug, name, mode, description }) => ({
+        ({ slug, meta: { name, mode, description } }) => ({
           slug,
           name,
           mode,

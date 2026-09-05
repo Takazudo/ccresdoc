@@ -12,7 +12,6 @@
     ],
     "buildTail": [
       "info package route `/404` → pages/404.tsx",
-      "info package route `/sitemap.xml` → pages/sitemap.xml.tsx",
       "info package route `/robots.txt` → pages/robots.txt.tsx",
       "info package route `/docs/[[...slug]]` → pages/docs/[[...slug]].tsx",
       "✗ error: bundler step failed",

@@ -16,13 +16,7 @@ type ThemePackRegistry = NonNullable<
   RouteContextPayload["themePackRegistry"]
 >;
 
-export const themePackRegistry = themePackCatalog.packs.map((meta) => ({
-  slug: meta.slug,
-  meta,
-  // `default` is the catalog's reserved metadata-only entry. Every other
-  // published entry is CSS-bearing under the public pack contract.
-  hasStylesheet: meta.slug !== "default",
-})) satisfies ThemePackRegistry;
+export const themePackRegistry = themePackCatalog.packs satisfies ThemePackRegistry;
 
 const payload = {
   settings,
