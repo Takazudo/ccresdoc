@@ -12,7 +12,7 @@ lockfile. The hybrid architecture is documented in the epic issue (#41).
 ## Key architecture facts (claim checklist)
 
 - `node_modules` is populated at **setup/build time only** via `pnpm install --frozen-lockfile` (Node at setup only — NOT at runtime).
-- The published toolchain is `@takazudo/zfb*` `2.10.1` plus `@takazudo/zudo-doc` `5.12.1`; the app and compatibility fixture are validated from their own frozen lockfiles.
+- The published toolchain is `@takazudo/zfb*` `2.15.1` plus `@takazudo/zudo-doc` `5.17.2`; the app and compatibility fixture are validated from their own frozen lockfiles.
 - The host resolves the **native** zfb binary at the package-root carrier `<workspace>/node_modules/@takazudo/zfb-<platform>/zfb` — NOT the `.bin/zfb` Node-shebang wrapper.
 - **Port 4892**: the authored default. The host passes the validated effective
   port to zfb and may select a free loopback fallback without touching its owner.

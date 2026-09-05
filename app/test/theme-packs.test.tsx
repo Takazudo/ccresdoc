@@ -13,13 +13,7 @@ describe("CCResDoc theme-pack host integration", () => {
     expect(settings.themePack).toBe("default");
     expect(settings.themePackSwitcher).toBe(true);
     expect(settings.themePacks).toEqual(themePackSlugs);
-    expect(themePackRegistry).toEqual(
-      themePackCatalog.packs.map((meta) => ({
-        slug: meta.slug,
-        meta,
-        hasStylesheet: meta.slug !== "default",
-      })),
-    );
+    expect(themePackRegistry).toEqual(themePackCatalog.packs);
     expect(themePackRegistry[0]).toMatchObject({
       slug: "default",
       hasStylesheet: false,

@@ -5,9 +5,9 @@ zudo-doc consumer project built by zfb. Output in `dist/` is served by `zfb dev`
 ## Architecture
 
 - **Framework**: Preact + zfb SSG
-- **Published toolchain**: `@takazudo/zfb@2.10.1` plus native carrier packages
+- **Published toolchain**: `@takazudo/zfb@2.15.1` plus native carrier packages
   (the host resolves the matching package-root `zfb` binary) and
-  `@takazudo/zudo-doc@5.12.1` (components)
+  `@takazudo/zudo-doc@5.17.2` (components)
 - **Port**: 4892 (pinned in `zfb.config.ts`)
 - **Node-free mode**: Zero `.mjs` plugins → no `plugin-host.mjs` spawned
 - **Collections**: single `"docs"` collection at `src/content/docs/`
@@ -51,7 +51,7 @@ single-source mechanism in JSON; `scripts/check-zfb-pin.sh` is the enforcement g
 
 ### Published toolchain contract
 The first-party zfb packages and all five native platform packages are pinned to
-`2.10.1`; zudo-doc is pinned to `5.12.1`. Reachable runtime peers are pinned to
+`2.15.1`; zudo-doc is pinned to `5.17.2`. Reachable runtime peers are pinned to
 `preact@10.29.1`, `preact-render-to-string@6.6.7`, `zod@4.3.6`, and `katex@0.16.22`.
 The Cloudflare adapter and legacy local Markdown mirrors are intentionally absent:
 zudo-doc supplies the selected Markdown pipeline while CCResDoc's Rust generator

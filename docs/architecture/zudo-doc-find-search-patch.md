@@ -1,7 +1,8 @@
 # Controlled Find and Search package patch
 
-CCResDoc pins `@takazudo/zudo-doc` to `5.12.1` and applies the consumer-local
-patch at `app/patches/@takazudo__zudo-doc@5.12.1.patch`. The patch SHA-256 and
+CCResDoc pins `@takazudo/zudo-doc` to `5.17.2` and applies the consumer-local
+patch at `app/patches/@takazudo__zudo-doc@5.17.2.patch`. The patch bytes are
+unchanged by this bump. The patch SHA-256 and
 pnpm lock hash are both
 `845bacae4edff6b516c1a26ac5d15d07ed4583f0dd908a883661be56463cbe53`.
 `scripts/validate-dependencies.mjs` checks the version, registration, patch
@@ -51,6 +52,17 @@ cleanup guarantees, and compatible Find icon-control and complete-chrome offset
 hooks. At that point, bump the exact package pin, migrate only to its documented
 public APIs, remove `patchedDependencies` and the patch/hash validation, and
 regenerate the frozen lockfile and runtime stage.
+
+The removal condition remains unmet for 5.17.2. A byte comparison of all nine
+files rewritten by this patch between the previous pinned release and 5.17.2
+found them identical:
+
+- `dist/find-in-page/{index.js,index.d.ts,find-in-page.js,find-bar.js}`
+- `dist/search-widget/{index.js,index.d.ts}`
+- `dist/search-widget-script/{index.js,index.d.ts,generated-script.js}`
+
+The published package therefore still lacks controlled Find open/close,
+controlled Search open/refresh, and host opt-outs for both built-in shortcuts.
 
 ## Implementation guidance used
 
