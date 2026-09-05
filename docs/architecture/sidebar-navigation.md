@@ -1,6 +1,6 @@
 # Sidebar and navigation ownership
 
-CCResDoc uses the public navigation surface in `@takazudo/zudo-doc` 5.12.1.
+CCResDoc uses the public navigation surface in `@takazudo/zudo-doc` 5.17.2.
 The package owns sidebar rendering, filtering, persisted disclosure state,
 soft-navigation active state, mobile and desktop toggles, theme controls, smart
 path wrapping, and tree connector geometry. CCResDoc does not keep local copies
@@ -14,7 +14,7 @@ DOM behavior in happy-dom, and verifies duplicate-safe lifecycle cleanup.
 
 ## Accessibility contract and upstream deviation
 
-zudo-doc 5.12.1 exposes the sidebar as native links and disclosure buttons. The
+zudo-doc 5.17.2 exposes the sidebar as native links and disclosure buttons. The
 controls remain in the normal tab order and publish `aria-current`,
 `aria-expanded`, and descriptive labels. This is an accessible disclosure/link
 pattern, but it is not the WAI-ARIA tree pattern: the current public island does
@@ -25,7 +25,7 @@ retaining its rendering and keyboard state machine would fork the upstream
 component again. The DOM test records the difference so a future upstream
 implementation change is reviewed explicitly. Focus restoration to the
 hamburger after a navigation-driven mobile close is likewise not part of the
-5.12.1 public island contract and should be addressed upstream rather than in a
+5.17.2 public island contract and should be addressed upstream rather than in a
 host wrapper.
 
 ## Browser verification handoff

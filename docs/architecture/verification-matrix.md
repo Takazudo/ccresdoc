@@ -1,7 +1,7 @@
 # CCResDoc architecture and verification contract
 
 This is the consolidated integration record for the current `@takazudo/zfb`
-2.10.1 / `@takazudo/zudo-doc` 5.12.1 application. CCResDoc is a native viewer
+2.15.1 / `@takazudo/zudo-doc` 5.17.2 application. CCResDoc is a native viewer
 for selected Claude and Codex resources. The generated `/docs/` document is the
 sole product landing surface; `/` is its exact server-rendered alias. The
 product keeps permanent Claude and Codex top-level header categories.
@@ -37,7 +37,8 @@ audit has completed.
 
 ## Generated theme assets and catalog
 
-`@takazudo/zudo-doc/catalog` is the source of truth. The postinstall/prebuild
+`@takazudo/zudo-doc/catalog` is the source of truth. Its schema-version-2
+entries keep package metadata under `pack.meta`; the postinstall/prebuild
 sync validates every metadata file, copies every current non-default `pack.css`
 and its referenced fonts to `app/public/theme-packs/`, and writes `index.json`.
 The runtime stage embeds the catalog/file list, then hashes every staged app and
