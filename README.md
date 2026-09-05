@@ -19,8 +19,8 @@ WebView → http://localhost:<effective-port>/docs/
 
 Key facts:
 - **Published toolchain**: the `@takazudo/zfb*` family and all five native
-  carrier packages are pinned to `2.10.1`; `@takazudo/zudo-doc` is pinned to
-  `5.12.1`. The app and compatibility fixture use independent frozen lockfiles.
+  carrier packages are pinned to `2.15.1`; `@takazudo/zudo-doc` is pinned to
+  `5.17.2`. The app and compatibility fixture use independent frozen lockfiles.
 - **Node-free at runtime**: `zfb dev` with zero `.mjs` plugins spawns no Node host. The native `@takazudo/zfb-<platform>/zfb` binary is bundled in `node_modules` (populated at build/setup time via `pnpm install --frozen-lockfile`, Node at setup only).
 - **Host-owned routes**: `app/` owns the route adapters because the selected
   zfb configuration ends with `plugins: []`; package route/plugin entrypoints
