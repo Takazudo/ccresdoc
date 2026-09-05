@@ -148,12 +148,20 @@ async function assertFindMount(page) {
     1,
     "FindInPageInit island marker must be present; Cmd/Ctrl+F coverage cannot pass by testing nothing",
   );
+  await page.locator("nav.ccresdoc-browser-toolbar[data-bootstrap='ready']").waitFor({
+    state: "attached",
+    timeout: timeoutMs,
+  });
   const gate = await page.evaluate(() => ({
     tauriStubPresent: "__TAURI_INTERNALS__" in window,
+    tauriBridgePresent: typeof window.__TAURI__?.core?.invoke === "function",
     initScriptRan: window.__ccresdocTauriInitScript === true,
+    bootstrapRequested: window.__ccresdocTauriInvocations?.includes("get_browser_bootstrap") === true,
   }));
   assert.equal(gate.tauriStubPresent, true, "the pre-script __TAURI_INTERNALS__ stub is missing");
+  assert.equal(gate.tauriBridgePresent, true, "the pre-script __TAURI__ bridge stub is missing");
   assert.equal(gate.initScriptRan, true, "the Playwright pre-script init marker did not run");
+  assert.equal(gate.bootstrapRequested, true, "the browser adapter did not request its Tauri bootstrap");
 }
 
 async function activeMatchIndex(page) {
@@ -345,11 +353,38 @@ async function main() {
     );
   }
   const context = await browser.newContext();
-  // FindInPageInit intentionally checks this marker before installing its
-  // listener. addInitScript is the only reliable way to emulate the Tauri
-  // WebView without allowing page code to race the gate.
+  // FindInPageInit checks __TAURI_INTERNALS__, while the browser adapter uses
+  // the public __TAURI__ bridge to select Tauri commands and load shortcuts.
+  // Install both before page code runs so the harness emulates one coherent
+  // WebView runtime instead of mounting Find in an ordinary-browser adapter.
   await context.addInitScript(() => {
     if (!("__TAURI_INTERNALS__" in window)) window.__TAURI_INTERNALS__ = {};
+    window.__ccresdocTauriInvocations = [];
+    window.__TAURI__ = {
+      core: {
+        invoke: async (command) => {
+          window.__ccresdocTauriInvocations.push(command);
+          if (command === "get_browser_bootstrap") {
+            return {
+              shortcutEntries: [
+                { commandId: "find-in-page", bindings: ["Mod+F", "Ctrl+F"] },
+                { commandId: "search-documentation", bindings: ["Mod+K", "Ctrl+K"] },
+              ],
+              nativeOwnedBindings: [],
+              hostCapabilities: {
+                reloadDocumentation: false,
+                openInDefaultBrowser: false,
+              },
+              runtimeGeneration: 1,
+            };
+          }
+          return undefined;
+        },
+      },
+      event: {
+        listen: async () => () => undefined,
+      },
+    };
     window.__ccresdocTauriInitScript = true;
   });
   const page = await context.newPage();
@@ -372,7 +407,7 @@ async function main() {
       url: options.url,
       modifiers: modifiers.map(({ label }) => label),
       searchTerm,
-      tauriInitScript: "window.__TAURI_INTERNALS__ = {}",
+      tauriInitScript: "Find gate plus browser bootstrap bridge",
       regressionProbe: "pnpm run test:search-shortcuts -- --find-mount-only",
     }, null, 2));
   } finally {
