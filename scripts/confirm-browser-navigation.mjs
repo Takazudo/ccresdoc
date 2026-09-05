@@ -84,6 +84,24 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function playwrightShortcut(binding, platform = process.platform) {
+  return binding.split("+").map((part) => {
+    switch (part.trim().toLowerCase()) {
+      case "mod": return platform === "darwin" ? "Meta" : "Control";
+      case "ctrl":
+      case "control": return "Control";
+      case "meta": return "Meta";
+      case "alt": return "Alt";
+      case "shift": return "Shift";
+      default: return part;
+    }
+  }).join("+");
+}
+
+async function pressShortcut(page, binding) {
+  await page.keyboard.press(playwrightShortcut(binding));
+}
+
 function assertRepositoryContracts() {
   const rootPackage = readJson(join(repoRoot, "package.json"));
   assert.equal(
@@ -116,6 +134,15 @@ function assertRepositoryContracts() {
     assert(commands.has(commandId), `command catalog is missing ${commandId}`);
     assert(commands.get(commandId).defaultBindings.includes(binding), `${commandId} default binding drifted`);
   }
+  assert.equal(playwrightShortcut("Mod+[", "darwin"), "Meta+[");
+  assert.equal(playwrightShortcut("Mod+[", "linux"), "Control+[");
+  assert.equal(playwrightShortcut("Ctrl+Shift+K", "darwin"), "Control+Shift+K");
+  assert.equal(playwrightShortcut("Ctrl+Shift+K", "linux"), "Control+Shift+K");
+  assert.doesNotMatch(
+    readFileSync(fileURLToPath(import.meta.url), "utf8"),
+    /page\.keyboard\.press\(["'](?:Control|Meta)\+/,
+    "configured shortcuts must use pressShortcut instead of a host-specific Playwright modifier",
+  );
 
   const chromeSource = readFileSync(join(appRoot, "pages/lib/_chrome.ts"), "utf8");
   assert.match(chromeSource, /FindInPageInit,?\s*\{? disableBuiltInShortcut: true/s, "Find must opt out of the package shortcut");
@@ -551,7 +578,7 @@ async function closeSearch(page) {
 
 async function openPatchedFind(page, byKeyboard = false) {
   await closeFind(page);
-  if (byKeyboard) await page.keyboard.press("Control+F");
+  if (byKeyboard) await pressShortcut(page, "Mod+F");
   else await command(page, "find-in-page").click();
   await page.waitForFunction(() => document.querySelector("[data-find-in-page-bar]") !== null, undefined, { timeout: browserTimeoutMs });
   await page.waitForFunction(() => (
@@ -577,7 +604,7 @@ async function openControlledSearch(page, byKeyboard = false) {
         queueMicrotask(() => { record.defaultPrevented = event.defaultPrevented; });
       }, { capture: true, once: true });
     });
-    await page.keyboard.press("Control+K");
+    await pressShortcut(page, "Mod+K");
   } else {
     await command(page, "more").click();
     await menu(page).waitFor({ state: "visible", timeout: browserTimeoutMs });
@@ -638,7 +665,7 @@ async function assertFindSurface(page) {
   await closeFind(page);
 
   const keyboardFind = await openPatchedFind(page, true);
-  assert.equal(await keyboardFind.count(), 1, "actual Control+F opens the patched Find input");
+  assert.equal(await keyboardFind.count(), 1, "actual Mod+F opens the patched Find input");
   await closeFind(page);
 
   // A route swap must clear both marks and the bar, even when the swap starts
@@ -667,7 +694,7 @@ async function assertSearchSurface(page) {
     await page.waitForFunction(() => document.querySelector("dialog[data-search-dialog] [data-search-input]")?.matches(":focus"), undefined, { timeout: browserTimeoutMs });
     await closeSearch(page);
     const keyboardInput = await openControlledSearch(page, true);
-    assert.equal(await keyboardInput.count(), 1, "actual Control+K opens the package widget");
+    assert.equal(await keyboardInput.count(), 1, "actual Mod+K opens the package widget");
     try {
       await page.waitForFunction(() => window.__ccresdocSearchFetch.urls.some((raw) => (
         new URL(raw).pathname === "/docs/search-index.json"
@@ -710,8 +737,8 @@ async function assertEditingTargetSuppression(page) {
       await closeFind(page);
       await closeSearch(page);
       await page.locator(`[data-browser-navigation-target="${target}"]`).focus();
-      await page.keyboard.press("Control+F");
-      await page.keyboard.press("Control+K");
+      await pressShortcut(page, "Mod+F");
+      await pressShortcut(page, "Mod+K");
       await delay(80);
       assert.equal(await page.locator("[data-find-in-page-bar]").count(), 0, `${target} must suppress Find shortcut dispatch`);
       assert.equal(await page.locator("dialog[data-search-dialog][open]").count(), 0, `${target} must suppress Search shortcut dispatch`);
@@ -719,8 +746,8 @@ async function assertEditingTargetSuppression(page) {
 
     const searchInput = await openControlledSearch(page);
     await searchInput.focus();
-    await page.keyboard.press("Control+F");
-    await page.keyboard.press("Control+K");
+    await pressShortcut(page, "Mod+F");
+    await pressShortcut(page, "Mod+K");
     await delay(80);
     assert.equal(await page.locator("[data-find-in-page-bar]").count(), 0, "site Search input must suppress Find shortcut dispatch");
     assert.equal(await page.locator("dialog[data-search-dialog][open]").count(), 1, "site Search input must retain its own dialog without duplicate dispatch");
@@ -728,8 +755,8 @@ async function assertEditingTargetSuppression(page) {
 
     const findInput = await openPatchedFind(page);
     await findInput.focus();
-    await page.keyboard.press("Control+F");
-    await page.keyboard.press("Control+K");
+    await pressShortcut(page, "Mod+F");
+    await pressShortcut(page, "Mod+K");
     await delay(80);
     assert.equal(await page.locator("[data-find-in-page-bar]").count(), 1, "Find input must suppress duplicate Find shortcut dispatch");
     assert.equal(await page.locator("dialog[data-search-dialog][open]").count(), 0, "Find input must suppress Search shortcut dispatch");
@@ -778,7 +805,7 @@ async function assertHistorySurface(page, origin) {
       false,
       `Back must enable after two pushes: ${JSON.stringify({ routedHistory, historyTrace })}`,
     );
-    await page.keyboard.press("Control+[");
+    await pressShortcut(page, "Mod+[");
     await waitForPath(page, appRoutes.claude);
     // popstate updates the URL/path before zfb:page-load settles the managed
     // traversal. Wait for the exposed Forward affordance instead of racing
@@ -802,7 +829,7 @@ async function assertHistorySurface(page, origin) {
         queueMicrotask(() => { record.defaultPrevented = event.defaultPrevented; });
       }, true);
     });
-    await page.keyboard.press("Control+]");
+    await pressShortcut(page, "Mod+]");
     try {
       await page.waitForFunction((expected) => location.pathname === expected, appRoutes.codex, { timeout: 3_000 });
       await waitForPath(page, appRoutes.codex);
@@ -819,14 +846,14 @@ async function assertHistorySurface(page, origin) {
 
     // C → Back to B → D (Home) creates a new branch. Forward must remain
     // disabled, and the old C entry must not become reachable again.
-    await page.keyboard.press("Control+[");
+    await pressShortcut(page, "Mod+[");
     await waitForPath(page, appRoutes.claude);
     await waitForCommandEnabled(page, "forward");
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
     assert.equal(await command(page, "forward").isDisabled(), true, "Forward is disabled after a new branch");
     const branchPath = page.url();
-    await Promise.allSettled([command(page, "forward").click(), page.keyboard.press("Control+]")]);
+    await Promise.allSettled([command(page, "forward").click(), pressShortcut(page, "Mod+]")]);
     await delay(100);
     assert.equal(page.url(), branchPath, "the superseded C entry is unreachable after branching");
 
@@ -889,7 +916,7 @@ async function assertShortcutReconfiguration(page) {
 
   const customEntries = Object.values(t()).map((entry) => ({ ...entry, bindings: entry.commandId === "find-in-page"
     ? ["Mod+Shift+F"]
-    : entry.commandId === "search-documentation" ? ["Mod+Shift+K"] : entry.bindings }));
+    : entry.commandId === "search-documentation" ? ["Ctrl+Shift+K"] : entry.bindings }));
   await page.evaluate((shortcutEntries) => window.__ccresdocEmitBootstrap({
     shortcutEntries,
     nativeOwnedBindings: [],
@@ -899,18 +926,32 @@ async function assertShortcutReconfiguration(page) {
   await delay(50);
   await closeFind(page);
   await closeSearch(page);
-  await page.keyboard.press("Control+F");
-  await page.keyboard.press("Control+K");
+  await pressShortcut(page, "Mod+F");
+  await pressShortcut(page, "Mod+K");
   await delay(100);
   assert.equal(await page.locator("[data-find-in-page-bar]").count(), 0, "changed Mod+F no longer opens the stale Find default");
   assert.equal(await page.locator("dialog[data-search-dialog][open]").count(), 0, "changed Mod+K no longer opens the stale Search default");
-  await page.keyboard.press("Control+Shift+F");
+  await pressShortcut(page, "Mod+Shift+F");
   await page.waitForFunction(() => document.querySelector("[data-find-in-page-bar]") !== null, undefined, { timeout: browserTimeoutMs });
   const customFind = page.locator('[data-find-in-page-bar] input[aria-label="Find in page"]');
   assert.equal(await customFind.count(), 1, "custom secondary Find binding opens with actual key input");
   assert.equal(await page.evaluate(() => window.__ccresdocCommandEvents.find), 1, "custom Find binding dispatches exactly once");
   await closeFind(page);
-  await page.keyboard.press("Control+Shift+K");
+  if (process.platform === "darwin") {
+    await pressShortcut(page, "Mod+Shift+K");
+    await delay(100);
+    assert.equal(
+      await page.locator("dialog[data-search-dialog][open]").count(),
+      0,
+      "macOS Mod must not trigger an explicit Ctrl binding",
+    );
+    assert.equal(
+      await page.evaluate(() => window.__ccresdocCommandEvents.search),
+      0,
+      "macOS Command and explicit Control remain distinct",
+    );
+  }
+  await pressShortcut(page, "Ctrl+Shift+K");
   await page.waitForFunction(() => document.querySelector("dialog[data-search-dialog]")?.open === true, undefined, { timeout: browserTimeoutMs });
   assert.equal(await page.evaluate(() => window.__ccresdocCommandEvents.search), 1, "custom Search binding dispatches exactly once");
   await closeSearch(page);
@@ -923,8 +964,8 @@ async function assertShortcutReconfiguration(page) {
     runtimeGeneration: 223,
   }), removedEntries);
   await delay(50);
-  await page.keyboard.press("Control+F");
-  await page.keyboard.press("Control+K");
+  await pressShortcut(page, "Mod+F");
+  await pressShortcut(page, "Mod+K");
   await delay(100);
   assert.equal(await page.locator("[data-find-in-page-bar]").count(), 0, "removed Mod+F does not leave a package listener behind");
   assert.equal(await page.locator("dialog[data-search-dialog][open]").count(), 0, "removed Mod+K does not leave a package listener behind");
@@ -1026,7 +1067,7 @@ async function assertResponsiveGeometry(page, origin) {
   assert.equal(await command(page, "find-in-page").isVisible(), true, "narrow Find remains direct");
   assert.equal(await command(page, "copy-page-path").isVisible(), false, "narrow Copy moves to More");
   assert.equal(await command(page, "open-in-default-browser").isVisible(), false, "narrow external-open moves to More");
-  await command(page, "find-in-page").click();
+  await openPatchedFind(page);
   if (artifactDir) await page.screenshot({ path: join(artifactDir, "browser-toolbar-narrow-find.png") });
   const findBar = page.locator("[data-find-in-page-bar]");
   const barBox = await findBar.boundingBox();
@@ -1272,17 +1313,17 @@ async function assertBrowserOnly(browser, origin) {
     await dialog.accept("CCResDoc");
     await findClick;
     assert.equal(promptSeen, true, "browser-only toolbar Find delegates to the ordinary browser Find prompt");
-    await page.keyboard.press("Control+F");
+    await pressShortcut(page, "Mod+F");
     await delay(100);
-    assert.equal(await page.locator("[data-find-in-page-bar]").count(), 0, "browser-only Control+F does not install the privileged Find bar");
+    assert.equal(await page.locator("[data-find-in-page-bar]").count(), 0, "browser-only Mod+F does not install the privileged Find bar");
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
     await routeViaHeader(page, appRoutes.claude);
     await waitForCommandEnabled(page, "back");
-    await page.keyboard.press("Control+[");
+    await pressShortcut(page, "Mod+[");
     await waitForPath(page, appRoutes.root);
     await waitForCommandEnabled(page, "forward");
-    await page.keyboard.press("Control+]");
+    await pressShortcut(page, "Mod+]");
     await waitForPath(page, appRoutes.claude);
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
