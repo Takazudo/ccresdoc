@@ -937,6 +937,20 @@ async function assertShortcutReconfiguration(page) {
   assert.equal(await customFind.count(), 1, "custom secondary Find binding opens with actual key input");
   assert.equal(await page.evaluate(() => window.__ccresdocCommandEvents.find), 1, "custom Find binding dispatches exactly once");
   await closeFind(page);
+  if (process.platform === "darwin") {
+    await pressShortcut(page, "Mod+Shift+K");
+    await delay(100);
+    assert.equal(
+      await page.locator("dialog[data-search-dialog][open]").count(),
+      0,
+      "macOS Mod must not trigger an explicit Ctrl binding",
+    );
+    assert.equal(
+      await page.evaluate(() => window.__ccresdocCommandEvents.search),
+      0,
+      "macOS Command and explicit Control remain distinct",
+    );
+  }
   await pressShortcut(page, "Ctrl+Shift+K");
   await page.waitForFunction(() => document.querySelector("dialog[data-search-dialog]")?.open === true, undefined, { timeout: browserTimeoutMs });
   assert.equal(await page.evaluate(() => window.__ccresdocCommandEvents.search), 1, "custom Search binding dispatches exactly once");
