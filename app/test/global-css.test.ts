@@ -68,6 +68,40 @@ describe("package CSS foundation", () => {
     expect(css).not.toMatch(/\.ccresdoc-browser-toolbar__path[^}]*max-inline-size/s);
   });
 
+  it("extracts the browser toolbar row from the root view-transition snapshot", () => {
+    // Persisting the toolbar node keeps it alive across the swap; only a
+    // view-transition-name keeps it visually static. features.css assigns one
+    // for its own five persist keys and would leave this row cross-fading with
+    // the article, so the host layer names it and stops its animation.
+    expect(css).toContain(
+      ".ccresdoc-browser-toolbar {\n  position: relative;\n  z-index: var(--z-index-dropdown);\n  view-transition-name: ccresdoc-browser-toolbar;",
+    );
+    expect(css).toMatch(
+      /::view-transition-old\(ccresdoc-browser-toolbar\),\n::view-transition-new\(ccresdoc-browser-toolbar\),\n::view-transition-group\(ccresdoc-browser-toolbar\) \{\n {2}animation: none;/,
+    );
+    // The name must NOT sit on the toolbar's persist root: view-transition-name
+    // makes its element a stacking context, which sinks the whole toolbar below
+    // the header and leaves the overflow menu unclickable.
+    expect(css).not.toMatch(
+      /\[data-zfb-transition-persist="ccresdoc-browser-toolbar"\] \{[^}]*view-transition-name/,
+    );
+    // Nor on the chrome region wrapper: a named element is also a backdrop
+    // root, and the wrapper is an ancestor of header[data-header], whose
+    // backdrop-filter in the fjord/drift packs would then blur nothing.
+    expect(css).not.toMatch(
+      /\[data-ccresdoc-chrome-region\] \{[^}]*view-transition-name/,
+    );
+    // The one-sided entry/exit pair must stay neutralised under reduced motion,
+    // which features.css only does for its own names.
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?::view-transition-old\(ccresdoc-browser-toolbar\):only-child,\n {2}::view-transition-new\(ccresdoc-browser-toolbar\):only-child \{\n {4}animation: none;/,
+    );
+    // Host rules must follow the package import to win on source order.
+    expect(css.indexOf("@takazudo/zudo-doc/features.css")).toBeLessThan(
+      css.indexOf("view-transition-name: ccresdoc-browser-toolbar"),
+    );
+  });
+
   it("documents every surviving package-internal !important override", () => {
     const lines = css.split("\n");
     const documented = new Set<number>();
