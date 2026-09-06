@@ -49,38 +49,48 @@
   top: auto;
 }
 
-/* Chrome extraction for the app-owned toolbar row (mirrors zudo-doc's
+/* Chrome extraction for the app-owned chrome region (mirrors zudo-doc's
  * Strategy B+ block in features.css). The package assigns a
- * `view-transition-name` from the `data-zfb-transition-persist` value and
- * only recognises its own five keys (`header-`, `sidebar-`, `footer-`,
+ * `view-transition-name` from the `data-zfb-transition-persist` value and only
+ * recognises its own five keys (`header-`, `sidebar-`, `footer-`,
  * `desktop-sidebar-toggle`, `desktop-toc-toggle`). Persisting the toolbar's
- * DOM node is therefore not enough on its own: an unnamed element stays
- * inside the `root` snapshot, so the toolbar cross-faded with the article on
- * every client-router navigation even though the node itself survived. Naming
- * it lifts it into its own layer; `animation: none` on old/new/group then
- * holds it visually static, like the header and the sidebar. The group pseudo
- * has to be neutralised too — it can still morph geometry when the two
- * snapshots differ in size or position. */
-[data-zfb-transition-persist="ccresdoc-browser-toolbar"] {
-  view-transition-name: ccresdoc-browser-toolbar;
+ * DOM node is therefore not enough on its own: an unnamed element stays inside
+ * the `root` snapshot, so the toolbar row cross-faded with the article on every
+ * client-router navigation even though the node itself survived.
+ *
+ * The name goes on THIS wrapper, not on the toolbar's persist root. A
+ * `view-transition-name` other than `none` makes its element a stacking
+ * context, and the overflow menu's --z-index-dropdown has to outrank the
+ * header's z-toolbar in a context the two share; naming the shell buried the
+ * whole toolbar under the header and left the menu unclickable
+ * (scripts/confirm-browser-navigation.mjs catches exactly this). The wrapper is
+ * already both a stacking context and a containing block, so naming it adds no
+ * new boxing. The header nested inside carries `zfb-header` and is extracted
+ * into its own layer, leaving this one holding the toolbar row.
+ *
+ * `animation: none` on old, new, and group then holds the region static, like
+ * the header and the sidebar. The group pseudo has to be neutralised too — it
+ * can still morph geometry when the two snapshots differ in size or position. */
+[data-ccresdoc-chrome-region] {
+  view-transition-name: ccresdoc-chrome-region;
 }
 
-::view-transition-old(ccresdoc-browser-toolbar),
-::view-transition-new(ccresdoc-browser-toolbar),
-::view-transition-group(ccresdoc-browser-toolbar) {
+::view-transition-old(ccresdoc-chrome-region),
+::view-transition-new(ccresdoc-chrome-region),
+::view-transition-group(ccresdoc-chrome-region) {
   animation: none;
 }
 
 /* One-sided navigation (zudo-doc's #2072 lesson, applied to the host layer).
- * Every current host route renders the toolbar, so the named group normally
+ * Every current host route renders the region, so the named group normally
  * holds both snapshots and the rules above keep it static. Should a future
  * route omit the chrome, a lone snapshot would otherwise sit frozen at full
- * opacity and then vanish at finish; these cross-fade it with the root
- * content instead. `:only-child` outranks `animation: none` on specificity. */
-::view-transition-old(ccresdoc-browser-toolbar):only-child {
+ * opacity and then vanish at finish; these cross-fade it with the root content
+ * instead. `:only-child` outranks `animation: none` on specificity. */
+::view-transition-old(ccresdoc-chrome-region):only-child {
   animation: var(--default-transition-duration) ease-in both contentFadeOut;
 }
-::view-transition-new(ccresdoc-browser-toolbar):only-child {
+::view-transition-new(ccresdoc-chrome-region):only-child {
   animation: var(--zd-transition-slower) ease-out both contentFadeIn;
 }
 
@@ -88,8 +98,8 @@
  * motion but enumerates package names only, so the host layer repeats it for
  * its own name. Later in source order at equal specificity, so it wins. */
 @media (prefers-reduced-motion: reduce) {
-  ::view-transition-old(ccresdoc-browser-toolbar):only-child,
-  ::view-transition-new(ccresdoc-browser-toolbar):only-child {
+  ::view-transition-old(ccresdoc-chrome-region):only-child,
+  ::view-transition-new(ccresdoc-chrome-region):only-child {
     animation: none;
   }
 }
