@@ -107,7 +107,10 @@
 /* App-owned browser toolbar row. The [data-ccresdoc-browser-toolbar-shell]
  * island marker is intentionally left unstyled: keeping it unpositioned lets
  * the overflow menu resolve against the region wrapper instead of a
- * shell-local stacking context. The marker still carries weight outside CSS —
+ * shell-local stacking context. `view-transition-name` would form one just as
+ * a `position` would, which is why the extraction above names the wrapper —
+ * do not move either declaration down here. The marker still carries weight
+ * outside CSS —
  * zudo-doc's find-in-page excludes this subtree by that exact selector. */
 .ccresdoc-browser-toolbar {
   display: flex;
