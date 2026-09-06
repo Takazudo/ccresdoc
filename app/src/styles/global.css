@@ -49,7 +49,7 @@
   top: auto;
 }
 
-/* Chrome extraction for the app-owned chrome region (mirrors zudo-doc's
+/* Chrome extraction for the app-owned toolbar row (mirrors zudo-doc's
  * Strategy B+ block in features.css). The package assigns a
  * `view-transition-name` from the `data-zfb-transition-persist` value and only
  * recognises its own five keys (`header-`, `sidebar-`, `footer-`,
@@ -58,39 +58,54 @@
  * the `root` snapshot, so the toolbar row cross-faded with the article on every
  * client-router navigation even though the node itself survived.
  *
- * The name goes on THIS wrapper, not on the toolbar's persist root. A
- * `view-transition-name` other than `none` makes its element a stacking
- * context, and the overflow menu's --z-index-dropdown has to outrank the
- * header's z-toolbar in a context the two share; naming the shell buried the
- * whole toolbar under the header and left the menu unclickable
- * (scripts/confirm-browser-navigation.mjs catches exactly this). The wrapper is
- * already both a stacking context and a containing block, so naming it adds no
- * new boxing. The header nested inside carries `zfb-header` and is extracted
- * into its own layer, leaving this one holding the toolbar row.
+ * Which element carries the name is load-bearing in two directions, and only
+ * this row satisfies both:
  *
- * `animation: none` on old, new, and group then holds the region static, like
- * the header and the sidebar. The group pseudo has to be neutralised too — it
- * can still morph geometry when the two snapshots differ in size or position. */
-[data-ccresdoc-chrome-region] {
-  view-transition-name: ccresdoc-chrome-region;
+ * - NOT the toolbar's persist root (the island shell). A `view-transition-name`
+ *   other than `none` makes its element a stacking context (css-view-
+ *   transitions-1 §2.1.1, which applies "at any time", not just mid-transition),
+ *   and the overflow menu's --z-index-dropdown has to outrank the header's
+ *   z-toolbar in a context the two share. Naming the unpositioned shell buried
+ *   the whole toolbar under the header and left the menu unclickable
+ *   (scripts/confirm-browser-navigation.mjs catches exactly this), so the name
+ *   is paired here with the stacking that keeps the menu on top.
+ * - NOT the [data-ccresdoc-chrome-region] wrapper. §2.1.1 also makes a named
+ *   element a backdrop root, and the wrapper is an ancestor of the package
+ *   header. The fjord and drift theme packs give header[data-header] a
+ *   translucent background plus `backdrop-filter: blur(10px)`; a backdrop root
+ *   on the wrapper clips that blur's source to the region's own (empty)
+ *   contents, so the frosted header would stop frosting the scrolled article.
+ *   Sticky + z-index already made the wrapper a stacking context, but neither
+ *   makes a backdrop root — the name would have added one.
+ *
+ * Naming this row instead keeps every named element a sibling: the header holds
+ * `zfb-header` and this row holds its own name, with no named ancestor over
+ * either. `animation: none` on old, new, and group then holds the row static,
+ * like the header and the sidebar. The group pseudo has to be neutralised too —
+ * it can still morph geometry when the two snapshots differ in size or
+ * position. */
+.ccresdoc-browser-toolbar {
+  position: relative;
+  z-index: var(--z-index-dropdown);
+  view-transition-name: ccresdoc-browser-toolbar;
 }
 
-::view-transition-old(ccresdoc-chrome-region),
-::view-transition-new(ccresdoc-chrome-region),
-::view-transition-group(ccresdoc-chrome-region) {
+::view-transition-old(ccresdoc-browser-toolbar),
+::view-transition-new(ccresdoc-browser-toolbar),
+::view-transition-group(ccresdoc-browser-toolbar) {
   animation: none;
 }
 
 /* One-sided navigation (zudo-doc's #2072 lesson, applied to the host layer).
- * Every current host route renders the region, so the named group normally
+ * Every current host route renders the toolbar, so the named group normally
  * holds both snapshots and the rules above keep it static. Should a future
  * route omit the chrome, a lone snapshot would otherwise sit frozen at full
  * opacity and then vanish at finish; these cross-fade it with the root content
  * instead. `:only-child` outranks `animation: none` on specificity. */
-::view-transition-old(ccresdoc-chrome-region):only-child {
+::view-transition-old(ccresdoc-browser-toolbar):only-child {
   animation: var(--default-transition-duration) ease-in both contentFadeOut;
 }
-::view-transition-new(ccresdoc-chrome-region):only-child {
+::view-transition-new(ccresdoc-browser-toolbar):only-child {
   animation: var(--zd-transition-slower) ease-out both contentFadeIn;
 }
 
@@ -98,20 +113,21 @@
  * motion but enumerates package names only, so the host layer repeats it for
  * its own name. Later in source order at equal specificity, so it wins. */
 @media (prefers-reduced-motion: reduce) {
-  ::view-transition-old(ccresdoc-chrome-region):only-child,
-  ::view-transition-new(ccresdoc-chrome-region):only-child {
+  ::view-transition-old(ccresdoc-browser-toolbar):only-child,
+  ::view-transition-new(ccresdoc-browser-toolbar):only-child {
     animation: none;
   }
 }
 
 /* App-owned browser toolbar row. The [data-ccresdoc-browser-toolbar-shell]
  * island marker is intentionally left unstyled: keeping it unpositioned lets
- * the overflow menu resolve against the region wrapper instead of a
- * shell-local stacking context. `view-transition-name` would form one just as
- * a `position` would, which is why the extraction above names the wrapper —
- * do not move either declaration down here. The marker still carries weight
- * outside CSS —
- * zudo-doc's find-in-page excludes this subtree by that exact selector. */
+ * this row's own z-index resolve against the region wrapper instead of a
+ * shell-local stacking context, so the row (and the overflow menu it contains)
+ * outranks the header. `view-transition-name` forms a stacking context just as
+ * a `position` would — that is why the extraction block above pairs the name
+ * with this row's position/z-index rather than putting either on the shell.
+ * The marker still carries weight outside CSS — zudo-doc's find-in-page
+ * excludes this subtree by that exact selector. */
 .ccresdoc-browser-toolbar {
   display: flex;
   align-items: center;
