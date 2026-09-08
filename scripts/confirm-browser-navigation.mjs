@@ -935,6 +935,11 @@ async function assertShortcutReconfiguration(page) {
   await page.waitForFunction(() => document.querySelector("[data-find-in-page-bar]") !== null, undefined, { timeout: browserTimeoutMs });
   const customFind = page.locator('[data-find-in-page-bar] input[aria-label="Find in page"]');
   assert.equal(await customFind.count(), 1, "custom secondary Find binding opens with actual key input");
+  // Find focuses its input in a Preact effect, after the bar enters the DOM.
+  // Escape is handled by that input; wait for focus just as openPatchedFind does.
+  await page.waitForFunction(() => (
+    document.querySelector('[data-find-in-page-bar] input[aria-label="Find in page"]')?.matches(":focus") === true
+  ), undefined, { timeout: browserTimeoutMs });
   assert.equal(await page.evaluate(() => window.__ccresdocCommandEvents.find), 1, "custom Find binding dispatches exactly once");
   await closeFind(page);
   if (process.platform === "darwin") {
