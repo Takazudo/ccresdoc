@@ -181,8 +181,8 @@ Schema delta: use zudo-doc's standard passthrough schema. Existing `title`, `des
 ## Native/Tauri facts and remaining verification
 
 The current canonical fact for `@takazudo/zfb-darwin-arm64@2.16.0` is a
-174,502,112-byte executable `zfb` at archive mode `0755`, with SHA-256
-`92bab6597732123bd21d8d139dbf5fe1d73e061bfa955076ebf2267aba95b943`. Its
+174,518,672-byte executable `zfb` at archive mode `0755`, with SHA-256
+`89b096a0951f7545ebe5cf34b1f735210aefff7fe39c288e455bfe04377c377c`. Its
 runtime path is `app/node_modules/@takazudo/zfb-darwin-arm64/zfb`; the npm JS
 wrapper is Node-based and forbidden at runtime. The package facts file records
 the corresponding integrity values for all five published carriers. The
