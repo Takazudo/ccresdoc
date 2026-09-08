@@ -4,17 +4,17 @@
 minimumReleaseAge: 1440
 
 minimumReleaseAgeExclude:
-  - '@takazudo/zfb@2.15.1'
-  - '@takazudo/zfb-darwin-arm64@2.15.1'
-  - '@takazudo/zfb-darwin-x64@2.15.1'
-  - '@takazudo/zfb-linux-arm64-gnu@2.15.1'
-  - '@takazudo/zfb-linux-x64-gnu@2.15.1'
-  - '@takazudo/zfb-md-wasm@2.15.1'
-  - '@takazudo/zfb-runtime@2.15.1'
-  - '@takazudo/zfb-win32-x64-msvc@2.15.1'
-  - '@takazudo/zudo-doc@5.17.2'
+  - '@takazudo/zfb@2.16.0'
+  - '@takazudo/zfb-darwin-arm64@2.16.0'
+  - '@takazudo/zfb-darwin-x64@2.16.0'
+  - '@takazudo/zfb-linux-arm64-gnu@2.16.0'
+  - '@takazudo/zfb-linux-x64-gnu@2.16.0'
+  - '@takazudo/zfb-md-wasm@2.16.0'
+  - '@takazudo/zfb-runtime@2.16.0'
+  - '@takazudo/zfb-win32-x64-msvc@2.16.0'
+  - '@takazudo/zudo-doc@5.19.0'
 
 nodeLinker: hoisted
 
 patchedDependencies:
-  '@takazudo/zudo-doc@5.17.2': patches/@takazudo__zudo-doc@5.17.2.patch
+  '@takazudo/zudo-doc@5.19.0': patches/@takazudo__zudo-doc@5.19.0.patch
