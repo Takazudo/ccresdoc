@@ -14,6 +14,8 @@ case "$EVIDENCE_MODE" in
     ;;
 esac
 
+node --test "$FIXTURE_DIR/scripts/normalize-probe-output.test.mjs"
+
 pnpm --dir "$FIXTURE_DIR" install --frozen-lockfile
 pnpm --dir "$FIXTURE_DIR" run "$EVIDENCE_SCRIPT"
 pnpm --dir "$FIXTURE_DIR" run assert:packages

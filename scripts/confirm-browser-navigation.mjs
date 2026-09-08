@@ -152,7 +152,7 @@ function assertRepositoryContracts() {
   // make that privacy boundary visible to the browser gate itself.
   const runtimeFiles = readFileSync(join(repoRoot, "scripts/runtime-workspace-files.mjs"), "utf8");
   for (const required of [
-    "patches/@takazudo__zudo-doc@5.17.2.patch",
+    "patches/@takazudo__zudo-doc@5.19.0.patch",
     "src/browser-chrome/command-catalog.json",
     "src/browser-chrome/adapter.ts",
     "src/browser-chrome/history.ts",
@@ -180,7 +180,7 @@ function assertRepositoryContracts() {
     const source = readFileSync(join(generatedPermissions, file), "utf8");
     assert.doesNotMatch(source, /\*|allow-all|test-only|fixture/i, `${file} contains a broad/test-only permission`);
   }
-  const patch = join(appRoot, "patches/@takazudo__zudo-doc@5.17.2.patch");
+  const patch = join(appRoot, "patches/@takazudo__zudo-doc@5.19.0.patch");
   assert.equal(
     createHash("sha256").update(readFileSync(patch)).digest("hex"),
     "845bacae4edff6b516c1a26ac5d15d07ed4583f0dd908a883661be56463cbe53",
@@ -935,6 +935,11 @@ async function assertShortcutReconfiguration(page) {
   await page.waitForFunction(() => document.querySelector("[data-find-in-page-bar]") !== null, undefined, { timeout: browserTimeoutMs });
   const customFind = page.locator('[data-find-in-page-bar] input[aria-label="Find in page"]');
   assert.equal(await customFind.count(), 1, "custom secondary Find binding opens with actual key input");
+  // Find focuses its input in a Preact effect, after the bar enters the DOM.
+  // Escape is handled by that input; wait for focus just as openPatchedFind does.
+  await page.waitForFunction(() => (
+    document.querySelector('[data-find-in-page-bar] input[aria-label="Find in page"]')?.matches(":focus") === true
+  ), undefined, { timeout: browserTimeoutMs });
   assert.equal(await page.evaluate(() => window.__ccresdocCommandEvents.find), 1, "custom Find binding dispatches exactly once");
   await closeFind(page);
   if (process.platform === "darwin") {

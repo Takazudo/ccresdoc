@@ -1,7 +1,7 @@
 # Controlled Find and Search package patch
 
-CCResDoc pins `@takazudo/zudo-doc` to `5.17.2` and applies the consumer-local
-patch at `app/patches/@takazudo__zudo-doc@5.17.2.patch`. The patch bytes are
+CCResDoc pins `@takazudo/zudo-doc` to `5.19.0` and applies the consumer-local
+patch at `app/patches/@takazudo__zudo-doc@5.19.0.patch`. The patch bytes are
 unchanged by this bump. The patch SHA-256 and
 pnpm lock hash are both
 `845bacae4edff6b516c1a26ac5d15d07ed4583f0dd908a883661be56463cbe53`.
@@ -53,8 +53,8 @@ hooks. At that point, bump the exact package pin, migrate only to its documented
 public APIs, remove `patchedDependencies` and the patch/hash validation, and
 regenerate the frozen lockfile and runtime stage.
 
-The removal condition remains unmet for 5.17.2. A byte comparison of all nine
-files rewritten by this patch between the previous pinned release and 5.17.2
+The removal condition remains unmet for 5.19.0. A byte comparison of all nine
+files rewritten by this patch between 5.17.2 and 5.19.0
 found them identical:
 
 - `dist/find-in-page/{index.js,index.d.ts,find-in-page.js,find-bar.js}`
