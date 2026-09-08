@@ -1,7 +1,7 @@
 # Node-free latest-toolchain compatibility decision
 
 Status: the integrated application contract is implemented and verified for zfb
-2.15.1 / zudo-doc 5.17.2. This document preserves the historical issue #93
+2.16.0 / zudo-doc 5.19.0. This document preserves the historical issue #93
 architecture decision and its reproducible evidence; the current acceptance
 commands and explicit host-only gaps are in
 [`verification-matrix.md`](verification-matrix.md).
@@ -10,7 +10,7 @@ commands and explicit host-only gaps are in
 
 - The published `@takazudo/zfb`, `@takazudo/zfb-runtime`,
   `@takazudo/zfb-md-wasm`, and five native carrier packages are pinned to
-  `2.15.1`; `@takazudo/zudo-doc` is pinned to `5.17.2`. The app and the
+  `2.16.0`; `@takazudo/zudo-doc` is pinned to `5.19.0`. The app and the
   compatibility fixture each use a frozen lockfile and independently validate
   the installed tree.
 - The zudo-doc theme catalog uses schema version 2: each catalog entry carries
@@ -132,9 +132,9 @@ The selected native Linux probe served `/` and `/docs/probe/`, emitted the `Prob
 
 Pin first-party packages exactly for the current integrated contract:
 
-- `@takazudo/zfb`, `@takazudo/zfb-runtime`, and `@takazudo/zfb-md-wasm`: `2.15.1`.
-- `@takazudo/zudo-doc`: `5.17.2`.
-- Direct optional platform packages retained at `2.15.1`: `zfb-darwin-arm64`, `zfb-darwin-x64`, `zfb-linux-arm64-gnu`, `zfb-linux-x64-gnu`, `zfb-win32-x64-msvc`. pnpm installs only the matching host package, but explicit declarations keep the Tauri resolver and cross-platform package map stable.
+- `@takazudo/zfb`, `@takazudo/zfb-runtime`, and `@takazudo/zfb-md-wasm`: `2.16.0`.
+- `@takazudo/zudo-doc`: `5.19.0`.
+- Direct optional platform packages retained at `2.16.0`: `zfb-darwin-arm64`, `zfb-darwin-x64`, `zfb-linux-arm64-gnu`, `zfb-linux-x64-gnu`, `zfb-win32-x64-msvc`. pnpm installs only the matching host package, but explicit declarations keep the Tauri resolver and cross-platform package map stable.
 - Reachable peers: `preact@10.29.1`, `preact-render-to-string@6.6.7`, `zod@4.3.6`, and `katex@0.16.22`. KaTeX is reachable even with `math:false` because `createMdxComponents()` imports the package `MathBlock` implementation.
 - Build-only foundation: `tailwindcss@4.2.0`, `@tailwindcss/vite@4.2.0`, `typescript@5.9.2`. The downstream test harness uses `vitest@4.0.17` with `happy-dom@20.7.0`.
 
@@ -180,7 +180,7 @@ Schema delta: use zudo-doc's standard passthrough schema. Existing `title`, `des
 
 ## Native/Tauri facts and remaining verification
 
-The current canonical fact for `@takazudo/zfb-darwin-arm64@2.15.1` is a
+The current canonical fact for `@takazudo/zfb-darwin-arm64@2.16.0` is a
 174,502,112-byte executable `zfb` at archive mode `0755`, with SHA-256
 `92bab6597732123bd21d8d139dbf5fe1d73e061bfa955076ebf2267aba95b943`. Its
 runtime path is `app/node_modules/@takazudo/zfb-darwin-arm64/zfb`; the npm JS
