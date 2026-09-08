@@ -4,25 +4,11 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { resolveNativeBinary, probeRoot } from "./native-binary.mjs";
+import { createProbeOutputNormalizer } from "./normalize-probe-output.mjs";
 
 const variants = ["wholesale", "routes-off", "selected", "manual"];
 const results = {};
-const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const escapedProbeRoot = escapeRegExp(probeRoot);
-const escapedRelativeProbeRoot = escapeRegExp(probeRoot.replace(/^\/+/, ""));
-const escapedTempRoot = escapeRegExp(tmpdir());
-const normalize = (value) => value
-  .replace(new RegExp(`(?:\\.\\.\\/)+${escapedRelativeProbeRoot}`, "g"), "<probe-root>")
-  .replace(new RegExp(escapedProbeRoot, "g"), "<probe-root>")
-  .replace(
-    new RegExp(`(?:/private)?${escapedTempRoot}/ccresdoc-config-[^/ ]+/workspace`, "g"),
-    "<isolated-workspace>",
-  )
-  .replace(
-    new RegExp(`(?:/private)?${escapedTempRoot}/zfb-plugin-host-[^/ ]+`, "g"),
-    "<zfb-plugin-host>",
-  )
-  .replace(/ in \d+\.\d+s/g, " in <duration>");
+const normalize = createProbeOutputNormalizer({ probeRoot, tempRoot: tmpdir(), platform: process.platform });
 const shellQuote = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
 
 for (const variant of variants) {
