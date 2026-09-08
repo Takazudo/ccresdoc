@@ -242,6 +242,23 @@ describe("host-owned package route adapters", () => {
     expect(home).not.toContain("data-home-page");
   });
 
+  it("includes one initially hidden navigation overlay on every host-owned page", () => {
+    const pages = [
+      render(<HomePage />),
+      render(<NotFoundPage />),
+      ...routeItems.map((item) => render(<DocsPage params={item.params} {...item.props} />)),
+    ];
+    for (const html of pages) {
+      const shell = document.createElement("div");
+      shell.innerHTML = html;
+      const overlays = shell.querySelectorAll("#page-loading-overlay");
+      expect(overlays).toHaveLength(1);
+      expect(overlays[0].getAttribute("aria-hidden")).toBe("true");
+      expect(overlays[0].hasAttribute("data-visible")).toBe(false);
+      expect(overlays[0].querySelectorAll(".page-loading-spinner")).toHaveLength(1);
+    }
+  });
+
   it("renders ordered desktop tabs and an ordered mobile root menu", () => {
     expect(routeContext.settings.headerNav).toEqual([
       { label: "Claude", path: "/docs/claude", categoryMatch: "claude", versioned: false },

@@ -10,6 +10,7 @@ import {
 } from "@takazudo/zudo-doc/header-with-defaults";
 import { FindInPageInit } from "@takazudo/zudo-doc/find-in-page";
 import { SearchWidget } from "@takazudo/zudo-doc/search-widget";
+import { PAGE_LOADING_OVERLAY_ID, PageLoadingOverlay } from "@takazudo/zudo-doc/page-loading";
 import type { SearchWidgetSlotProps } from "@takazudo/zudo-doc/chrome-bindings";
 import { routeContext } from "./_route-context";
 import { SettingsHeaderButton } from "./_settings-button";
@@ -75,6 +76,9 @@ function ChromeRegion(props: Parameters<typeof PackageHeaderBase>[0]) {
 
 function AppearanceBodyEnd() {
   return [
+    routeContext.settings.dynamicPageTransition
+      ? h(PageLoadingOverlay, { id: PAGE_LOADING_OVERLAY_ID })
+      : null,
     Island({ when: "load", children: h(AppearanceBridge, {}) }),
     Island({ when: "load", children: h(FindInPageInit, { disableBuiltInShortcut: true }) }),
   ];
