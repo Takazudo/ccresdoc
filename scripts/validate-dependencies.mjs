@@ -13,7 +13,7 @@ const checkInstalled = process.argv.includes("--installed");
 const zudoDocPatch = {
   version: "5.25.0",
   path: "patches/@takazudo__zudo-doc@5.25.0.patch",
-  hash: "845bacae4edff6b516c1a26ac5d15d07ed4583f0dd908a883661be56463cbe53",
+  hash: "347409ab5e2840036bd2632b5f57f13bd9cb257bcebe4827bc08a39ed35894bc",
 };
 
 const required = {
@@ -196,6 +196,10 @@ if (checkInstalled) {
   }
   if (!installedSearch.includes("openSearch") || !installedSearch.includes("refreshSearch")) {
     fail("installed zudo-doc is missing the controlled Search patch");
+  }
+  const installedZdtpLoader = readFileSync(join(installedZudoRoot, "zdtp-loader.js"), "utf8");
+  if (!installedZdtpLoader.startsWith("throw new Error(") || installedZdtpLoader.includes('"@takazudo/zdtp"')) {
+    fail("installed zudo-doc is missing the zdtp-loader stub patch");
   }
 }
 

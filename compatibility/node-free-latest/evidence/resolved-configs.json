@@ -140,17 +140,21 @@
               "respectPrefersColorScheme": true
             },
             "siteName": "CCResDoc compatibility probe",
-            "siteDescription": "zfb 2.16.0 + zudo-doc 5.19.0 node-free architecture probe",
+            "siteDescription": "zfb 2.18.0 + zudo-doc 5.25.0 node-free architecture probe",
             "logo": "auto",
             "base": "/",
             "trailingSlash": true,
             "home": {
-              "wide": false
+              "wide": false,
+              "introMarkdown": "",
+              "sitemapHeading": ""
             },
             "siteTreeNavIgnore": [],
+            "siteTreeNavSecondary": [],
             "minifyHtml": true,
             "docsDir": "src/content/docs",
             "entryDocSlug": "getting-started",
+            "dateFormat": "locale",
             "defaultLocale": "en",
             "locales": {},
             "mermaid": true,
@@ -168,6 +172,11 @@
             },
             "sitemap": false,
             "docMetainfo": false,
+            "docMetainfoFields": [
+              "created",
+              "updated",
+              "author"
+            ],
             "docTags": false,
             "tagPlacement": "after-title",
             "tagGovernance": "off",
@@ -192,6 +201,7 @@
             "dynamicPageTransition": true,
             "frontmatterPreview": false,
             "docHistory": false,
+            "docHistoryUi": true,
             "docHistoryExclude": [],
             "assetViewer": false,
             "assetViewerDir": "assets",
@@ -218,6 +228,8 @@
           },
           "translations": {
             "en": {
+              "home.sitemapHeading": "Explore the documentation",
+              "home.secondaryNav": "More categories",
               "nav.gettingStarted": "Getting Started",
               "nav.learn": "Learn",
               "nav.guides": "Guides",
@@ -346,6 +358,8 @@
               "version.page.docs": "Docs"
             },
             "ja": {
+              "home.sitemapHeading": "ドキュメントを探す",
+              "home.secondaryNav": "その他のカテゴリ",
               "nav.gettingStarted": "はじめに",
               "nav.learn": "学ぶ",
               "nav.guides": "ガイド",
@@ -474,6 +488,7 @@
               "version.page.docs": "ドキュメント"
             },
             "de": {
+              "home.secondaryNav": "Weitere Kategorien",
               "nav.gettingStarted": "Erste Schritte",
               "nav.learn": "Lernen",
               "nav.guides": "Anleitungen",
@@ -763,6 +778,17 @@
           "base": "/",
           "themePack": "default"
         }
+      },
+      {
+        "name": "@takazudo/zudo-doc/plugins/img-src-check",
+        "options": {
+          "base": "/",
+          "onBroken": "warn"
+        }
+      },
+      {
+        "name": "@takazudo/zudo-doc/plugins/zdtp-loader",
+        "options": {}
       }
     ],
     "markdown": {
@@ -967,6 +993,17 @@
           "base": "/",
           "themePack": "default"
         }
+      },
+      {
+        "name": "@takazudo/zudo-doc/plugins/img-src-check",
+        "options": {
+          "base": "/",
+          "onBroken": "warn"
+        }
+      },
+      {
+        "name": "@takazudo/zudo-doc/plugins/zdtp-loader",
+        "options": {}
       }
     ],
     "markdown": {
