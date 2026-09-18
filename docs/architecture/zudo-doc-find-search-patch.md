@@ -1,8 +1,9 @@
 # Controlled Find and Search package patch
 
-CCResDoc pins `@takazudo/zudo-doc` to `5.19.0` and applies the consumer-local
-patch at `app/patches/@takazudo__zudo-doc@5.19.0.patch`. The patch bytes are
-unchanged by this bump. The patch SHA-256 and
+CCResDoc pins `@takazudo/zudo-doc` to `5.25.0` and applies the consumer-local
+patch at `app/patches/@takazudo__zudo-doc@5.25.0.patch`. The patch was
+re-targeted from 5.19.0 across the 5.20.0-5.25.0 range in this bump; the patch
+bytes are unchanged. The patch SHA-256 and
 pnpm lock hash are both
 `845bacae4edff6b516c1a26ac5d15d07ed4583f0dd908a883661be56463cbe53`.
 `scripts/validate-dependencies.mjs` checks the version, registration, patch
@@ -53,16 +54,23 @@ hooks. At that point, bump the exact package pin, migrate only to its documented
 public APIs, remove `patchedDependencies` and the patch/hash validation, and
 regenerate the frozen lockfile and runtime stage.
 
-The removal condition remains unmet for 5.19.0. A byte comparison of all nine
-files rewritten by this patch between 5.17.2 and 5.19.0
-found them identical:
+The removal condition remains unmet for 5.25.0. A byte comparison of all nine
+files rewritten by this patch between the published 5.19.0 and 5.25.0
+tarballs found them identical, and none of the nine appears in the 148-file
+`npm diff --diff-name-only` between those two versions:
 
 - `dist/find-in-page/{index.js,index.d.ts,find-in-page.js,find-bar.js}`
 - `dist/search-widget/{index.js,index.d.ts}`
 - `dist/search-widget-script/{index.js,index.d.ts,generated-script.js}`
 
+`git apply --check -p1` of the existing patch succeeds against an extracted
+5.25.0 package tree — every hunk's context still applies verbatim, which is
+why the patch was re-targeted rather than rewritten.
+
 The published package therefore still lacks controlled Find open/close,
 controlled Search open/refresh, and host opt-outs for both built-in shortcuts.
+Nothing in the 5.20.0-5.25.0 release notes touches find-in-page or the search
+widget.
 
 ## Implementation guidance used
 
