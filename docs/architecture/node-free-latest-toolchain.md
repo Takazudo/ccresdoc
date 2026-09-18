@@ -1,7 +1,7 @@
 # Node-free latest-toolchain compatibility decision
 
 Status: the integrated application contract is implemented and verified for zfb
-2.16.0 / zudo-doc 5.19.0. This document preserves the historical issue #93
+2.18.0 / zudo-doc 5.25.0. This document preserves the historical issue #93
 architecture decision and its reproducible evidence; the current acceptance
 commands and explicit host-only gaps are in
 [`verification-matrix.md`](verification-matrix.md).
@@ -10,7 +10,7 @@ commands and explicit host-only gaps are in
 
 - The published `@takazudo/zfb`, `@takazudo/zfb-runtime`,
   `@takazudo/zfb-md-wasm`, and five native carrier packages are pinned to
-  `2.16.0`; `@takazudo/zudo-doc` is pinned to `5.19.0`. The app and the
+  `2.18.0`; `@takazudo/zudo-doc` is pinned to `5.25.0`. The app and the
   compatibility fixture each use a frozen lockfile and independently validate
   the installed tree.
 - The zudo-doc theme catalog uses schema version 2: each catalog entry carries
@@ -121,10 +121,20 @@ below as historical evidence rather than being treated as the current pin.
 
 | Candidate | Resolved plugins | Check | Build | Node during build | Decision |
 | --- | --- | --- | --- | --- | --- |
-| wholesale `zudoDoc()` | routes, search-index, theme-packs | pass | fails: injected chrome reaches optional `diff` | plugin host invoked | reject |
-| `packageOwnedRoutes:false` | search-index, theme-packs | pass | pass | plugin host invoked | reject |
+| wholesale `zudoDoc()` | routes, search-index, theme-packs, img-src-check, zdtp-loader | pass | fails: `/docs/probe` collides with the injected `/docs/[[...slug]]` catch-all | plugin host invoked | reject |
+| `packageOwnedRoutes:false` | search-index, theme-packs, img-src-check, zdtp-loader | pass | pass | plugin host invoked | reject |
 | selected spread override | none | pass | pass | zero | accept |
 | fully manual zfb config | none | pass | pass | zero | viable control, reject duplicated policy |
+
+The wholesale rejection is now recorded one stage earlier than it used to be.
+Through zudo-doc 5.19.0 the wholesale build reached the bundler and failed
+there because the injected chrome reaches the optional `diff` peer; from zfb
+2.18.0 the route graph is validated first, and the probe's own
+`pages/docs/probe.tsx` collides with the package catch-all, so the build
+aborts before bundling. The `reject` decision is unchanged — wholesale still
+invokes the plugin host — but the fixture no longer demonstrates the `diff`
+reachability at 5.25.0. Re-establishing that evidence requires renaming the
+probe's host page so the two routes differ.
 
 The selected native Linux probe served `/` and `/docs/probe/`, emitted the `ProbeCounter` hydration marker and props, rebuilt after a watched MDX edit, sampled only the native zfb process, and recorded no call to the failing `node` sentinel. The integrated staged-runtime probe repeats this contract against the pruned application workspace. Real-WebView visual parity remains a documented macOS release gate.
 
@@ -132,9 +142,9 @@ The selected native Linux probe served `/` and `/docs/probe/`, emitted the `Prob
 
 Pin first-party packages exactly for the current integrated contract:
 
-- `@takazudo/zfb`, `@takazudo/zfb-runtime`, and `@takazudo/zfb-md-wasm`: `2.16.0`.
-- `@takazudo/zudo-doc`: `5.19.0`.
-- Direct optional platform packages retained at `2.16.0`: `zfb-darwin-arm64`, `zfb-darwin-x64`, `zfb-linux-arm64-gnu`, `zfb-linux-x64-gnu`, `zfb-win32-x64-msvc`. pnpm installs only the matching host package, but explicit declarations keep the Tauri resolver and cross-platform package map stable.
+- `@takazudo/zfb`, `@takazudo/zfb-runtime`, and `@takazudo/zfb-md-wasm`: `2.18.0`.
+- `@takazudo/zudo-doc`: `5.25.0`.
+- Direct optional platform packages retained at `2.18.0`: `zfb-darwin-arm64`, `zfb-darwin-x64`, `zfb-linux-arm64-gnu`, `zfb-linux-x64-gnu`, `zfb-win32-x64-msvc`. pnpm installs only the matching host package, but explicit declarations keep the Tauri resolver and cross-platform package map stable.
 - Reachable peers: `preact@10.29.1`, `preact-render-to-string@6.6.7`, `zod@4.3.6`, and `katex@0.16.22`. KaTeX is reachable even with `math:false` because `createMdxComponents()` imports the package `MathBlock` implementation.
 - Build-only foundation: `tailwindcss@4.2.0`, `@tailwindcss/vite@4.2.0`, `typescript@5.9.2`. The downstream test harness uses `vitest@4.0.17` with `happy-dom@20.7.0`.
 
@@ -150,6 +160,8 @@ Usable with `plugins: []`:
 - host route composition: `route-context`, `chrome`, `home-page`, `doc-page-props`, `route-enumerators`, `doc-route-paths`, `mdx-components`, `category-nav`;
 - navigation/islands: `site-schema`, `sidebar-tree`, `sidebar-tree-island`, `sidebar-toggle-island`, `desktop-sidebar-toggle-island`, `site-tree-nav-island`, `tree-nav-shared`, `smart-break`, `sidebar-active-slug`, `current-path`;
 - styling/types: `theme.css`, `safelist.css`, `content.css`, `page-loading.css`, `features.css`, `tsconfig.base.json`, `virtual-modules.d.ts`, and the official zfb config declarations.
+
+Caveat since zudo-doc 5.25.0: `chrome` is only usable with `plugins: []` because the app patches `dist/zdtp-loader.js`. `chrome/derive.js` statically pulls in `design-token-panel-bootstrap.js`, whose `import("@takazudo/zudo-doc/zdtp-loader")` re-exports the uninstalled optional peer `@takazudo/zdtp`; upstream shields it with the `zdtp-loader` plugin, which `plugins: []` removes. See [`zudo-doc-find-search-patch.md`](zudo-doc-find-search-patch.md) *Scope 2*.
 
 Not usable under the invariant: `routes/*` (requires route-context virtual modules) and `plugins/*` (starts the Node host). Package route source files may be read as reference but must not be copied wholesale.
 
@@ -180,9 +192,9 @@ Schema delta: use zudo-doc's standard passthrough schema. Existing `title`, `des
 
 ## Native/Tauri facts and remaining verification
 
-The current canonical fact for `@takazudo/zfb-darwin-arm64@2.16.0` is a
-174,518,672-byte executable `zfb` at archive mode `0755`, with SHA-256
-`89b096a0951f7545ebe5cf34b1f735210aefff7fe39c288e455bfe04377c377c`. Its
+The current canonical fact for `@takazudo/zfb-darwin-arm64@2.18.0` is a
+174,535,936-byte executable `zfb` at archive mode `0755`, with SHA-256
+`afe5fc51757e2596ed809f0ac97ce0f549e2f5171c89afaddb9ba79ef8591194`. Its
 runtime path is `app/node_modules/@takazudo/zfb-darwin-arm64/zfb`; the npm JS
 wrapper is Node-based and forbidden at runtime. The package facts file records
 the corresponding integrity values for all five published carriers. The

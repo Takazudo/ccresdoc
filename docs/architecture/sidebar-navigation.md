@@ -1,6 +1,6 @@
 # Sidebar and navigation ownership
 
-CCResDoc uses the public navigation surface in `@takazudo/zudo-doc` 5.19.0.
+CCResDoc uses the public navigation surface in `@takazudo/zudo-doc` 5.25.0.
 The package owns sidebar rendering, filtering, persisted disclosure state,
 soft-navigation active state, mobile and desktop toggles, theme controls, smart
 path wrapping, and tree connector geometry. CCResDoc does not keep local copies
@@ -14,7 +14,7 @@ DOM behavior in happy-dom, and verifies duplicate-safe lifecycle cleanup.
 
 ## Accessibility contract and upstream deviation
 
-zudo-doc 5.19.0 exposes the sidebar as native links and disclosure buttons. The
+zudo-doc 5.25.0 exposes the sidebar as native links and disclosure buttons. The
 controls remain in the normal tab order and publish `aria-current`,
 `aria-expanded`, and descriptive labels. This is an accessible disclosure/link
 pattern, but it is not the WAI-ARIA tree pattern: the current public island does
@@ -25,8 +25,16 @@ retaining its rendering and keyboard state machine would fork the upstream
 component again. The DOM test records the difference so a future upstream
 implementation change is reviewed explicitly. Focus restoration to the
 hamburger after a navigation-driven mobile close is likewise not part of the
-5.19.0 public island contract and should be addressed upstream rather than in a
+5.25.0 public island contract and should be addressed upstream rather than in a
 host wrapper.
+
+Re-checked at 5.25.0 (this bump): the contract held rather than changed. A
+byte-level scan of the published `sidebar-tree-island`, `site-tree-nav-island`,
+`tree-nav-shared`, and `sidebar-toggle-island` dist entry points at 5.25.0
+still shows only `aria-current`, `aria-expanded`, `aria-hidden`, and
+`aria-label` — no `role="tree"` / `role="treeitem"`, no `aria-controls`, and no
+`tabIndex`/roving-tabindex wiring. The disclosure/link pattern and the deviation
+recorded above are unchanged.
 
 ## Browser verification handoff
 

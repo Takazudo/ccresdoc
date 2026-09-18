@@ -25,6 +25,14 @@ describe("package CSS foundation", () => {
     }
   });
 
+  it("keeps the resetting theme entrypoint rather than theme-no-reset.css", () => {
+    // zudo-doc 5.20.0 added `theme-no-reset.css` for embedders that cannot
+    // control stylesheet import order. CCResDoc owns global.css outright and
+    // imports the package before its own rules, so the reset is wanted here;
+    // this pins that decision against an accidental swap.
+    expect(css).not.toContain("@takazudo/zudo-doc/theme-no-reset.css");
+  });
+
   it("does not retain package-owned token or code-style mirrors", () => {
     expect(css).not.toContain("@theme {");
     expect(css).not.toContain("pre.hi-root");
