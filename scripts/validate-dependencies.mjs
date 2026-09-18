@@ -198,7 +198,7 @@ if (checkInstalled) {
     fail("installed zudo-doc is missing the controlled Search patch");
   }
   const installedZdtpLoader = readFileSync(join(installedZudoRoot, "zdtp-loader.js"), "utf8");
-  if (installedZdtpLoader.includes('from "@takazudo/zdtp"')) {
+  if (!installedZdtpLoader.startsWith("throw new Error(") || installedZdtpLoader.includes('"@takazudo/zdtp"')) {
     fail("installed zudo-doc is missing the zdtp-loader stub patch");
   }
 }
