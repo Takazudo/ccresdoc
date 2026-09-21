@@ -54,3 +54,10 @@ that host and report it separately.
      package-root build (`pnpm --dir app exec zfb build`)
 3. Re-run `pnpm b4push` to confirm all checks pass
 4. Report the final status
+
+Heavy steps (Vitest, Clippy, Rust tests, zfb build, compatibility fixture build,
+browser navigation) queue through the machine-wide heavy-guard and print a
+`heavy-guard: verdict=PASS|FAIL|ENV_SUSPECT` line. Exit 75 means the queue timed
+out and the step never ran. On `ENV_SUSPECT`, rerun once; if it is still red with
+no assertion / type / lint error, defer that step to CI under a
+`deferred-verification` issue and report it as deferred, never as passed.

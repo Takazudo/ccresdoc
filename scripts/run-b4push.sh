@@ -35,6 +35,16 @@ fail() {
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Machine-wide queue for heavy steps, shared by every agent session on this machine
+# (owner's ~/.claude or ~/.codex). Absent on CI and on other machines → runs directly.
+heavy() {
+  local g="${HEAVY_GUARD:-}"
+  [ -n "$g" ] || for c in "$HOME/.claude/scripts/heavy-guard.sh" "$HOME/.codex/scripts/heavy-guard.sh"; do
+    [ -x "$c" ] && { g="$c"; break; }
+  done
+  if [ -n "$g" ] && [ -z "${CI:-}" ]; then "$g" -- "$@"; else "$@"; fi
+}
+
 # ── Step 1: zfb pin consistency ──────────────────
 step "Step 1/10: zfb pin/lock consistency (check-zfb-pin.sh)"
 if bash "$ROOT_DIR/scripts/check-zfb-pin.sh"; then
@@ -66,7 +76,7 @@ step "Step 3/10: strict TypeScript + zfb check + Vitest"
 if [ "$INSTALL_OK" -eq 1 ]; then
   if (cd "$ROOT_DIR/app" && pnpm run typecheck); then pass "strict TypeScript passed"; else fail "strict TypeScript"; fi
   if (cd "$ROOT_DIR/app" && pnpm run check:zfb); then pass "zfb check passed"; else fail "zfb check"; fi
-  if (cd "$ROOT_DIR/app" && pnpm run test:run); then pass "frontend tests passed"; else fail "frontend tests"; fi
+  if (cd "$ROOT_DIR/app" && heavy pnpm run test:run); then pass "frontend tests passed"; else fail "frontend tests"; fi
   if (cd "$ROOT_DIR/app" && pnpm run test:settings); then pass "Settings Node tests passed"; else fail "Settings Node tests"; fi
 else
   echo "⏭ skipping frontend gates (frozen install failed)"
@@ -84,7 +94,7 @@ fi
 # ── Step 5: cargo clippy ─────────────────────────
 # --exclude ccresdoc mirrors CI: tauri crate needs webkit2gtk/gtk3, unavailable on Linux CI runners
 step "Step 5/10: cargo clippy --workspace --exclude ccresdoc --all-targets -- -D warnings"
-if (cd "$ROOT_DIR" && cargo clippy --workspace --exclude ccresdoc --all-targets -- -D warnings); then
+if (cd "$ROOT_DIR" && heavy cargo clippy --workspace --exclude ccresdoc --all-targets -- -D warnings); then
   pass "cargo clippy passed"
 else
   fail "cargo clippy --workspace --exclude ccresdoc --all-targets -- -D warnings"
@@ -93,7 +103,7 @@ fi
 # ── Step 6: cargo test ───────────────────────────
 # --exclude ccresdoc mirrors CI: tauri crate needs webkit2gtk/gtk3, unavailable on Linux CI runners
 step "Step 6/10: cargo test --workspace --exclude ccresdoc"
-if (cd "$ROOT_DIR" && cargo test --workspace --exclude ccresdoc); then
+if (cd "$ROOT_DIR" && heavy cargo test --workspace --exclude ccresdoc); then
   pass "cargo test passed"
 else
   fail "cargo test --workspace --exclude ccresdoc"
@@ -106,7 +116,7 @@ step "Step 7/10: native zfb build (app/)"
 # binary is used — no global zfb on PATH required.
 # Skip if pnpm install failed: node_modules may be incomplete, causing misleading errors.
 if [ "$INSTALL_OK" -eq 1 ]; then
-  if (cd "$ROOT_DIR/app" && pnpm exec zfb build); then
+  if (cd "$ROOT_DIR/app" && heavy pnpm exec zfb build); then
     pass "zfb build (app/) passed"
   else
     fail "zfb build (app/)"
@@ -131,7 +141,7 @@ fi
 
 # ── Step 9: frozen compatibility fixture ─────────
 step "Step 9/10: frozen zero-plugin compatibility fixture"
-if (cd "$ROOT_DIR" && pnpm run check:compatibility); then
+if (cd "$ROOT_DIR" && heavy pnpm run check:compatibility); then
   pass "zero-plugin compatibility fixture passed"
 else
   fail "zero-plugin compatibility fixture"
@@ -140,7 +150,7 @@ fi
 # ── Step 10: actual-key browser navigation ──────────────────────────────────
 step "Step 10/10: actual-key Chromium browser navigation"
 if [ "$INSTALL_OK" -eq 1 ]; then
-  if (cd "$ROOT_DIR" && pnpm run test:browser-navigation); then
+  if (cd "$ROOT_DIR" && heavy pnpm run test:browser-navigation); then
     pass "actual-key Chromium browser navigation passed"
   else
     fail "actual-key Chromium browser navigation (install Chromium first if unavailable)"
