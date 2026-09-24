@@ -271,7 +271,7 @@ describe("host-owned package route adapters", () => {
       <DocsPage params={docsRoot!.params} {...docsRoot!.props} />,
     );
 
-    expect(html).toMatch(/<a href="\/docs\/" data-header-logo="true"/);
+    expect(html).toMatch(/<a href="\/docs\/"[^>]*data-header-logo="true"/);
     expect(html).toContain('href="/docs/claude/"');
     expect(html).toContain('href="/docs/codex/"');
     expect(html.indexOf(">Claude</a>")).toBeLessThan(html.indexOf(">Codex</a>"));
@@ -418,7 +418,7 @@ describe("host-owned package route adapters", () => {
     shell.innerHTML = html;
 
     expect(html).toContain('data-theme-pack="default"');
-    expect(html).toContain('var respectPrefersColorScheme=true;');
+    expect(html).toContain('var defaultMode="dark",respectPrefersColorScheme=true;');
     expect(html).toContain('var STORAGE_KEY="zudo-doc-theme";');
     expect(html).toContain("zudo-doc-theme-pack");
     expect(html).toContain("data-zd-theme-pack-loading");

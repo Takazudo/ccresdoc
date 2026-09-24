@@ -231,16 +231,27 @@ describe("published mobile, desktop, theme, and tree presentation islands", () =
     expect(document.documentElement.hasAttribute("data-sidebar-hidden")).toBe(true);
   });
 
-  it("switches and persists the package theme through its public island", () => {
+  it("switches and persists the package theme through its appearance menu", () => {
+    localStorage.removeItem("zudo-doc-theme");
     document.documentElement.setAttribute("data-theme", "dark");
-    const root = mount(<ThemeToggle defaultMode="dark" />);
-    const toggle = root.querySelector<HTMLButtonElement>('button[aria-label="Switch to light mode"]')!;
-    click(toggle);
+    const root = mount(
+      <ThemeToggle defaultMode="dark" pendingUntilHydrated={false} />,
+    );
+    const trigger = root.querySelector<HTMLButtonElement>(
+      'button[aria-haspopup="menu"]',
+    )!;
+    expect(trigger.getAttribute("aria-label")).toMatch(/^Appearance:/);
+    click(trigger);
+    const light = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
+      .find((item) => item.textContent?.includes("Light"));
+    expect(light).toBeTruthy();
+    click(light!);
 
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(document.documentElement.style.colorScheme).toBe("light");
     expect(localStorage.getItem("zudo-doc-theme")).toBe("light");
-    expect(root.querySelector('button[aria-label="Switch to dark mode"]')).not.toBeNull();
+    expect(trigger.getAttribute("aria-label")).toBe("Appearance: Light");
+    localStorage.removeItem("zudo-doc-theme");
   });
 
   it("renders site-nav disclosures, smart path breaks, and connector geometry from public modules", () => {
