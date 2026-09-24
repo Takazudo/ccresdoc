@@ -2,10 +2,11 @@
 //! a TEMP output dir. Skips gracefully when `$HOME/.claude` is absent (CI).
 //!
 //! This is the acceptance smoke check: generating against the real `~/.claude`
-//! produces browsable MDX for the CLAUDE.md hierarchy, commands, skills and
-//! agents, with the contract's category index pages.
+//! produces browsable MDX for the resources actually present, with category
+//! index pages only for populated families. The representative fixture in
+//! `generate.rs` requires and checks all four families independently of HOME.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ccresdoc_claude_md::{generate, Config};
 
@@ -37,22 +38,38 @@ fn live_generate_against_real_claude_dir() {
         report.claude_md, report.commands, report.skills, report.agents
     );
 
-    // All four families should produce content on a real dev box.
-    assert!(report.claude_md > 0, "expected >=1 CLAUDE.md");
-    assert!(report.commands > 0, "expected >=1 command");
-    assert!(report.skills > 0, "expected >=1 skill");
-    assert!(report.agents > 0, "expected >=1 agent");
+    // Commands and agents are optional. Every direct regular .md source must
+    // still produce a page; merely accepting a zero report would hide drops.
+    for (source, category, count) in [
+        ("commands", "claude-commands", report.commands),
+        ("agents", "claude-agents", report.agents),
+    ] {
+        let sources = markdown_sources(&claude.join(source));
+        assert_eq!(count, sources.len(), "{source}: source/report mismatch");
+        for source in sources {
+            let page = out
+                .path()
+                .join(category)
+                .join(source.file_name().unwrap())
+                .with_extension("mdx");
+            assert!(page.is_file(), "missing generated page: {page:?}");
+        }
+    }
 
     // Detail category index pages exist with the right positions. The routed
     // `claude/` landing is coordinator-owned and is intentionally not emitted.
     assert!(!out.path().join("claude/index.mdx").exists());
-    for (sub, pos) in [
-        ("claude-md", "900"),
-        ("claude-commands", "901"),
-        ("claude-skills", "902"),
-        ("claude-agents", "903"),
+    for (sub, pos, count) in [
+        ("claude-md", "900", report.claude_md),
+        ("claude-commands", "901", report.commands),
+        ("claude-skills", "902", report.skills),
+        ("claude-agents", "903", report.agents),
     ] {
         let idx = out.path().join(sub).join("index.mdx");
+        if count == 0 {
+            assert!(!idx.exists(), "empty {sub} must not have an index");
+            continue;
+        }
         assert!(idx.exists(), "{sub}/index.mdx must exist");
         let content = std::fs::read_to_string(&idx).unwrap();
         assert!(
@@ -62,9 +79,32 @@ fn live_generate_against_real_claude_dir() {
         assert!(content.contains("category_no_page: true"));
     }
 
-    // Sanity: the global CLAUDE.md page exists.
-    assert!(
+    // A global page exists exactly when the developer has a root CLAUDE.md.
+    assert_eq!(
         out.path().join("claude-md/global.mdx").exists(),
-        "claude-md/global.mdx (the ~/.claude/CLAUDE.md page) must exist"
+        claude.join("CLAUDE.md").is_file(),
+        "global page must match ~/.claude/CLAUDE.md availability"
     );
+}
+
+fn markdown_sources(dir: &Path) -> Vec<PathBuf> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(err) => panic!("cannot inspect {dir:?}: {err}"),
+    };
+    entries
+        .map(|entry| entry.expect("cannot read source entry"))
+        .filter(|entry| {
+            entry
+                .file_type()
+                .expect("cannot inspect source type")
+                .is_file()
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.ends_with(".md"))
+        })
+        .map(|entry| entry.path())
+        .collect()
 }
