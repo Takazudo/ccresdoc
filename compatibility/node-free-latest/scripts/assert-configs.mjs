@@ -6,7 +6,7 @@ import wholesale from "../configs/wholesale.mjs";
 
 const names = (config) => (config.plugins ?? []).map((plugin) => plugin.name);
 
-// zudo-doc 5.25.0's preset adds `img-src-check` and, because `designTokenPanel`
+// zudo-doc 5.27.0's preset adds `img-src-check` and, because `designTokenPanel`
 // is off in the probe settings, the `zdtp-loader` shield. That shield is what
 // keeps the package-owned configs building without `@takazudo/zdtp` installed;
 // the `plugins: []` configs below drop it, which is why the app carries the
