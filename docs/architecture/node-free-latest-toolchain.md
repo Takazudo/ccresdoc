@@ -1,7 +1,7 @@
 # Node-free latest-toolchain compatibility decision
 
-Status: the integrated application contract is implemented and verified for zfb
-2.18.0 / zudo-doc 5.25.0. This document preserves the historical issue #93
+Status: the integrated application contract is pinned to zfb
+2.20.2 / zudo-doc 5.27.0. This document preserves the historical issue #93
 architecture decision and its reproducible evidence; the current acceptance
 commands and explicit host-only gaps are in
 [`verification-matrix.md`](verification-matrix.md).
@@ -10,7 +10,7 @@ commands and explicit host-only gaps are in
 
 - The published `@takazudo/zfb`, `@takazudo/zfb-runtime`,
   `@takazudo/zfb-md-wasm`, and five native carrier packages are pinned to
-  `2.18.0`; `@takazudo/zudo-doc` is pinned to `5.25.0`. The app and the
+  `2.20.2`; `@takazudo/zudo-doc` is pinned to `5.27.0`. The app and the
   compatibility fixture each use a frozen lockfile and independently validate
   the installed tree.
 - The zudo-doc theme catalog uses schema version 2: each catalog entry carries
@@ -112,9 +112,8 @@ Committed evidence:
 - `evidence/config-matrix.json`: native `zfb check` and build results plus Node-invocation evidence.
 - `evidence/native-runtime.json`: port 4892 route serving, island marker, live content update, process sample, and silent failing sentinel.
 
-The current canonical npm integrity values and native-carrier facts are in
-`evidence/package-facts.json`; the app lockfile records the exact published
-tarball resolutions. The immutable source anchors from issue #93 are retained
+The app and fixture lockfiles record the exact published tarball resolutions
+for the current pin. The immutable source anchors from issue #93 are retained
 below as historical evidence rather than being treated as the current pin.
 
 ## Candidate results
@@ -142,9 +141,9 @@ The selected native Linux probe served `/` and `/docs/probe/`, emitted the `Prob
 
 Pin first-party packages exactly for the current integrated contract:
 
-- `@takazudo/zfb`, `@takazudo/zfb-runtime`, and `@takazudo/zfb-md-wasm`: `2.18.0`.
-- `@takazudo/zudo-doc`: `5.25.0`.
-- Direct optional platform packages retained at `2.18.0`: `zfb-darwin-arm64`, `zfb-darwin-x64`, `zfb-linux-arm64-gnu`, `zfb-linux-x64-gnu`, `zfb-win32-x64-msvc`. pnpm installs only the matching host package, but explicit declarations keep the Tauri resolver and cross-platform package map stable.
+- `@takazudo/zfb`, `@takazudo/zfb-runtime`, and `@takazudo/zfb-md-wasm`: `2.20.2`.
+- `@takazudo/zudo-doc`: `5.27.0`.
+- Direct optional platform packages retained at `2.20.2`: `zfb-darwin-arm64`, `zfb-darwin-x64`, `zfb-linux-arm64-gnu`, `zfb-linux-x64-gnu`, `zfb-win32-x64-msvc`. pnpm installs only the matching host package, but explicit declarations keep the Tauri resolver and cross-platform package map stable.
 - Reachable peers: `preact@10.29.1`, `preact-render-to-string@6.6.7`, `zod@4.3.6`, and `katex@0.16.22`. KaTeX is reachable even with `math:false` because `createMdxComponents()` imports the package `MathBlock` implementation.
 - Build-only foundation: `tailwindcss@4.2.0`, `@tailwindcss/vite@4.2.0`, `typescript@5.9.2`. The downstream test harness uses `vitest@4.0.17` with `happy-dom@20.7.0`.
 
@@ -161,7 +160,7 @@ Usable with `plugins: []`:
 - navigation/islands: `site-schema`, `sidebar-tree`, `sidebar-tree-island`, `sidebar-toggle-island`, `desktop-sidebar-toggle-island`, `site-tree-nav-island`, `tree-nav-shared`, `smart-break`, `sidebar-active-slug`, `current-path`;
 - styling/types: `theme.css`, `safelist.css`, `content.css`, `page-loading.css`, `features.css`, `tsconfig.base.json`, `virtual-modules.d.ts`, and the official zfb config declarations.
 
-Caveat since zudo-doc 5.25.0: `chrome` is only usable with `plugins: []` because the app patches `dist/zdtp-loader.js`. `chrome/derive.js` statically pulls in `design-token-panel-bootstrap.js`, whose `import("@takazudo/zudo-doc/zdtp-loader")` re-exports the uninstalled optional peer `@takazudo/zdtp`; upstream shields it with the `zdtp-loader` plugin, which `plugins: []` removes. See [`zudo-doc-find-search-patch.md`](zudo-doc-find-search-patch.md) *Scope 2*.
+Caveat for zudo-doc 5.27.0: `chrome` is only usable with `plugins: []` because the app patches `dist/zdtp-loader.js`. `chrome/derive.js` statically pulls in `design-token-panel-bootstrap.js`, whose `import("@takazudo/zudo-doc/zdtp-loader")` re-exports the uninstalled optional peer `@takazudo/zdtp`; upstream shields it with the `zdtp-loader` plugin, which `plugins: []` removes. See [`zudo-doc-find-search-patch.md`](zudo-doc-find-search-patch.md) *Scope 2*.
 
 Not usable under the invariant: `routes/*` (requires route-context virtual modules) and `plugins/*` (starts the Node host). Package route source files may be read as reference but must not be copied wholesale.
 
@@ -192,14 +191,15 @@ Schema delta: use zudo-doc's standard passthrough schema. Existing `title`, `des
 
 ## Native/Tauri facts and remaining verification
 
-The current canonical fact for `@takazudo/zfb-darwin-arm64@2.18.0` is a
-174,535,936-byte executable `zfb` at archive mode `0755`, with SHA-256
-`afe5fc51757e2596ed809f0ac97ce0f549e2f5171c89afaddb9ba79ef8591194`. Its
+The current canonical fact for `@takazudo/zfb-darwin-arm64@2.20.2` is a
+174,535,968-byte executable `zfb` at archive mode `0755`, with SHA-256
+`a9caa525f8ef69544dbfd69242f79f675b7fdb91bbf5f793e3dee6dd48b220fd`. Its
 runtime path is `app/node_modules/@takazudo/zfb-darwin-arm64/zfb`; the npm JS
-wrapper is Node-based and forbidden at runtime. The package facts file records
-the corresponding integrity values for all five published carriers. The
-Mach-O, package extraction, staged-bundle, and real WebView launch assertions
-run in the separate macOS-arm64 host gate; Linux must not claim that launch.
+wrapper is Node-based and forbidden at runtime. The fixture's
+`evidence/package-facts.json` records the five carrier integrity values for
+drift checks. The Mach-O, package extraction, staged-bundle, and real WebView
+launch assertions run in the separate macOS-arm64 host gate; Linux must not
+claim that launch.
 
 Historical issue #93 ran the native lifecycle on Linux x64. Its earlier package
 facts and decision-gate outputs remain below as history; the integrated staged
