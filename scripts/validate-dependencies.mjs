@@ -11,28 +11,28 @@ const lockfile = readFileSync(join(appRoot, "pnpm-lock.yaml"), "utf8");
 const workspace = readFileSync(join(appRoot, "pnpm-workspace.yaml"), "utf8");
 const checkInstalled = process.argv.includes("--installed");
 const zudoDocPatch = {
-  version: "5.25.0",
-  path: "patches/@takazudo__zudo-doc@5.25.0.patch",
-  hash: "347409ab5e2840036bd2632b5f57f13bd9cb257bcebe4827bc08a39ed35894bc",
+  version: "5.27.0",
+  path: "patches/@takazudo__zudo-doc@5.27.0.patch",
+  hash: "24c9677848a98ae61b2eb39d1245f9409372f327ff5904a82e2bcf702ce0ddcf",
 };
 
 const required = {
   dependencies: {
-    "@takazudo/zfb": "2.18.0",
-    "@takazudo/zfb-md-wasm": "2.18.0",
-    "@takazudo/zfb-runtime": "2.18.0",
-    "@takazudo/zudo-doc": "5.25.0",
+    "@takazudo/zfb": "2.20.2",
+    "@takazudo/zfb-md-wasm": "2.20.2",
+    "@takazudo/zfb-runtime": "2.20.2",
+    "@takazudo/zudo-doc": "5.27.0",
     katex: "0.16.22",
     preact: "10.29.1",
     "preact-render-to-string": "6.6.7",
     zod: "4.3.6",
   },
   optionalDependencies: {
-    "@takazudo/zfb-darwin-arm64": "2.18.0",
-    "@takazudo/zfb-darwin-x64": "2.18.0",
-    "@takazudo/zfb-linux-arm64-gnu": "2.18.0",
-    "@takazudo/zfb-linux-x64-gnu": "2.18.0",
-    "@takazudo/zfb-win32-x64-msvc": "2.18.0",
+    "@takazudo/zfb-darwin-arm64": "2.20.2",
+    "@takazudo/zfb-darwin-x64": "2.20.2",
+    "@takazudo/zfb-linux-arm64-gnu": "2.20.2",
+    "@takazudo/zfb-linux-x64-gnu": "2.20.2",
+    "@takazudo/zfb-win32-x64-msvc": "2.20.2",
   },
   devDependencies: {
     "@tailwindcss/vite": "4.2.0",
@@ -154,12 +154,12 @@ const importerVersion = (name) => {
     ?.match(/^        version: (.+)$/m)?.[1];
 };
 const runtimeImporter = importerVersion("@takazudo/zfb-runtime");
-if (!runtimeImporter?.includes("@takazudo/zfb@2.18.0")) fail(`zfb-runtime peer must resolve zfb@2.18.0: ${runtimeImporter ?? "missing"}`);
+if (!runtimeImporter?.includes("@takazudo/zfb@2.20.2")) fail(`zfb-runtime peer must resolve zfb@2.20.2: ${runtimeImporter ?? "missing"}`);
 const zudoImporter = importerVersion("@takazudo/zudo-doc");
 if (!zudoImporter?.includes(`patch_hash=${zudoDocPatch.hash}`)) {
   fail(`zudo-doc importer must resolve the committed patch hash: ${zudoImporter ?? "missing"}`);
 }
-for (const peer of ["@takazudo/zfb-md-wasm@2.18.0", "@takazudo/zfb-runtime@2.18.0", "@takazudo/zfb@2.18.0", "katex@0.16.22", "preact@10.29.1", "zod@4.3.6"]) {
+for (const peer of ["@takazudo/zfb-md-wasm@2.20.2", "@takazudo/zfb-runtime@2.20.2", "@takazudo/zfb@2.20.2", "katex@0.16.22", "preact@10.29.1", "zod@4.3.6"]) {
   if (!zudoImporter?.includes(peer)) fail(`zudo-doc peer must resolve ${peer}: ${zudoImporter ?? "missing"}`);
 }
 

@@ -289,7 +289,7 @@ index f3d8b71be6a1104b804e786e722f97101ba59957..c95b4faa020ca954e57306963aa3997e
      placeholderText: string;
      /** Locale-aware shortcut hint: "to open search from anywhere" / 「いつでも検索バーを開ける」 */
 diff --git a/dist/search-widget/index.js b/dist/search-widget/index.js
-index abdab5014c8c12804fe4fb4f1e51e4f1f710e5be..29b5c42f30ce96c673aa5a304ec95e22717fe50a 100644
+index fb0d48e09c5366f4084d2751d336b771809b6b1a..9a77529fa299c03d7babd27cc37e90a9a73b368e 100644
 --- a/dist/search-widget/index.js
 +++ b/dist/search-widget/index.js
 @@ -9,7 +9,8 @@ function SearchWidget(props) {
@@ -523,10 +523,10 @@ index 25532b98ee684a75066db9873b9aaf87993b4b79..be588834a674bf73e0d1d49de5ca573c
 +  refreshSearch
  };
 diff --git a/dist/zdtp-loader.js b/dist/zdtp-loader.js
-index cbfdb4ae1cc55ebff747d5b36f5b1ae7401928c2..ae6b3aaaaea731ff158b7061b383f6ade02cd243 100644
+index cbfdb4ae1cc55ebff747d5b36f5b1ae7401928c2..755a9d2089e907976cb6eac640cf7fac4abbd524 100644
 --- a/dist/zdtp-loader.js
 +++ b/dist/zdtp-loader.js
 @@ -1 +1,2 @@
 -export * from "@takazudo/zdtp";
-+throw new Error("@takazudo/zdtp is not bundled: designTokenPanel is disabled in this build.");
++throw new Error("@takazudo/zdtp is not bundled: designTokenPanel is false and bundleZdtp is not set, so this build shadows @takazudo/zudo-doc/zdtp-loader. If you reached this through @takazudo/zudo-doc/design-token-panel-bootstrap to mount your own panel, set bundleZdtp: true and install @takazudo/zdtp.");
 +export {};
