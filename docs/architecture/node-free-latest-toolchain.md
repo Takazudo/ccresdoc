@@ -195,11 +195,9 @@ The current canonical fact for `@takazudo/zfb-darwin-arm64@2.20.2` is a
 174,535,968-byte executable `zfb` at archive mode `0755`, with SHA-256
 `a9caa525f8ef69544dbfd69242f79f675b7fdb91bbf5f793e3dee6dd48b220fd`. Its
 runtime path is `app/node_modules/@takazudo/zfb-darwin-arm64/zfb`; the npm JS
-wrapper is Node-based and forbidden at runtime. The fixture's
-`evidence/package-facts.json` records the five carrier integrity values for
-drift checks. The Mach-O, package extraction, staged-bundle, and real WebView
-launch assertions run in the separate macOS-arm64 host gate; Linux must not
-claim that launch.
+wrapper is Node-based and forbidden at runtime. The Mach-O, package extraction,
+staged-bundle, and real WebView launch assertions run in the separate
+macOS-arm64 host gate; Linux must not claim that launch.
 
 Historical issue #93 ran the native lifecycle on Linux x64. Its earlier package
 facts and decision-gate outputs remain below as history; the integrated staged
