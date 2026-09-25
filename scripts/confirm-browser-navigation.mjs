@@ -152,7 +152,8 @@ function assertRepositoryContracts() {
   // make that privacy boundary visible to the browser gate itself.
   const runtimeFiles = readFileSync(join(repoRoot, "scripts/runtime-workspace-files.mjs"), "utf8");
   for (const required of [
-    "patches/@takazudo__zudo-doc@5.25.0.patch",
+    "patches/@takazudo__zudo-doc@5.27.0.patch",
+    "patches/@takazudo__zfb-runtime@2.20.2.patch",
     "src/browser-chrome/command-catalog.json",
     "src/browser-chrome/adapter.ts",
     "src/browser-chrome/history.ts",
@@ -180,10 +181,10 @@ function assertRepositoryContracts() {
     const source = readFileSync(join(generatedPermissions, file), "utf8");
     assert.doesNotMatch(source, /\*|allow-all|test-only|fixture/i, `${file} contains a broad/test-only permission`);
   }
-  const patch = join(appRoot, "patches/@takazudo__zudo-doc@5.25.0.patch");
+  const patch = join(appRoot, "patches/@takazudo__zudo-doc@5.27.0.patch");
   assert.equal(
     createHash("sha256").update(readFileSync(patch)).digest("hex"),
-    "347409ab5e2840036bd2632b5f57f13bd9cb257bcebe4827bc08a39ed35894bc",
+    "24c9677848a98ae61b2eb39d1245f9409372f327ff5904a82e2bcf702ce0ddcf",
     "the controlled Find/Search patch bytes drifted",
   );
 }
@@ -1323,8 +1324,25 @@ async function assertBrowserOnly(browser, origin) {
     assert.equal(await page.locator("[data-find-in-page-bar]").count(), 0, "browser-only Mod+F does not install the privileged Find bar");
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
+    // Deterministically exercise an animation cancelled before `ready` settles.
+    // Navigation must still complete without an unhandled promise rejection.
+    // Restore the native method on its first call; no errors are suppressed.
+    await page.evaluate(() => {
+      const startViewTransition = document.startViewTransition;
+      window.__ccresdocSkippedTransitions = 0;
+      document.startViewTransition = function (...args) {
+        document.startViewTransition = startViewTransition;
+        const transition = startViewTransition.apply(this, args);
+        queueMicrotask(() => {
+          transition.skipTransition();
+          window.__ccresdocSkippedTransitions += 1;
+        });
+        return transition;
+      };
+    });
     await routeViaHeader(page, appRoutes.claude);
     await waitForCommandEnabled(page, "back");
+    assert.equal(await page.evaluate(() => window.__ccresdocSkippedTransitions), 1, "cancelled view transition still completes navigation");
     await pressShortcut(page, "Mod+[");
     await waitForPath(page, appRoutes.root);
     await waitForCommandEnabled(page, "forward");

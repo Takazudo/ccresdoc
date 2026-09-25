@@ -284,6 +284,41 @@ fn agents_emit_with_model_badge() {
     assert!(idx.contains("sidebar_position: 903"));
 }
 
+#[test]
+fn optional_resource_families_can_be_absent_or_empty() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let claude = tmp.path().join("dot-claude");
+    let docs = tmp.path().join("docs");
+    std::fs::create_dir_all(&claude).unwrap();
+
+    for create_empty_dirs in [false, true] {
+        if create_empty_dirs {
+            for family in ["commands", "skills", "agents"] {
+                std::fs::create_dir_all(claude.join(family)).unwrap();
+            }
+        }
+        let report = generate(&config_for(&claude, &docs)).unwrap();
+        assert_eq!(
+            (
+                report.claude_md,
+                report.commands,
+                report.skills,
+                report.agents
+            ),
+            (0, 0, 0, 0)
+        );
+        for category in [
+            "claude-md",
+            "claude-commands",
+            "claude-skills",
+            "claude-agents",
+        ] {
+            assert!(!docs.join(category).join("index.mdx").exists());
+        }
+        assert!(!docs.join("claude-md/global.mdx").exists());
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Overview index
 // ---------------------------------------------------------------------------

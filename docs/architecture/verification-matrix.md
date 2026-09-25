@@ -1,7 +1,7 @@
 # CCResDoc architecture and verification contract
 
 This is the consolidated integration record for the current `@takazudo/zfb`
-2.18.0 / `@takazudo/zudo-doc` 5.25.0 application. CCResDoc is a native viewer
+2.20.2 / `@takazudo/zudo-doc` 5.27.0 application. CCResDoc is a native viewer
 for selected Claude and Codex resources. The generated `/docs/` document is the
 sole product landing surface; `/` is its exact server-rendered alias. The
 product keeps permanent Claude and Codex top-level header categories.

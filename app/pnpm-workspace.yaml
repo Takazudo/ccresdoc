@@ -1,20 +1,21 @@
 # app/ is intentionally a standalone project: the Tauri host copies this complete
 # node_modules tree into a writable workspace. Keep install policy and the exact
-# consumer patch here so pnpm applies both to the standalone frozen lockfile.
+# consumer patches here so pnpm applies both to the standalone frozen lockfile.
 minimumReleaseAge: 1440
 
 minimumReleaseAgeExclude:
-  - '@takazudo/zfb@2.18.0'
-  - '@takazudo/zfb-darwin-arm64@2.18.0'
-  - '@takazudo/zfb-darwin-x64@2.18.0'
-  - '@takazudo/zfb-linux-arm64-gnu@2.18.0'
-  - '@takazudo/zfb-linux-x64-gnu@2.18.0'
-  - '@takazudo/zfb-md-wasm@2.18.0'
-  - '@takazudo/zfb-runtime@2.18.0'
-  - '@takazudo/zfb-win32-x64-msvc@2.18.0'
-  - '@takazudo/zudo-doc@5.25.0'
+  - '@takazudo/zfb@2.20.2'
+  - '@takazudo/zfb-darwin-arm64@2.20.2'
+  - '@takazudo/zfb-darwin-x64@2.20.2'
+  - '@takazudo/zfb-linux-arm64-gnu@2.20.2'
+  - '@takazudo/zfb-linux-x64-gnu@2.20.2'
+  - '@takazudo/zfb-md-wasm@2.20.2'
+  - '@takazudo/zfb-runtime@2.20.2'
+  - '@takazudo/zfb-win32-x64-msvc@2.20.2'
+  - '@takazudo/zudo-doc@5.27.0'
 
 nodeLinker: hoisted
 
 patchedDependencies:
-  '@takazudo/zudo-doc@5.25.0': patches/@takazudo__zudo-doc@5.25.0.patch
+  '@takazudo/zfb-runtime@2.20.2': patches/@takazudo__zfb-runtime@2.20.2.patch
+  '@takazudo/zudo-doc@5.27.0': patches/@takazudo__zudo-doc@5.27.0.patch
