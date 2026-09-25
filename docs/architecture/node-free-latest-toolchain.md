@@ -153,6 +153,16 @@ Use Node `>=22`, pnpm `>=10`, an exact `packageManager`, `nodeLinker: hoisted`, 
 
 ## Entrypoint contract
 
+The app applies a narrow consumer patch to `@takazudo/zfb-runtime@2.20.2`:
+`dist/client-router/router.js` handles `AbortError` from `ViewTransition.ready`
+when a navigation skips the animation. Other errors remain observable, and DOM
+updates still use the package's existing completion handling. The browser gate
+forces a skipped native transition, requires navigation to complete, and keeps
+its zero-page-exception assertion. The patch is pinned in the app lockfile and
+included in the packaged runtime allowlist. The compatibility fixture continues
+to exercise the unpatched published packages. Remove this patch when the pinned
+upstream runtime handles cancelled transition readiness itself.
+
 Usable with `plugins: []`:
 
 - configuration/defaults: `config`, `settings`, `docs-schema`, `directive-vocabulary-defaults`, `i18n-defaults`, `color-schemes-defaults`;

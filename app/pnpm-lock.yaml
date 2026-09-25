@@ -5,6 +5,9 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
+  '@takazudo/zfb-runtime@2.20.2':
+    hash: d59e187b9bda5edd9ce2c19c0d1be1b5638f7c6cb92aae87f1b13ff74cd53ad7
+    path: patches/@takazudo__zfb-runtime@2.20.2.patch
   '@takazudo/zudo-doc@5.27.0':
     hash: 24c9677848a98ae61b2eb39d1245f9409372f327ff5904a82e2bcf702ce0ddcf
     path: patches/@takazudo__zudo-doc@5.27.0.patch
@@ -21,10 +24,10 @@ importers:
         version: 2.20.2
       '@takazudo/zfb-runtime':
         specifier: 2.20.2
-        version: 2.20.2(@takazudo/zfb@2.20.2)
+        version: 2.20.2(patch_hash=d59e187b9bda5edd9ce2c19c0d1be1b5638f7c6cb92aae87f1b13ff74cd53ad7)(@takazudo/zfb@2.20.2)
       '@takazudo/zudo-doc':
         specifier: 5.27.0
-        version: 5.27.0(patch_hash=24c9677848a98ae61b2eb39d1245f9409372f327ff5904a82e2bcf702ce0ddcf)(@takazudo/zfb-md-wasm@2.20.2)(@takazudo/zfb-runtime@2.20.2(@takazudo/zfb@2.20.2))(@takazudo/zfb@2.20.2)(@types/node@26.2.0)(katex@0.16.22)(preact@10.29.1)(zod@4.3.6)
+        version: 5.27.0(patch_hash=24c9677848a98ae61b2eb39d1245f9409372f327ff5904a82e2bcf702ce0ddcf)(@takazudo/zfb-md-wasm@2.20.2)(@takazudo/zfb-runtime@2.20.2(patch_hash=d59e187b9bda5edd9ce2c19c0d1be1b5638f7c6cb92aae87f1b13ff74cd53ad7)(@takazudo/zfb@2.20.2))(@takazudo/zfb@2.20.2)(@types/node@26.2.0)(katex@0.16.22)(preact@10.29.1)(zod@4.3.6)
       katex:
         specifier: 0.16.22
         version: 0.16.22
@@ -1728,7 +1731,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@takazudo/zfb-runtime@2.20.2(@takazudo/zfb@2.20.2)':
+  '@takazudo/zfb-runtime@2.20.2(patch_hash=d59e187b9bda5edd9ce2c19c0d1be1b5638f7c6cb92aae87f1b13ff74cd53ad7)(@takazudo/zfb@2.20.2)':
     dependencies:
       '@takazudo/zfb': 2.20.2
       hono: 4.13.3
@@ -1744,11 +1747,11 @@ snapshots:
       '@takazudo/zfb-linux-x64-gnu': 2.20.2
       '@takazudo/zfb-win32-x64-msvc': 2.20.2
 
-  '@takazudo/zudo-doc@5.27.0(patch_hash=24c9677848a98ae61b2eb39d1245f9409372f327ff5904a82e2bcf702ce0ddcf)(@takazudo/zfb-md-wasm@2.20.2)(@takazudo/zfb-runtime@2.20.2(@takazudo/zfb@2.20.2))(@takazudo/zfb@2.20.2)(@types/node@26.2.0)(katex@0.16.22)(preact@10.29.1)(zod@4.3.6)':
+  '@takazudo/zudo-doc@5.27.0(patch_hash=24c9677848a98ae61b2eb39d1245f9409372f327ff5904a82e2bcf702ce0ddcf)(@takazudo/zfb-md-wasm@2.20.2)(@takazudo/zfb-runtime@2.20.2(patch_hash=d59e187b9bda5edd9ce2c19c0d1be1b5638f7c6cb92aae87f1b13ff74cd53ad7)(@takazudo/zfb@2.20.2))(@takazudo/zfb@2.20.2)(@types/node@26.2.0)(katex@0.16.22)(preact@10.29.1)(zod@4.3.6)':
     dependencies:
       '@inquirer/prompts': 8.5.2(@types/node@26.2.0)
       '@takazudo/zfb': 2.20.2
-      '@takazudo/zfb-runtime': 2.20.2(@takazudo/zfb@2.20.2)
+      '@takazudo/zfb-runtime': 2.20.2(patch_hash=d59e187b9bda5edd9ce2c19c0d1be1b5638f7c6cb92aae87f1b13ff74cd53ad7)(@takazudo/zfb@2.20.2)
       esbuild: 0.28.2
       fs-extra: 11.4.0
       minimist: 1.2.8

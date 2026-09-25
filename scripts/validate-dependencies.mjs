@@ -15,6 +15,11 @@ const zudoDocPatch = {
   path: "patches/@takazudo__zudo-doc@5.27.0.patch",
   hash: "24c9677848a98ae61b2eb39d1245f9409372f327ff5904a82e2bcf702ce0ddcf",
 };
+const runtimePatch = {
+  version: "2.20.2",
+  path: "patches/@takazudo__zfb-runtime@2.20.2.patch",
+  hash: "d59e187b9bda5edd9ce2c19c0d1be1b5638f7c6cb92aae87f1b13ff74cd53ad7",
+};
 
 const required = {
   dependencies: {
@@ -81,17 +86,19 @@ for (const name of [
 if (!/^lockfileVersion: ['"]?9(?:\.0)?['"]?$/m.test(lockfile)) fail("lockfile must use pnpm lockfile v9");
 if (!/^nodeLinker:\s+hoisted$/m.test(workspace)) fail("pnpm-workspace.yaml must set nodeLinker: hoisted");
 if (!/^minimumReleaseAge:\s+1440$/m.test(workspace)) fail("pnpm-workspace.yaml must set minimumReleaseAge: 1440");
-if (!workspace.includes(`'@takazudo/zudo-doc@${zudoDocPatch.version}': ${zudoDocPatch.path}`)) {
-  fail("pnpm-workspace.yaml must register the exact zudo-doc consumer patch");
-}
 if (workspace.includes("zfb-adapter-cloudflare")) fail("workspace must not mention the removed Cloudflare adapter");
-const patchPath = join(appRoot, zudoDocPatch.path);
-if (!existsSync(patchPath)) fail(`zudo-doc patch is missing: ${zudoDocPatch.path}`);
-else {
-  equal(createHash("sha256").update(readFileSync(patchPath)).digest("hex"), zudoDocPatch.hash, "zudo-doc patch sha256");
-}
-if (!lockfile.includes(`hash: ${zudoDocPatch.hash}`) || !lockfile.includes(`path: ${zudoDocPatch.path}`)) {
-  fail("lockfile zudo-doc patchedDependencies hash/path drifted");
+for (const [name, patch] of [["zudo-doc", zudoDocPatch], ["zfb-runtime", runtimePatch]]) {
+  if (!workspace.includes(`'@takazudo/${name}@${patch.version}': ${patch.path}`)) {
+    fail(`pnpm-workspace.yaml must register the exact ${name} consumer patch`);
+  }
+  const patchPath = join(appRoot, patch.path);
+  if (!existsSync(patchPath)) fail(`${name} patch is missing: ${patch.path}`);
+  else {
+    equal(createHash("sha256").update(readFileSync(patchPath)).digest("hex"), patch.hash, `${name} patch sha256`);
+  }
+  if (!lockfile.includes(`hash: ${patch.hash}`) || !lockfile.includes(`path: ${patch.path}`)) {
+    fail(`lockfile ${name} patchedDependencies hash/path drifted`);
+  }
 }
 
 const importerSection = (section) => {
@@ -154,6 +161,9 @@ const importerVersion = (name) => {
     ?.match(/^        version: (.+)$/m)?.[1];
 };
 const runtimeImporter = importerVersion("@takazudo/zfb-runtime");
+if (!runtimeImporter?.includes(`patch_hash=${runtimePatch.hash}`)) {
+  fail(`zfb-runtime importer must resolve the committed patch hash: ${runtimeImporter ?? "missing"}`);
+}
 if (!runtimeImporter?.includes("@takazudo/zfb@2.20.2")) fail(`zfb-runtime peer must resolve zfb@2.20.2: ${runtimeImporter ?? "missing"}`);
 const zudoImporter = importerVersion("@takazudo/zudo-doc");
 if (!zudoImporter?.includes(`patch_hash=${zudoDocPatch.hash}`)) {
@@ -189,6 +199,11 @@ if (checkInstalled) {
     else if (process.platform !== "win32" && (statSync(binaryPath).mode & 0o111) === 0) fail(`installed native zfb binary is not executable: ${binaryPath}`);
   }
   const installedZudoRoot = join(appRoot, "node_modules", "@takazudo", "zudo-doc", "dist");
+  const installedRouter = readFileSync(join(appRoot, "node_modules", "@takazudo", "zfb-runtime", "dist", "client-router", "router.js"), "utf8");
+  if (!installedRouter.includes('currentTransition.viewTransition.ready.catch((error) => {')
+      || !installedRouter.includes('if (error?.name !== "AbortError") throw error;')) {
+    fail("installed zfb-runtime is missing the skipped-transition rejection patch");
+  }
   const installedFind = readFileSync(join(installedZudoRoot, "find-in-page", "index.js"), "utf8");
   const installedSearch = readFileSync(join(installedZudoRoot, "search-widget-script", "index.js"), "utf8");
   if (!installedFind.includes("openFindInPage") || !installedFind.includes("disableBuiltInShortcut")) {

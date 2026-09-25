@@ -153,6 +153,7 @@ function assertRepositoryContracts() {
   const runtimeFiles = readFileSync(join(repoRoot, "scripts/runtime-workspace-files.mjs"), "utf8");
   for (const required of [
     "patches/@takazudo__zudo-doc@5.27.0.patch",
+    "patches/@takazudo__zfb-runtime@2.20.2.patch",
     "src/browser-chrome/command-catalog.json",
     "src/browser-chrome/adapter.ts",
     "src/browser-chrome/history.ts",
@@ -1323,8 +1324,25 @@ async function assertBrowserOnly(browser, origin) {
     assert.equal(await page.locator("[data-find-in-page-bar]").count(), 0, "browser-only Mod+F does not install the privileged Find bar");
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
+    // Deterministically exercise an animation cancelled before `ready` settles.
+    // Navigation must still complete without an unhandled promise rejection.
+    // Restore the native method on its first call; no errors are suppressed.
+    await page.evaluate(() => {
+      const startViewTransition = document.startViewTransition;
+      window.__ccresdocSkippedTransitions = 0;
+      document.startViewTransition = function (...args) {
+        document.startViewTransition = startViewTransition;
+        const transition = startViewTransition.apply(this, args);
+        queueMicrotask(() => {
+          transition.skipTransition();
+          window.__ccresdocSkippedTransitions += 1;
+        });
+        return transition;
+      };
+    });
     await routeViaHeader(page, appRoutes.claude);
     await waitForCommandEnabled(page, "back");
+    assert.equal(await page.evaluate(() => window.__ccresdocSkippedTransitions), 1, "cancelled view transition still completes navigation");
     await pressShortcut(page, "Mod+[");
     await waitForPath(page, appRoutes.root);
     await waitForCommandEnabled(page, "forward");

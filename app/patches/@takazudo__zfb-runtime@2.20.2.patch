@@ -1,0 +1,16 @@
+diff --git a/dist/client-router/router.js b/dist/client-router/router.js
+index d81970bd0a27506dff8fec720407494bd805a964..86ce3283ca346ee6c4146e8e0e77020c7b09df4c 100644
+--- a/dist/client-router/router.js
++++ b/dist/client-router/router.js
+@@ -765,6 +765,11 @@ async function transition(direction, from, to, options, historyState, hasUAVisua
+         currentTransition.viewTransition = document.startViewTransition(async () => {
+             domUpdateOutcome = await updateDOM(prepEvent, options, currentNavigation, currentTransition, historyState, undefined, historyCommittedEarly);
+         });
++        // A newer navigation can skip the optional animation before it is ready.
++        // Keep unexpected failures visible; DOM-update failures are handled below.
++        currentTransition.viewTransition.ready.catch((error) => {
++            if (error?.name !== "AbortError") throw error;
++        });
+     }
+     else {
+         // Simulation mode requires a bit more manual work.
