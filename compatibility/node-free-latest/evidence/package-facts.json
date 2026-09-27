@@ -1,62 +1,62 @@
 {
   "packages": {
     "@takazudo/zfb": {
-      "version": "2.20.2",
-      "integrity": "sha512-Ri52v/LoQMX7Qs6XtqTAC5N9zqtEfX98owiRQJ/9txR2owMzr5BMkboHa9i6XNULuq9AOLGJK5fgUIWpwOYc6w=="
+      "version": "2.22.0",
+      "integrity": "sha512-iJ4UUNjJLiLxKqg9/kdpJtgV7lf3EV2NWy0/+bHnYTB64fjCqkG5xkPbXA5CVwwIsQZ1i/Ao+Tqe8i+oMOeT3A=="
     },
     "@takazudo/zfb-md-wasm": {
-      "version": "2.20.2",
-      "integrity": "sha512-qb/iGExfHwSsHSXUTGjJtzr0lB7vVM3bUnFIfeKDJx4ps3q8SywuA83b0tjzJiBC0oY7BeidmUXs1kDhAz9CDQ=="
+      "version": "2.22.0",
+      "integrity": "sha512-5FctTQK28lLjZQXPo4IWPS0DkOfPUnjMuuYxrFXeDaFI1vCotOzQasSujKnoh5kngAcXXiRleL0S1LfswVh/fA=="
     },
     "@takazudo/zfb-runtime": {
-      "version": "2.20.2",
-      "integrity": "sha512-2ENJqzwdp0YdJ6GSs57SMDx0IeS7fvuTJYMcUTcLRwsE3OY/yY19RYm3882wI0wZi2Foi/rv0wYYohiPAZ349g=="
+      "version": "2.22.0",
+      "integrity": "sha512-n455ssOuqpowffaD6An5fuPBQqKAISTtUlVjfQr7o5TJO0WlfWkvJqYIbhtYI1JFht9ZD0CtFci8qzQXiGkunQ=="
     },
     "@takazudo/zudo-doc": {
-      "version": "5.27.0",
-      "integrity": "sha512-XO1INrmXlc4jxkjfaSVodUPkzfoyyQr+iFgYNDJiwO5mMM4yG3/4og4jV/GRggmrb7jpYBOoypp/tBmIoor6aA=="
+      "version": "5.28.0",
+      "integrity": "sha512-/ZrIhbsEzkXH3ANU5MdEUPK6JuOWWezMql6xBcBw0D3n2AvXZUzb2mcbOqwEXfXOpJFDrAVK0tl/gbzNhkleMA=="
     }
   },
   "nativeCarriers": {
     "darwin-arm64": {
-      "package": "@takazudo/zfb-darwin-arm64@2.20.2",
-      "integrity": "sha512-eiJshspOv3JbOOyxVw6T2rDt+qbJxHDV69HcD78Q4xv0MP4G79DD3blc4WIPFMP7+jyyFINwvFM3dgFUZIa7nw==",
+      "package": "@takazudo/zfb-darwin-arm64@2.22.0",
+      "integrity": "sha512-RoHQykaGq3huRU2PfzldocudkFGmcLjN9LIoRccOLiVi+Z+LquBVjyKncc0iImTnqwTVbCh2QcLZEo4jmTbagg==",
       "relativePath": "node_modules/@takazudo/zfb-darwin-arm64/zfb",
       "archiveMode": "0755",
-      "sizeBytes": 174535968,
-      "sha256": "a9caa525f8ef69544dbfd69242f79f675b7fdb91bbf5f793e3dee6dd48b220fd"
+      "sizeBytes": 174768944,
+      "sha256": "2df574ac6a777d7214943e05da12a9ec2a58c0f1393f5c15bb0308150ea32106"
     },
     "darwin-x64": {
-      "package": "@takazudo/zfb-darwin-x64@2.20.2",
-      "integrity": "sha512-KxEf6sNLY1KGn+xYIwY8netenKZMn7c3EBQTRBa6FOr4FDnKMyu2eIpS6Ns38Sc3BcOQMEuHQQ8KdkFmDGqShw==",
+      "package": "@takazudo/zfb-darwin-x64@2.22.0",
+      "integrity": "sha512-2eDe9KspuI3pX8VNTg+ojiY94iTmL6UitmGFcJRWfDF1BDYsSBeBfjgb6shJH8xnebCNesymAIHYy6Pnb9oXXg==",
       "relativePath": "node_modules/@takazudo/zfb-darwin-x64/zfb",
       "archiveMode": "0755",
-      "sizeBytes": 180996256,
-      "sha256": "a78676f1996f61afce5a943e7c180abc2c0cb06c1ce7b11fdc7c117aa0d77c71"
+      "sizeBytes": 181301328,
+      "sha256": "82222c6970118ba59b78122072c36a1a4c84194244f868f516451132362ba97e"
     },
     "linux-arm64-gnu": {
-      "package": "@takazudo/zfb-linux-arm64-gnu@2.20.2",
-      "integrity": "sha512-rAIimCcQJ1PRy8+fNKlcA6+sacOy/m0LmVeBepLa/bP0I17iEQQlDW31eMmLr7sKSFgyNQDYnVykO4zYd4+2fA==",
+      "package": "@takazudo/zfb-linux-arm64-gnu@2.22.0",
+      "integrity": "sha512-7kGVYNRk7SpZJWN/ZP2uZseyL4t3E2xwkodRXJbkCzcvReMb5C2J1i4zukpxmVk0CzJE+SV4C+puR1SCKGSNIQ==",
       "relativePath": "node_modules/@takazudo/zfb-linux-arm64-gnu/zfb",
       "archiveMode": "0755",
-      "sizeBytes": 219375296,
-      "sha256": "1ecc7e8130440997856e994c0a4ed7bae9ae7fbcc7829a9c3d530969af513478"
+      "sizeBytes": 219637440,
+      "sha256": "4bec1438980b8b6a2eac3b08c8c3dfb37bf6c2f79082640e23ded4a7ab0d5afc"
     },
     "linux-x64-gnu": {
-      "package": "@takazudo/zfb-linux-x64-gnu@2.20.2",
-      "integrity": "sha512-XtJpbtpyOGyQwbCHbJ7ArhBU+GFvRTLuFDSeDWgLTe1E93d/EByjWBstZLOWOQiNSOt9qGQMNbvARAHp4Ql8UA==",
+      "package": "@takazudo/zfb-linux-x64-gnu@2.22.0",
+      "integrity": "sha512-/s+zfs+6PbFsEh3CSOGUhWCOMUsu+b04Uo0nUAYLMv0/KpZQ15RJHNCCfemRYcTzY75KfHbFAcgv9ze6+NKT8g==",
       "relativePath": "node_modules/@takazudo/zfb-linux-x64-gnu/zfb",
       "archiveMode": "0755",
-      "sizeBytes": 228746744,
-      "sha256": "bb67252807fe3e163b0ccec57084b4394c5faced6c27895fda23de5c92af9342"
+      "sizeBytes": 229029368,
+      "sha256": "299eef1d938648e80ef91b53c4bcb1ef650076daa470cd415194a4c4e9f81bbf"
     },
     "win32-x64-msvc": {
-      "package": "@takazudo/zfb-win32-x64-msvc@2.20.2",
-      "integrity": "sha512-m4MDHxW7uO6n2ZRZXATsbYZHiE0mMQVJ1nMGnhLbfYC4Kc0KVd6mL+Gel1bjtEOB3TAeeMwh1wqIw0mvYtcYFQ==",
+      "package": "@takazudo/zfb-win32-x64-msvc@2.22.0",
+      "integrity": "sha512-tXzXF0uXw8Zj7R1Ub+Hwvn4U52/5aTVnsN3LCd4ols2mMpRxavzG81EYyoGp5LxHOn7/ft4I7FeVf09UjCKN2A==",
       "relativePath": "node_modules/@takazudo/zfb-win32-x64-msvc/zfb.exe",
       "archiveMode": "0644",
-      "sizeBytes": 235928064,
-      "sha256": "0b8aa8f2b58d6e53aa5480964530d5ca719d2b3fdd0f43236dd1d75d790f8311"
+      "sizeBytes": 236333568,
+      "sha256": "09ecdb217b0f9e2f650d0b25bca13e216a886ebdd12a671b18753cd510c5b522"
     }
   }
 }

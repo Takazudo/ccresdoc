@@ -140,7 +140,7 @@
               "respectPrefersColorScheme": true
             },
             "siteName": "CCResDoc compatibility probe",
-            "siteDescription": "zfb 2.20.2 + zudo-doc 5.27.0 node-free architecture probe",
+            "siteDescription": "zfb 2.22.0 + zudo-doc 5.28.0 node-free architecture probe",
             "logo": "auto",
             "base": "/",
             "trailingSlash": true,
@@ -193,6 +193,7 @@
             "designTokenPanel": false,
             "tocMinDepth": 2,
             "tocMaxDepth": 4,
+            "searchMaxBodyLength": 3000,
             "sidebarResizer": true,
             "sidebarToggle": true,
             "tocToggle": false,
@@ -779,7 +780,8 @@
             "base": "/",
             "locales": {},
             "defaultLocaleOnlyPrefixes": []
-          }
+          },
+          "maxBodyLength": 3000
         }
       },
       {
@@ -994,7 +996,8 @@
             "base": "/",
             "locales": {},
             "defaultLocaleOnlyPrefixes": []
-          }
+          },
+          "maxBodyLength": 3000
         }
       },
       {
