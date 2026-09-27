@@ -1256,6 +1256,10 @@ async function assertMobileAppearanceEscape(page, origin) {
 
   await page.keyboard.press("Escape");
   await appearanceMenu.waitFor({ state: "hidden", timeout: browserTimeoutMs });
+  await page.waitForFunction(() => {
+    const trigger = document.querySelector('[data-zd-mobile-sidebar] button[aria-haspopup="menu"][aria-label^="Appearance:"]');
+    return trigger !== null && document.activeElement === trigger;
+  }, undefined, { timeout: browserTimeoutMs });
   assert.equal(
     await appearanceTrigger.evaluate((element) => document.activeElement === element),
     true,
