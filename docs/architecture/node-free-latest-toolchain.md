@@ -1,7 +1,7 @@
 # Node-free latest-toolchain compatibility decision
 
 Status: the integrated application contract is pinned to zfb
-2.20.2 / zudo-doc 5.27.0. This document preserves the historical issue #93
+2.22.0 / zudo-doc 5.28.0. This document preserves the historical issue #93
 architecture decision and its reproducible evidence; the current acceptance
 commands and explicit host-only gaps are in
 [`verification-matrix.md`](verification-matrix.md).
@@ -10,7 +10,7 @@ commands and explicit host-only gaps are in
 
 - The published `@takazudo/zfb`, `@takazudo/zfb-runtime`,
   `@takazudo/zfb-md-wasm`, and five native carrier packages are pinned to
-  `2.20.2`; `@takazudo/zudo-doc` is pinned to `5.27.0`. The app and the
+  `2.22.0`; `@takazudo/zudo-doc` is pinned to `5.28.0`. The app and the
   compatibility fixture each use a frozen lockfile and independently validate
   the installed tree.
 - The zudo-doc theme catalog uses schema version 2: each catalog entry carries
@@ -141,9 +141,9 @@ The selected native Linux probe served `/` and `/docs/probe/`, emitted the `Prob
 
 Pin first-party packages exactly for the current integrated contract:
 
-- `@takazudo/zfb`, `@takazudo/zfb-runtime`, and `@takazudo/zfb-md-wasm`: `2.20.2`.
-- `@takazudo/zudo-doc`: `5.27.0`.
-- Direct optional platform packages retained at `2.20.2`: `zfb-darwin-arm64`, `zfb-darwin-x64`, `zfb-linux-arm64-gnu`, `zfb-linux-x64-gnu`, `zfb-win32-x64-msvc`. pnpm installs only the matching host package, but explicit declarations keep the Tauri resolver and cross-platform package map stable.
+- `@takazudo/zfb`, `@takazudo/zfb-runtime`, and `@takazudo/zfb-md-wasm`: `2.22.0`.
+- `@takazudo/zudo-doc`: `5.28.0`.
+- Direct optional platform packages retained at `2.22.0`: `zfb-darwin-arm64`, `zfb-darwin-x64`, `zfb-linux-arm64-gnu`, `zfb-linux-x64-gnu`, `zfb-win32-x64-msvc`. pnpm installs only the matching host package, but explicit declarations keep the Tauri resolver and cross-platform package map stable.
 - Reachable peers: `preact@10.29.1`, `preact-render-to-string@6.6.7`, `zod@4.3.6`, and `katex@0.16.22`. KaTeX is reachable even with `math:false` because `createMdxComponents()` imports the package `MathBlock` implementation.
 - Build-only foundation: `tailwindcss@4.2.0`, `@tailwindcss/vite@4.2.0`, `typescript@5.9.2`. The downstream test harness uses `vitest@4.0.17` with `happy-dom@20.7.0`.
 
@@ -153,7 +153,8 @@ Use Node `>=22`, pnpm `>=10`, an exact `packageManager`, `nodeLinker: hoisted`, 
 
 ## Entrypoint contract
 
-The app applies a narrow consumer patch to `@takazudo/zfb-runtime@2.20.2`:
+The app applies a narrow consumer patch to `@takazudo/zfb-runtime@2.22.0`,
+recorded in `app/patches/@takazudo__zfb-runtime@2.22.0.patch`:
 `dist/client-router/router.js` handles `AbortError` from `ViewTransition.ready`
 when a navigation skips the animation. Other errors remain observable, and DOM
 updates still use the package's existing completion handling. The browser gate
@@ -170,7 +171,7 @@ Usable with `plugins: []`:
 - navigation/islands: `site-schema`, `sidebar-tree`, `sidebar-tree-island`, `sidebar-toggle-island`, `desktop-sidebar-toggle-island`, `site-tree-nav-island`, `tree-nav-shared`, `smart-break`, `sidebar-active-slug`, `current-path`;
 - styling/types: `theme.css`, `safelist.css`, `content.css`, `page-loading.css`, `features.css`, `tsconfig.base.json`, `virtual-modules.d.ts`, and the official zfb config declarations.
 
-Caveat for zudo-doc 5.27.0: `chrome` is only usable with `plugins: []` because the app patches `dist/zdtp-loader.js`. `chrome/derive.js` statically pulls in `design-token-panel-bootstrap.js`, whose `import("@takazudo/zudo-doc/zdtp-loader")` re-exports the uninstalled optional peer `@takazudo/zdtp`; upstream shields it with the `zdtp-loader` plugin, which `plugins: []` removes. See [`zudo-doc-find-search-patch.md`](zudo-doc-find-search-patch.md) *Scope 2*.
+Caveat for zudo-doc 5.28.0: `chrome` is only usable with `plugins: []` because the app patches `dist/zdtp-loader.js`. `chrome/derive.js` statically pulls in `design-token-panel-bootstrap.js`, whose `import("@takazudo/zudo-doc/zdtp-loader")` re-exports the uninstalled optional peer `@takazudo/zdtp`; upstream shields it with the `zdtp-loader` plugin, which `plugins: []` removes. See [`zudo-doc-find-search-patch.md`](zudo-doc-find-search-patch.md) *Scope 2*.
 
 Not usable under the invariant: `routes/*` (requires route-context virtual modules) and `plugins/*` (starts the Node host). Package route source files may be read as reference but must not be copied wholesale.
 
@@ -201,9 +202,9 @@ Schema delta: use zudo-doc's standard passthrough schema. Existing `title`, `des
 
 ## Native/Tauri facts and remaining verification
 
-The current canonical fact for `@takazudo/zfb-darwin-arm64@2.20.2` is a
-174,535,968-byte executable `zfb` at archive mode `0755`, with SHA-256
-`a9caa525f8ef69544dbfd69242f79f675b7fdb91bbf5f793e3dee6dd48b220fd`. Its
+The current canonical fact for `@takazudo/zfb-darwin-arm64@2.22.0` is a
+174,768,944-byte executable `zfb` at archive mode `0755`, with SHA-256
+`2df574ac6a777d7214943e05da12a9ec2a58c0f1393f5c15bb0308150ea32106`. Its
 runtime path is `app/node_modules/@takazudo/zfb-darwin-arm64/zfb`; the npm JS
 wrapper is Node-based and forbidden at runtime. The Mach-O, package extraction,
 staged-bundle, and real WebView launch assertions run in the separate
