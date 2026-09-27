@@ -1229,6 +1229,75 @@ async function assertChromeOffsetConsumers(page, origin) {
   await page.setViewportSize({ width: 1280, height: 900 });
 }
 
+async function assertMobileAppearanceEscape(page, origin) {
+  await openPage(page, origin, appRoutes.root);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await delay(50);
+
+  const drawerToggle = page.locator('button[aria-label="Open sidebar"]').first();
+  await drawerToggle.waitFor({ state: "visible", timeout: browserTimeoutMs });
+  await drawerToggle.click();
+  const drawer = page.locator("[data-zd-mobile-sidebar]");
+  await page.waitForFunction(
+    () => document.querySelector("[data-zd-mobile-sidebar]")?.hasAttribute("inert") === false,
+    undefined,
+    { timeout: browserTimeoutMs },
+  );
+
+  const appearanceTrigger = drawer.locator('button[aria-haspopup="menu"][aria-label^="Appearance:"]');
+  await appearanceTrigger.waitFor({ state: "visible", timeout: browserTimeoutMs });
+  await page.waitForFunction(() => {
+    const trigger = document.querySelector('[data-zd-mobile-sidebar] button[aria-haspopup="menu"][aria-label^="Appearance:"]');
+    return trigger !== null && trigger.getAttribute("aria-disabled") !== "true";
+  }, undefined, { timeout: browserTimeoutMs });
+  await appearanceTrigger.click();
+  const appearanceMenu = page.getByRole("menu", { name: "Appearance", exact: true });
+  await appearanceMenu.waitFor({ state: "visible", timeout: browserTimeoutMs });
+
+  await page.keyboard.press("Escape");
+  await appearanceMenu.waitFor({ state: "hidden", timeout: browserTimeoutMs });
+  assert.equal(
+    await appearanceTrigger.evaluate((element) => document.activeElement === element),
+    true,
+    "the first mobile Appearance Escape returns focus to its trigger",
+  );
+  const drawerAfterFirstEscape = await page.evaluate(() => ({
+    open: document.querySelector("[data-zd-mobile-sidebar]")?.hasAttribute("inert") === false,
+    toggleExpanded: document.querySelector('button[aria-label="Close sidebar"]')?.getAttribute("aria-expanded"),
+  }));
+  assert.equal(drawerAfterFirstEscape.open, true, "the first Appearance Escape keeps the mobile drawer open");
+  assert.equal(drawerAfterFirstEscape.toggleExpanded, "true", "the first Appearance Escape does not close the drawer toggle");
+
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(
+    () => document.querySelector("[data-zd-mobile-sidebar]")?.hasAttribute("inert") === true,
+    undefined,
+    { timeout: browserTimeoutMs },
+  );
+  assert.equal(
+    await page.evaluate(() => document.activeElement?.getAttribute("aria-label")),
+    "Open sidebar",
+    "the second mobile Appearance Escape closes the drawer and focuses the hamburger",
+  );
+
+  await openPatchedFind(page);
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(
+    () => document.querySelector("[data-find-in-page-bar]") === null,
+    undefined,
+    { timeout: browserTimeoutMs },
+  );
+
+  await openControlledSearch(page);
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(
+    () => document.querySelector("dialog[data-search-dialog]")?.open !== true,
+    undefined,
+    { timeout: browserTimeoutMs },
+  );
+  await page.setViewportSize({ width: 1280, height: 900 });
+}
+
 async function assertOverflowMenuPaintsAboveHeader(page, origin) {
   await openPage(page, origin, appRoutes.root);
   await command(page, "more").click();
@@ -1405,6 +1474,7 @@ async function run() {
         await assertResponsiveGeometry(page, server.origin);
         await assertStickyChromeRegion(page, server.origin);
         await assertChromeAdjacency(page, server.origin);
+        await assertMobileAppearanceEscape(page, server.origin);
         await assertChromeOffsetDriftGuard(page, server.origin);
         await assertChromeNodeIdentity(page, server.origin);
         await assertChromeOffsetConsumers(page, server.origin);
