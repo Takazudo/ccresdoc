@@ -270,6 +270,8 @@ async function assertSpaCleanup(page, modifier) {
 async function preparePage(page, url) {
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
   await page.waitForFunction(() => document.readyState !== "loading", undefined, { timeout: timeoutMs });
+  const platform = await page.evaluate(() => navigator.userAgentData?.platform ?? navigator.platform);
+  assert.match(platform, /Mac/i, "Cmd/Ctrl coexistence requires the harness's macOS platform emulation");
   await assertFindMount(page);
   await waitForTwoFrames(page);
   await waitForSearchDialog(page, false);
@@ -358,6 +360,15 @@ async function main() {
   // Install both before page code runs so the harness emulates one coherent
   // WebView runtime instead of mounting Find in an ordinary-browser adapter.
   await context.addInitScript(() => {
+    // The Cmd and Ctrl scenarios exercise macOS Mod and explicit Ctrl bindings
+    // even when Chromium itself runs on Linux in CI.
+    if (navigator.userAgentData) {
+      Object.defineProperty(navigator, "userAgentData", {
+        configurable: true,
+        value: { platform: "macOS" },
+      });
+    }
+    Object.defineProperty(navigator, "platform", { configurable: true, value: "MacIntel" });
     if (!("__TAURI_INTERNALS__" in window)) window.__TAURI_INTERNALS__ = {};
     window.__ccresdocTauriInvocations = [];
     window.__TAURI__ = {
