@@ -1,6 +1,6 @@
 # Sidebar and navigation ownership
 
-CCResDoc uses the public navigation surface in `@takazudo/zudo-doc` 5.27.0.
+CCResDoc uses the public navigation surface in `@takazudo/zudo-doc` 5.28.0.
 The package owns sidebar rendering, filtering, persisted disclosure state,
 soft-navigation active state, mobile and desktop toggles, theme controls, smart
 path wrapping, and tree connector geometry. CCResDoc does not keep local copies
@@ -14,7 +14,7 @@ DOM behavior in happy-dom, and verifies duplicate-safe lifecycle cleanup.
 
 ## Accessibility contract and upstream deviation
 
-zudo-doc 5.27.0 exposes the sidebar as native links and disclosure buttons. The
+zudo-doc 5.28.0 exposes the sidebar as native links and disclosure buttons. The
 controls remain in the normal tab order and publish `aria-current`,
 `aria-expanded`, and descriptive labels. This is an accessible disclosure/link
 pattern, but it is not the WAI-ARIA tree pattern: the current public island does
@@ -25,11 +25,13 @@ retaining its rendering and keyboard state machine would fork the upstream
 component again. The DOM test records the difference so a future upstream
 implementation change is reviewed explicitly. Focus restoration to the
 hamburger after a navigation-driven mobile close is likewise not part of the
-5.27.0 public island contract and should be addressed upstream rather than in a
+5.28.0 public island contract and should be addressed upstream rather than in a
 host wrapper.
 
-Re-checked at 5.27.0: the public island surface did not gain a new navigation
-design. The published package still has `sidebar-toggle-island`,
+At 5.28.0, Escape in the mobile drawer's Appearance menu stops propagation,
+closes the menu, and returns focus to its Appearance trigger; a second Escape
+closes the drawer. Re-checked at 5.28.0, the public island contract otherwise
+held: the package still has `sidebar-toggle-island`,
 `sidebar-tree-island`, and `sidebar-with-defaults`. The scan also covered
 `site-tree-nav-island`, `tree-nav-shared`, and `desktop-sidebar-toggle-island`.
 Those dist files still have no `role="tree"` / `role="treeitem"`, no
