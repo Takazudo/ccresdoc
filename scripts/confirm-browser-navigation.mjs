@@ -152,8 +152,8 @@ function assertRepositoryContracts() {
   // make that privacy boundary visible to the browser gate itself.
   const runtimeFiles = readFileSync(join(repoRoot, "scripts/runtime-workspace-files.mjs"), "utf8");
   for (const required of [
-    "patches/@takazudo__zudo-doc@5.27.0.patch",
-    "patches/@takazudo__zfb-runtime@2.20.2.patch",
+    "patches/@takazudo__zudo-doc@5.28.0.patch",
+    "patches/@takazudo__zfb-runtime@2.22.0.patch",
     "src/browser-chrome/command-catalog.json",
     "src/browser-chrome/adapter.ts",
     "src/browser-chrome/history.ts",
@@ -181,7 +181,7 @@ function assertRepositoryContracts() {
     const source = readFileSync(join(generatedPermissions, file), "utf8");
     assert.doesNotMatch(source, /\*|allow-all|test-only|fixture/i, `${file} contains a broad/test-only permission`);
   }
-  const patch = join(appRoot, "patches/@takazudo__zudo-doc@5.27.0.patch");
+  const patch = join(appRoot, "patches/@takazudo__zudo-doc@5.28.0.patch");
   assert.equal(
     createHash("sha256").update(readFileSync(patch)).digest("hex"),
     "24c9677848a98ae61b2eb39d1245f9409372f327ff5904a82e2bcf702ce0ddcf",
