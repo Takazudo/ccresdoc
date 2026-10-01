@@ -120,20 +120,24 @@ below as historical evidence rather than being treated as the current pin.
 
 | Candidate | Resolved plugins | Check | Build | Node during build | Decision |
 | --- | --- | --- | --- | --- | --- |
-| wholesale `zudoDoc()` | routes, search-index, theme-packs, img-src-check, zdtp-loader | pass | fails: `/docs/probe` collides with the injected `/docs/[[...slug]]` catch-all | plugin host invoked | reject |
+| wholesale `zudoDoc()` | routes, search-index, theme-packs, img-src-check, zdtp-loader | pass | pass (fixture-clean copy) | plugin host invoked | reject |
 | `packageOwnedRoutes:false` | search-index, theme-packs, img-src-check, zdtp-loader | pass | pass | plugin host invoked | reject |
 | selected spread override | none | pass | pass | zero | accept |
 | fully manual zfb config | none | pass | pass | zero | viable control, reject duplicated policy |
 
-The wholesale rejection is now recorded one stage earlier than it used to be.
-Through zudo-doc 5.19.0 the wholesale build reached the bundler and failed
-there because the injected chrome reaches the optional `diff` peer; from zfb
-2.18.0 the route graph is validated first, and the probe's own
-`pages/docs/probe.tsx` collides with the package catch-all, so the build
-aborts before bundling. The `reject` decision is unchanged — wholesale still
-invokes the plugin host — but the fixture no longer demonstrates the `diff`
-reachability at 5.25.0. Re-establishing that evidence requires renaming the
-probe's host page so the two routes differ.
+The wholesale rejection rests on plugin-host invocation: the build spawns
+`plugin-host.mjs` under Node, which violates the Node-free contract. The probe
+runs wholesale on a fixture-clean temp copy: it deletes `pages/docs/probe.tsx`
+(which would collide with the injected `/docs/[[...slug]]` catch-all) and
+replaces `probe.mdx` with plain content (it used the host page's
+`ProbeCounter`), so no failure comes from the fixture. The repo fixture is never
+modified. Against the full build output the matrix asserts a successful build
+(`buildStatus` 0, `pages built`), no `route URL collision`, no missing
+`ProbeCounter`, and no `bundler step failed` / `Could not resolve "diff"`.
+The earlier `diff` bundler failure (through zudo-doc 5.19.0) is no longer
+demonstrated: `doc-history`'s `import("diff")` is still in zudo-doc 5.28.0's
+dist, but the wholesale build succeeds without the optional peer installed, so
+the module is no longer pulled into the bundle.
 
 The selected native Linux probe served `/` and `/docs/probe/`, emitted the `ProbeCounter` hydration marker and props, rebuilt after a watched MDX edit, sampled only the native zfb process, and recorded no call to the failing `node` sentinel. The integrated staged-runtime probe repeats this contract against the pruned application workspace. Real-WebView visual parity remains a documented macOS release gate.
 
