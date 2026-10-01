@@ -1556,22 +1556,26 @@ async function assertOverflowMenuPaintsAboveHeader(page, origin) {
   await page.keyboard.press("Escape");
 }
 
+// zudo-doc 5.28 renders ThemeToggle as an Appearance menu; picking a menuitemradio changes the theme.
+async function chooseTheme(page, label) {
+  const trigger = page.locator('[data-zfb-island="ThemeToggle"] button').first();
+  await trigger.waitFor({ state: "visible", timeout: browserTimeoutMs });
+  await trigger.click();
+  await page.getByRole("menuitemradio", { name: label }).click();
+}
+
 async function assertThemeArtifacts(page, origin) {
   if (!artifactDir) return;
   await openPage(page, origin, appRoutes.root);
   await page.setViewportSize({ width: 1280, height: 900 });
-  const toDark = page.locator('[data-zfb-island="ThemeToggle"] button[aria-label^="Switch to dark"]').first();
-  await toDark.waitFor({ state: "visible", timeout: browserTimeoutMs });
-  await toDark.click();
+  await chooseTheme(page, "Dark");
   await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", undefined, { timeout: browserTimeoutMs });
   await page.screenshot({ path: join(artifactDir, "browser-toolbar-desktop-dark.png") });
   await page.setViewportSize({ width: 390, height: 844 });
   await delay(50);
   await page.screenshot({ path: join(artifactDir, "browser-toolbar-narrow-dark.png") });
   await page.setViewportSize({ width: 1280, height: 900 });
-  const toLight = page.locator('[data-zfb-island="ThemeToggle"] button[aria-label^="Switch to light"]').first();
-  await toLight.waitFor({ state: "visible", timeout: browserTimeoutMs });
-  await toLight.click();
+  await chooseTheme(page, "Light");
   await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "light", undefined, { timeout: browserTimeoutMs });
 }
 
