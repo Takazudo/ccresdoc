@@ -8,6 +8,7 @@ import { createProbeOutputNormalizer } from "./normalize-probe-output.mjs";
 
 const variants = ["wholesale", "routes-off", "selected", "manual"];
 const results = {};
+const fullBuildOutput = {};
 const normalize = createProbeOutputNormalizer({ probeRoot, tempRoot: tmpdir(), platform: process.platform });
 const shellQuote = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
 
@@ -22,6 +23,12 @@ for (const variant of variants) {
     recursive: true,
     filter: (source) => !["node_modules", "dist", ".zfb", ".zfb-build"].includes(source.split(/[\\/]/).at(-1)),
   });
+  if (variant === "wholesale") {
+    // pages/docs/probe.tsx collides with the injected /docs catch-all route (zfb >= 2.18 validates routes before bundling); removed in the temp copy only so no failure comes from the fixture.
+    rmSync(join(workspace, "pages", "docs", "probe.tsx"));
+    // probe.mdx relies on the ProbeCounter component supplied by that host page; keep frontmatter and plain text so the catch-all renders a real doc page.
+    writeFileSync(join(workspace, "src", "content", "docs", "probe.mdx"), "---\ntitle: Collection probe\nsidebar_position: 1\n---\n\nPlain collection content.\n");
+  }
   symlinkSync(join(probeRoot, "node_modules"), join(workspace, "node_modules"), "dir");
   writeFileSync(join(workspace, "zfb.config.ts"), [
     'import { defineConfig } from "zfb/config";',
@@ -50,6 +57,7 @@ for (const variant of variants) {
     .split("\n")
     .filter(Boolean);
 
+  fullBuildOutput[variant] = normalize(`${build.stdout}${build.stderr}`);
   results[variant] = {
     checkStatus: check.status,
     buildStatus: build.status,
@@ -73,5 +81,10 @@ assert.equal(results["routes-off"].checkStatus, 0);
 assert.equal(results["routes-off"].buildStatus, 0);
 assert.ok(results["routes-off"].nodeInvocationsDuringBuild > 0);
 assert.equal(results.wholesale.checkStatus, 0);
-assert.equal(results.wholesale.buildStatus, 1);
+assert.equal(results.wholesale.buildStatus, 0);
 assert.ok(results.wholesale.nodeInvocationsDuringBuild > 0);
+assert.ok(fullBuildOutput.wholesale.includes("pages built"));
+assert.ok(!fullBuildOutput.wholesale.includes("route URL collision"));
+assert.ok(!fullBuildOutput.wholesale.includes("requires `ProbeCounter`"));
+assert.ok(!fullBuildOutput.wholesale.includes("bundler step failed"));
+assert.ok(!fullBuildOutput.wholesale.includes('Could not resolve "diff"'));
