@@ -15,7 +15,6 @@
 // - GET /__zfb/reload is an SSE stream with named events `page`, `css`,
 //   `islands` (data may be empty) plus `:` keep-alive comments every 15s.
 
-export const RELOAD_EVENT_NAMES = Object.freeze(["page", "css", "islands"]);
 export const READINESS_ATTRIBUTE_PREFIX = "data-ccresdoc-";
 const DOC_ID_GLOBAL = "__ccresdocDocId";
 const ATTR_LOG_GLOBAL = "__ccresdocAttrLog";
