@@ -877,7 +877,7 @@
       }
     },
     {
-      "name": "persist+malformed: the settings store refuses to merge into a malformed config (malformed)",
+      "name": "persist+malformed: the settings store refuses to merge when the config is malformed (malformed)",
       "parity": "rust-only",
       "input": {
         "configStatus": "malformed",
@@ -902,7 +902,7 @@
       }
     },
     {
-      "name": "persist+invalid: the settings store refuses to merge into a invalid config (latest_not_valid)",
+      "name": "persist+invalid: the settings store refuses to merge when the config is invalid (latest_not_valid)",
       "parity": "rust-only",
       "input": {
         "configStatus": "invalid",
@@ -927,7 +927,7 @@
       }
     },
     {
-      "name": "persist+unsupported_version: the settings store refuses to merge into a unsupported_version config (unsupported_version)",
+      "name": "persist+unsupported_version: the settings store refuses to merge when the config is unsupported_version (unsupported_version)",
       "parity": "rust-only",
       "input": {
         "configStatus": "unsupported_version",
@@ -952,7 +952,7 @@
       }
     },
     {
-      "name": "persist+unreadable: the settings store refuses to merge into a unreadable config (unreadable)",
+      "name": "persist+unreadable: the settings store refuses to merge when the config is unreadable (unreadable)",
       "parity": "rust-only",
       "input": {
         "configStatus": "unreadable",
