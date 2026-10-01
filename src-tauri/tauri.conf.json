@@ -1,6 +1,6 @@
 {
   "productName": "CCResDoc",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "identifier": "com.takazudo.ccresdoc",
   "build": {
     "frontendDist": "./frontend",
