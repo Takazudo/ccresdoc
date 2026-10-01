@@ -1,0 +1,980 @@
+{
+  "schemaVersion": 1,
+  "description": "update_appearance transition table. See README.md in this directory.",
+  "constants": {
+    "effectivePort": 4892,
+    "callerPath": "/docs/",
+    "defaults": {
+      "mode": "system",
+      "themePack": "default"
+    },
+    "revisionPlaceholders": {
+      "stored": "rev:stored",
+      "afterSave": "rev:after-save"
+    }
+  },
+  "rows": [
+    {
+      "name": "legacy_candidate+missing+no_preview: reports and returns the candidate directly, default authority, no event",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "missing",
+        "stored": null,
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": null
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "paper",
+        "intent": "legacy_candidate",
+        "field": "mode"
+      },
+      "expect": {
+        "envelope": {
+          "appearance": {
+            "mode": "dark",
+            "themePack": "paper"
+          },
+          "authoritative": {
+            "mode": "system",
+            "themePack": "default"
+          },
+          "revision": null,
+          "source": "legacy_candidate",
+          "authoritativeSource": "default"
+        },
+        "emitsEvent": false,
+        "candidateAfter": {
+          "origin": "http://localhost:4892",
+          "appearance": {
+            "mode": "dark",
+            "themePack": "paper"
+          }
+        },
+        "storedAfter": null
+      }
+    },
+    {
+      "name": "legacy_candidate+missing+preview: still returns the candidate, not the active preview",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "missing",
+        "stored": null,
+        "preview": {
+          "mode": "light",
+          "themePack": "default"
+        },
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": null
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "paper",
+        "intent": "legacy_candidate",
+        "field": "mode"
+      },
+      "expect": {
+        "envelope": {
+          "appearance": {
+            "mode": "dark",
+            "themePack": "paper"
+          },
+          "authoritative": {
+            "mode": "system",
+            "themePack": "default"
+          },
+          "revision": null,
+          "source": "legacy_candidate",
+          "authoritativeSource": "default"
+        },
+        "emitsEvent": false,
+        "candidateAfter": {
+          "origin": "http://localhost:4892",
+          "appearance": {
+            "mode": "dark",
+            "themePack": "paper"
+          }
+        },
+        "storedAfter": null
+      }
+    },
+    {
+      "name": "legacy_candidate+missing+prior_candidate: the new report replaces the earlier candidate and its origin",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "missing",
+        "stored": null,
+        "preview": null,
+        "candidate": {
+          "origin": "http://127.0.0.1:4892",
+          "appearance": {
+            "mode": "light",
+            "themePack": "default"
+          }
+        },
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": null
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "paper",
+        "intent": "legacy_candidate",
+        "field": "theme_pack"
+      },
+      "expect": {
+        "envelope": {
+          "appearance": {
+            "mode": "dark",
+            "themePack": "paper"
+          },
+          "authoritative": {
+            "mode": "system",
+            "themePack": "default"
+          },
+          "revision": null,
+          "source": "legacy_candidate",
+          "authoritativeSource": "default"
+        },
+        "emitsEvent": false,
+        "candidateAfter": {
+          "origin": "http://localhost:4892",
+          "appearance": {
+            "mode": "dark",
+            "themePack": "paper"
+          }
+        },
+        "storedAfter": null
+      }
+    },
+    {
+      "name": "legacy_candidate+valid+no_preview: ignores the request value and returns the authoritative envelope, emits",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "dark",
+          "themePack": "paper"
+        },
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "light",
+        "themePack": "default",
+        "intent": "legacy_candidate",
+        "field": "mode"
+      },
+      "expect": {
+        "envelope": {
+          "appearance": {
+            "mode": "dark",
+            "themePack": "paper"
+          },
+          "authoritative": {
+            "mode": "dark",
+            "themePack": "paper"
+          },
+          "revision": "rev:stored",
+          "source": "authoritative",
+          "authoritativeSource": "authoritative"
+        },
+        "emitsEvent": true,
+        "candidateAfter": null,
+        "storedAfter": {
+          "mode": "dark",
+          "themePack": "paper"
+        }
+      }
+    },
+    {
+      "name": "legacy_candidate+valid+preview: returns the preview envelope over the stored value, emits",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "dark",
+          "themePack": "paper"
+        },
+        "preview": {
+          "mode": "light",
+          "themePack": "default"
+        },
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "system",
+        "themePack": "default",
+        "intent": "legacy_candidate",
+        "field": "mode"
+      },
+      "expect": {
+        "envelope": {
+          "appearance": {
+            "mode": "light",
+            "themePack": "default"
+          },
+          "authoritative": {
+            "mode": "dark",
+            "themePack": "paper"
+          },
+          "revision": "rev:stored",
+          "source": "preview",
+          "authoritativeSource": "authoritative"
+        },
+        "emitsEvent": true,
+        "candidateAfter": null,
+        "storedAfter": {
+          "mode": "dark",
+          "themePack": "paper"
+        }
+      }
+    },
+    {
+      "name": "legacy_candidate+valid+stale_candidate: a present config ignores and keeps an earlier candidate, does not report a new one",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "light",
+          "themePack": "default"
+        },
+        "preview": null,
+        "candidate": {
+          "origin": "http://localhost:4892",
+          "appearance": {
+            "mode": "dark",
+            "themePack": "paper"
+          }
+        },
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "system",
+        "themePack": "paper",
+        "intent": "legacy_candidate",
+        "field": "mode"
+      },
+      "expect": {
+        "envelope": {
+          "appearance": {
+            "mode": "light",
+            "themePack": "default"
+          },
+          "authoritative": {
+            "mode": "light",
+            "themePack": "default"
+          },
+          "revision": "rev:stored",
+          "source": "authoritative",
+          "authoritativeSource": "authoritative"
+        },
+        "emitsEvent": true,
+        "candidateAfter": {
+          "origin": "http://localhost:4892",
+          "appearance": {
+            "mode": "dark",
+            "themePack": "paper"
+          }
+        },
+        "storedAfter": {
+          "mode": "light",
+          "themePack": "default"
+        }
+      }
+    },
+    {
+      "name": "persist+valid+no_preview+field_mode: merges only mode; request themePack differs from stored and is not written",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "dark",
+          "themePack": "paper"
+        },
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "light",
+        "themePack": "default",
+        "intent": "persist",
+        "field": "mode"
+      },
+      "expect": {
+        "envelope": {
+          "appearance": {
+            "mode": "light",
+            "themePack": "paper"
+          },
+          "authoritative": {
+            "mode": "light",
+            "themePack": "paper"
+          },
+          "revision": "rev:after-save",
+          "source": "authoritative",
+          "authoritativeSource": "authoritative"
+        },
+        "emitsEvent": true,
+        "candidateAfter": null,
+        "storedAfter": {
+          "mode": "light",
+          "themePack": "paper"
+        }
+      }
+    },
+    {
+      "name": "persist+valid+no_preview+field_theme_pack: merges only themePack; request mode differs from stored and is not written",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "dark",
+          "themePack": "default"
+        },
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "light",
+        "themePack": "paper",
+        "intent": "persist",
+        "field": "theme_pack"
+      },
+      "expect": {
+        "envelope": {
+          "appearance": {
+            "mode": "dark",
+            "themePack": "paper"
+          },
+          "authoritative": {
+            "mode": "dark",
+            "themePack": "paper"
+          },
+          "revision": "rev:after-save",
+          "source": "authoritative",
+          "authoritativeSource": "authoritative"
+        },
+        "emitsEvent": true,
+        "candidateAfter": null,
+        "storedAfter": {
+          "mode": "dark",
+          "themePack": "paper"
+        }
+      }
+    },
+    {
+      "name": "persist+valid+preview: saves the field but returns source preview, with the saved value only in authoritative",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "dark",
+          "themePack": "paper"
+        },
+        "preview": {
+          "mode": "system",
+          "themePack": "default"
+        },
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "light",
+        "themePack": "default",
+        "intent": "persist",
+        "field": "mode"
+      },
+      "expect": {
+        "envelope": {
+          "appearance": {
+            "mode": "system",
+            "themePack": "default"
+          },
+          "authoritative": {
+            "mode": "light",
+            "themePack": "paper"
+          },
+          "revision": "rev:after-save",
+          "source": "preview",
+          "authoritativeSource": "authoritative"
+        },
+        "emitsEvent": true,
+        "candidateAfter": null,
+        "storedAfter": {
+          "mode": "light",
+          "themePack": "paper"
+        }
+      }
+    },
+    {
+      "name": "persist+missing+no_preview: creates the config from defaults plus the field, source authoritative, clears the candidate",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "missing",
+        "stored": null,
+        "preview": null,
+        "candidate": {
+          "origin": "http://localhost:4892",
+          "appearance": {
+            "mode": "light",
+            "themePack": "paper"
+          }
+        },
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": null
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "paper",
+        "intent": "persist",
+        "field": "mode"
+      },
+      "expect": {
+        "envelope": {
+          "appearance": {
+            "mode": "dark",
+            "themePack": "default"
+          },
+          "authoritative": {
+            "mode": "dark",
+            "themePack": "default"
+          },
+          "revision": "rev:after-save",
+          "source": "authoritative",
+          "authoritativeSource": "authoritative"
+        },
+        "emitsEvent": true,
+        "candidateAfter": null,
+        "storedAfter": {
+          "mode": "dark",
+          "themePack": "default"
+        }
+      }
+    },
+    {
+      "name": "persist+missing+no_preview+field_theme_pack: creates the config with only themePack changed from defaults",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "missing",
+        "stored": null,
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": null
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "paper",
+        "intent": "persist",
+        "field": "theme_pack"
+      },
+      "expect": {
+        "envelope": {
+          "appearance": {
+            "mode": "system",
+            "themePack": "paper"
+          },
+          "authoritative": {
+            "mode": "system",
+            "themePack": "paper"
+          },
+          "revision": "rev:after-save",
+          "source": "authoritative",
+          "authoritativeSource": "authoritative"
+        },
+        "emitsEvent": true,
+        "candidateAfter": null,
+        "storedAfter": {
+          "mode": "system",
+          "themePack": "paper"
+        }
+      }
+    },
+    {
+      "name": "persist+missing+preview: creates the config but returns source preview; the candidate is cleared",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "missing",
+        "stored": null,
+        "preview": {
+          "mode": "light",
+          "themePack": "paper"
+        },
+        "candidate": {
+          "origin": "http://localhost:4892",
+          "appearance": {
+            "mode": "dark",
+            "themePack": "default"
+          }
+        },
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": null
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "default",
+        "intent": "persist",
+        "field": "mode"
+      },
+      "expect": {
+        "envelope": {
+          "appearance": {
+            "mode": "light",
+            "themePack": "paper"
+          },
+          "authoritative": {
+            "mode": "dark",
+            "themePack": "default"
+          },
+          "revision": "rev:after-save",
+          "source": "preview",
+          "authoritativeSource": "authoritative"
+        },
+        "emitsEvent": true,
+        "candidateAfter": null,
+        "storedAfter": {
+          "mode": "dark",
+          "themePack": "default"
+        }
+      }
+    },
+    {
+      "name": "forbidden_origin: a caller outside the active docs origin is rejected",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "dark",
+          "themePack": "paper"
+        },
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://example.com:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "light",
+        "themePack": "default",
+        "intent": "persist",
+        "field": "mode"
+      },
+      "expect": {
+        "error": "forbidden_origin"
+      }
+    },
+    {
+      "name": "forbidden_origin precedes invalid_theme_pack: origin is checked before the theme pack",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "dark",
+          "themePack": "paper"
+        },
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4893",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "light",
+        "themePack": "unknown-pack",
+        "intent": "persist",
+        "field": "theme_pack"
+      },
+      "expect": {
+        "error": "forbidden_origin"
+      }
+    },
+    {
+      "name": "invalid_theme_pack: persist of an unavailable theme pack is rejected",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "dark",
+          "themePack": "paper"
+        },
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "unknown-pack",
+        "intent": "persist",
+        "field": "theme_pack"
+      },
+      "expect": {
+        "error": "invalid_theme_pack"
+      }
+    },
+    {
+      "name": "invalid_theme_pack+field_mode: themePack is validated even when only mode would be merged",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "dark",
+          "themePack": "paper"
+        },
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "light",
+        "themePack": "unknown-pack",
+        "intent": "persist",
+        "field": "mode"
+      },
+      "expect": {
+        "error": "invalid_theme_pack"
+      }
+    },
+    {
+      "name": "invalid_theme_pack+legacy_candidate+missing: the candidate is validated before it is reported",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "missing",
+        "stored": null,
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": null
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "unknown-pack",
+        "intent": "legacy_candidate",
+        "field": "mode"
+      },
+      "expect": {
+        "error": "invalid_theme_pack"
+      }
+    },
+    {
+      "name": "invalid_args: an unknown extra request key is rejected (deny_unknown_fields)",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "light",
+          "themePack": "default"
+        },
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "default",
+        "intent": "persist",
+        "field": "mode",
+        "preferredPort": 1
+      },
+      "expect": {
+        "error": "invalid_args"
+      }
+    },
+    {
+      "name": "invalid_args: an unknown intent is rejected",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "light",
+          "themePack": "default"
+        },
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "default",
+        "intent": "preview",
+        "field": "mode"
+      },
+      "expect": {
+        "error": "invalid_args"
+      }
+    },
+    {
+      "name": "invalid_args: an unknown field is rejected",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "light",
+          "themePack": "default"
+        },
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "default",
+        "intent": "persist",
+        "field": "themePack"
+      },
+      "expect": {
+        "error": "invalid_args"
+      }
+    },
+    {
+      "name": "invalid_args: an unknown mode is rejected",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "light",
+          "themePack": "default"
+        },
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "sepia",
+        "themePack": "default",
+        "intent": "persist",
+        "field": "mode"
+      },
+      "expect": {
+        "error": "invalid_args"
+      }
+    },
+    {
+      "name": "invalid_args: a request without field is rejected (every key is required)",
+      "parity": "rust+stub",
+      "input": {
+        "configStatus": "valid",
+        "stored": {
+          "mode": "light",
+          "themePack": "default"
+        },
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "default",
+        "intent": "persist"
+      },
+      "expect": {
+        "error": "invalid_args"
+      }
+    },
+    {
+      "name": "persist+malformed: the settings store refuses to merge into a malformed config (malformed)",
+      "parity": "rust-only",
+      "input": {
+        "configStatus": "malformed",
+        "stored": null,
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "default",
+        "intent": "persist",
+        "field": "mode"
+      },
+      "expect": {
+        "error": "malformed"
+      }
+    },
+    {
+      "name": "persist+invalid: the settings store refuses to merge into a invalid config (latest_not_valid)",
+      "parity": "rust-only",
+      "input": {
+        "configStatus": "invalid",
+        "stored": null,
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "default",
+        "intent": "persist",
+        "field": "mode"
+      },
+      "expect": {
+        "error": "latest_not_valid"
+      }
+    },
+    {
+      "name": "persist+unsupported_version: the settings store refuses to merge into a unsupported_version config (unsupported_version)",
+      "parity": "rust-only",
+      "input": {
+        "configStatus": "unsupported_version",
+        "stored": null,
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": "rev:stored"
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "default",
+        "intent": "persist",
+        "field": "mode"
+      },
+      "expect": {
+        "error": "unsupported_version"
+      }
+    },
+    {
+      "name": "persist+unreadable: the settings store refuses to merge into a unreadable config (unreadable)",
+      "parity": "rust-only",
+      "input": {
+        "configStatus": "unreadable",
+        "stored": null,
+        "preview": null,
+        "candidate": null,
+        "callerOrigin": "http://localhost:4892",
+        "availableThemePacks": [
+          "default",
+          "paper"
+        ],
+        "revision": null
+      },
+      "request": {
+        "mode": "dark",
+        "themePack": "default",
+        "intent": "persist",
+        "field": "mode"
+      },
+      "expect": {
+        "error": "unreadable"
+      }
+    }
+  ]
+}
