@@ -1,7 +1,7 @@
 {
   "wholesale": {
     "checkStatus": 0,
-    "buildStatus": 1,
+    "buildStatus": 0,
     "nodeInvocationsDuringBuild": 1,
     "nodeInvocationArgs": [
       "--enable-source-maps <zfb-plugin-host>/plugin-host.mjs"
@@ -14,7 +14,8 @@
       "info package route `/404` → pages/404.tsx",
       "info package route `/robots.txt` → pages/robots.txt.tsx",
       "info package route `/docs/[[...slug]]` → pages/docs/[[...slug]].tsx",
-      "✗ error: route URL collision: \"/docs/probe\" is claimed by both route /docs/probe and route /docs/:slug{.+}?. Two routes resolve to the same canonical URL — rename one so their URLs differ."
+      "✓ 4 pages built in <duration>",
+      "zfb info: [plugin:search-index] Generated search index with 1 entries"
     ]
   },
   "routes-off": {

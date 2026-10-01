@@ -41,6 +41,9 @@ jobs:
       - name: Browser navigation repository contracts
         run: pnpm run test:browser-navigation-contract
 
+      - name: Browser harness helpers
+        run: pnpm run test:browser-harness
+
       - name: Install app dependencies (frozen)
         run: pnpm --dir app install --frozen-lockfile
 

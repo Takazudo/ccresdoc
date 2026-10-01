@@ -328,19 +328,18 @@ fn authorize_docs_url(url: &tauri::Url, effective_port: u16) -> Result<String, C
     ))
 }
 
-fn docs_origin(window: &WebviewWindow, effective_port: u16) -> Result<String, CommandError> {
-    let url = window
+fn caller_url(window: &WebviewWindow) -> Result<tauri::Url, CommandError> {
+    window
         .url()
-        .map_err(|error| CommandError::new("caller_url", error.to_string()))?;
-    authorize_docs_url(&url, effective_port)
+        .map_err(|error| CommandError::new("caller_url", error.to_string()))
 }
 
 fn validate_appearance(
-    state: &AppState,
+    supports_theme_pack: impl Fn(&str) -> bool,
     mode: AppearanceMode,
     theme_pack: String,
 ) -> Result<AppearanceValue, CommandError> {
-    if !state.settings_store.supports_theme_pack(&theme_pack) {
+    if !supports_theme_pack(&theme_pack) {
         return Err(CommandError::with_details(
             "invalid_theme_pack",
             "theme pack is not available",
@@ -348,6 +347,75 @@ fn validate_appearance(
         ));
     }
     Ok(AppearanceValue { mode, theme_pack })
+}
+
+/// What `update_appearance` does once the caller is authorized and the
+/// request is valid. Parity-tested against `fixtures/appearance-transitions.json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AppearanceDecision {
+    /// Resolve against the latest load status with `legacy_candidate_outcome`.
+    LegacyCandidate {
+        origin: String,
+        appearance: AppearanceValue,
+    },
+    /// Merge exactly one field through `SettingsStore::update_appearance`, then
+    /// `apply_saved` (which emits the event), then `clear_candidate`.
+    Persist {
+        mode: Option<AppearanceMode>,
+        theme_pack: Option<String>,
+    },
+}
+
+/// Pure request resolution: origin check, then theme-pack validation (for
+/// both intents and both fields), then intent/field branching.
+pub(crate) fn resolve_appearance_update(
+    caller_url: &tauri::Url,
+    effective_port: u16,
+    request: AppearanceRequest,
+    supports_theme_pack: impl Fn(&str) -> bool,
+) -> Result<AppearanceDecision, CommandError> {
+    let origin = authorize_docs_url(caller_url, effective_port)?;
+    let appearance = validate_appearance(supports_theme_pack, request.mode, request.theme_pack)?;
+    Ok(match request.intent {
+        AppearanceIntent::LegacyCandidate => {
+            AppearanceDecision::LegacyCandidate { origin, appearance }
+        }
+        AppearanceIntent::Persist => match request.field {
+            AppearanceField::Mode => AppearanceDecision::Persist {
+                mode: Some(appearance.mode),
+                theme_pack: None,
+            },
+            AppearanceField::ThemePack => AppearanceDecision::Persist {
+                mode: None,
+                theme_pack: Some(appearance.theme_pack),
+            },
+        },
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LegacyCandidateOutcome {
+    /// Missing config: report the candidate and return this envelope; no event.
+    ReportCandidate(AppearanceEnvelope),
+    /// Present config: return and emit `AppearanceState::envelope(latest)`;
+    /// the request value is ignored and any earlier candidate is kept.
+    EmitCurrent,
+}
+
+pub(crate) fn legacy_candidate_outcome(
+    latest: &SettingsSnapshot,
+    appearance: &AppearanceValue,
+) -> LegacyCandidateOutcome {
+    if latest.status != LoadStatus::Missing {
+        return LegacyCandidateOutcome::EmitCurrent;
+    }
+    LegacyCandidateOutcome::ReportCandidate(AppearanceEnvelope {
+        appearance: appearance.clone(),
+        authoritative: crate::appearance::value_from_snapshot(latest),
+        revision: None,
+        source: AppearanceSource::LegacyCandidate,
+        authoritative_source: AppearanceSource::Default,
+    })
 }
 
 #[tauri::command]
@@ -358,42 +426,39 @@ pub(crate) async fn update_appearance(
 ) -> Result<AppearanceEnvelope, CommandError> {
     authorize(window.label(), &[MAIN_WINDOW_LABEL])?;
     let state = app.state::<AppState>();
-    let origin = docs_origin(
-        &window,
+    let decision = resolve_appearance_update(
+        &caller_url(&window)?,
         state
             .effective_port
             .load(std::sync::atomic::Ordering::SeqCst),
+        request,
+        |slug| state.settings_store.supports_theme_pack(slug),
     )?;
-    let appearance = validate_appearance(&state, request.mode, request.theme_pack)?;
-    if request.intent == AppearanceIntent::LegacyCandidate {
-        let latest = state.settings_store.load();
-        if latest.status == LoadStatus::Missing {
-            state
-                .appearance
-                .report_candidate(origin, appearance.clone());
-            let authoritative = crate::appearance::value_from_snapshot(&latest);
-            return Ok(AppearanceEnvelope {
-                appearance,
-                authoritative,
-                revision: None,
-                source: AppearanceSource::LegacyCandidate,
-                authoritative_source: AppearanceSource::Default,
+    let (mode, theme_pack) = match decision {
+        AppearanceDecision::LegacyCandidate { origin, appearance } => {
+            let latest = state.settings_store.load();
+            return Ok(match legacy_candidate_outcome(&latest, &appearance) {
+                LegacyCandidateOutcome::ReportCandidate(envelope) => {
+                    state.appearance.report_candidate(origin, appearance);
+                    envelope
+                }
+                LegacyCandidateOutcome::EmitCurrent => {
+                    let envelope = state.appearance.envelope(&latest);
+                    let _ = app.emit(APPEARANCE_EVENT, &envelope);
+                    envelope
+                }
             });
         }
-        let envelope = state.appearance.envelope(&latest);
-        let _ = app.emit(APPEARANCE_EVENT, &envelope);
-        return Ok(envelope);
-    }
+        AppearanceDecision::Persist { mode, theme_pack } => (mode, theme_pack),
+    };
 
     let task_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = task_app.state::<AppState>();
         appearance_save_operation(&task_app, &state, || {
-            let (mode, theme_pack) = match request.field {
-                AppearanceField::Mode => (Some(appearance.mode), None),
-                AppearanceField::ThemePack => (None, Some(appearance.theme_pack.as_str())),
-            };
-            state.settings_store.update_appearance(mode, theme_pack)
+            state
+                .settings_store
+                .update_appearance(mode, theme_pack.as_deref())
         })?;
         state.appearance.clear_candidate();
         Ok(state.appearance.envelope(&state.settings_store.load()))
@@ -411,7 +476,11 @@ pub(crate) fn preview_appearance(
 ) -> Result<AppearanceEnvelope, CommandError> {
     authorize_settings(&window)?;
     let state = app.state::<AppState>();
-    let appearance = validate_appearance(&state, mode, theme_pack)?;
+    let appearance = validate_appearance(
+        |slug| state.settings_store.supports_theme_pack(slug),
+        mode,
+        theme_pack,
+    )?;
     let envelope = state.runtime.with_serialized_apply(|| {
         state.appearance.set_preview(appearance);
         state.appearance.envelope(&state.settings_store.load())
@@ -659,6 +728,330 @@ mod tests {
             json!({ "claudeDir": "/tmp", "intent": "persist" }),
         ] {
             assert!(serde_json::from_value::<AppearanceRequest>(invalid).is_err());
+        }
+    }
+
+    mod appearance_transitions {
+        use super::*;
+        use crate::appearance::{value_from_snapshot, AppearanceState};
+        use crate::settings::SettingsStore;
+        use std::path::Path;
+
+        const FIXTURE: &str = include_str!("../fixtures/appearance-transitions.json");
+
+        struct Harness {
+            _root: tempfile::TempDir,
+            store: SettingsStore,
+            appearance: AppearanceState,
+        }
+
+        fn config_toml(home: &Path, mode: &str, theme_pack: &str) -> String {
+            format!(
+                "schema_version = 1\n\n[resources]\nclaude = true\ncodex = false\n\n[source]\nclaude_dir = {:?}\ncodex_dir = \"~/.codex\"\n\n[appearance]\nmode = {mode:?}\ntheme_pack = {theme_pack:?}\n\n[server]\npreferred_port = 5000\nfallback_to_free_port = false\n",
+                home.join(".claude").to_string_lossy()
+            )
+        }
+
+        fn harness(input: &Value) -> Harness {
+            let root = tempfile::tempdir().unwrap();
+            let home = root.path().join("home");
+            fs::create_dir_all(home.join(".claude")).unwrap();
+            let packs: Vec<String> =
+                serde_json::from_value(input["availableThemePacks"].clone()).unwrap();
+            let store = SettingsStore::with_theme_packs(
+                root.path().join("config/config.toml"),
+                home.clone(),
+                packs,
+            );
+            let status: LoadStatus = serde_json::from_value(input["configStatus"].clone()).unwrap();
+            let path = store.path().to_path_buf();
+            if status != LoadStatus::Missing {
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+            }
+            match status {
+                LoadStatus::Missing => {}
+                LoadStatus::Valid => {
+                    let stored: AppearanceValue =
+                        serde_json::from_value(input["stored"].clone()).unwrap();
+                    fs::write(
+                        &path,
+                        config_toml(&home, stored.mode.as_str(), &stored.theme_pack),
+                    )
+                    .unwrap();
+                }
+                LoadStatus::Invalid => {
+                    fs::write(&path, config_toml(&home, "sepia", "default")).unwrap();
+                }
+                LoadStatus::Malformed => {
+                    fs::write(&path, "schema_version = 1\n[source\nnope").unwrap();
+                }
+                LoadStatus::UnsupportedVersion => {
+                    fs::write(&path, "schema_version = 2\nfuture = true\n").unwrap();
+                }
+                LoadStatus::Unreadable => {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::write(&path, "schema_version = 1\n").unwrap();
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+                }
+            }
+
+            let loaded = store.load();
+            assert_eq!(loaded.status, status, "config status setup");
+            assert_eq!(
+                loaded.revision.is_some(),
+                !input["revision"].is_null(),
+                "input.revision must be null exactly when the backend computes none"
+            );
+            if status == LoadStatus::Valid {
+                assert_eq!(value_from_snapshot(&loaded), stored_value(&input["stored"]));
+            } else {
+                assert!(input["stored"].is_null());
+            }
+
+            let appearance = AppearanceState::default();
+            if !input["preview"].is_null() {
+                appearance.set_preview(serde_json::from_value(input["preview"].clone()).unwrap());
+            }
+            if !input["candidate"].is_null() {
+                appearance.report_candidate(
+                    input["candidate"]["origin"].as_str().unwrap().to_string(),
+                    serde_json::from_value(input["candidate"]["appearance"].clone()).unwrap(),
+                );
+            }
+            Harness {
+                _root: root,
+                store,
+                appearance,
+            }
+        }
+
+        fn stored_value(value: &Value) -> AppearanceValue {
+            serde_json::from_value(value.clone()).unwrap()
+        }
+
+        /// Test double for the command's side-effect path: the same store and
+        /// appearance-state calls in the same order, with the Tauri runtime
+        /// apply replaced by the event it emits (`apply_saved` emits
+        /// `envelope(load())` before `clear_candidate`).
+        fn run(
+            harness: &Harness,
+            caller_url: &tauri::Url,
+            effective_port: u16,
+            request: AppearanceRequest,
+        ) -> Result<(AppearanceEnvelope, Option<AppearanceEnvelope>), CommandError> {
+            let decision =
+                resolve_appearance_update(caller_url, effective_port, request, |slug| {
+                    harness.store.supports_theme_pack(slug)
+                })?;
+            match decision {
+                AppearanceDecision::LegacyCandidate { origin, appearance } => {
+                    let latest = harness.store.load();
+                    Ok(match legacy_candidate_outcome(&latest, &appearance) {
+                        LegacyCandidateOutcome::ReportCandidate(envelope) => {
+                            harness.appearance.report_candidate(origin, appearance);
+                            (envelope, None)
+                        }
+                        LegacyCandidateOutcome::EmitCurrent => {
+                            let envelope = harness.appearance.envelope(&latest);
+                            (envelope.clone(), Some(envelope))
+                        }
+                    })
+                }
+                AppearanceDecision::Persist { mode, theme_pack } => {
+                    harness
+                        .store
+                        .update_appearance(mode, theme_pack.as_deref())
+                        .map_err(CommandError::from)?;
+                    let emitted = harness.appearance.envelope(&harness.store.load());
+                    harness.appearance.clear_candidate();
+                    let envelope = harness.appearance.envelope(&harness.store.load());
+                    Ok((envelope, Some(emitted)))
+                }
+            }
+        }
+
+        fn assert_revision(
+            name: &str,
+            expected: &Value,
+            actual: &Option<ContentRevision>,
+            before: &Option<ContentRevision>,
+        ) {
+            match expected.as_str() {
+                None => assert!(expected.is_null() && actual.is_none(), "{name}: revision"),
+                Some("rev:stored") => assert_eq!(actual, before, "{name}: revision unchanged"),
+                Some("rev:after-save") => {
+                    assert!(actual.is_some(), "{name}: revision after save");
+                    assert_ne!(actual, before, "{name}: revision changed by save");
+                }
+                Some(other) => panic!("{name}: unknown revision placeholder {other}"),
+            }
+        }
+
+        fn assert_candidate(name: &str, harness: &Harness, expected: &Value) {
+            if expected.is_null() {
+                assert_eq!(
+                    harness.appearance.candidate(),
+                    None,
+                    "{name}: candidateAfter"
+                );
+                return;
+            }
+            let appearance = stored_value(&expected["appearance"]);
+            assert_eq!(
+                harness
+                    .appearance
+                    .candidate_for(expected["origin"].as_str().unwrap()),
+                Some(appearance),
+                "{name}: candidateAfter (origin and appearance)"
+            );
+        }
+
+        fn assert_preview_kept(name: &str, harness: &Harness, preview: &Value) {
+            let envelope = harness.appearance.envelope(&harness.store.load());
+            if preview.is_null() {
+                assert_ne!(
+                    envelope.source,
+                    AppearanceSource::Preview,
+                    "{name}: preview"
+                );
+            } else {
+                assert_eq!(
+                    envelope.source,
+                    AppearanceSource::Preview,
+                    "{name}: preview"
+                );
+                assert_eq!(
+                    envelope.appearance,
+                    stored_value(preview),
+                    "{name}: preview"
+                );
+            }
+        }
+
+        #[test]
+        fn update_appearance_matches_every_transition_row() {
+            let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+            assert_eq!(fixture["schemaVersion"], 1);
+            let constants = &fixture["constants"];
+            let effective_port =
+                u16::try_from(constants["effectivePort"].as_u64().unwrap()).unwrap();
+            let caller_path = constants["callerPath"].as_str().unwrap();
+            let defaults = stored_value(&constants["defaults"]);
+            let draft = SettingsDraft::defaults();
+            assert_eq!(
+                (defaults.mode.as_str(), defaults.theme_pack.as_str()),
+                (draft.appearance_mode.as_str(), draft.theme_pack.as_str())
+            );
+            let rows = fixture["rows"].as_array().unwrap();
+            assert!(!rows.is_empty());
+
+            let mut checked = 0;
+            for row in rows {
+                let name = row["name"].as_str().unwrap();
+                assert!(
+                    matches!(row["parity"].as_str(), Some("rust+stub" | "rust-only")),
+                    "{name}: parity"
+                );
+                let input = &row["input"];
+                let expect = &row["expect"];
+                let parsed = serde_json::from_value::<AppearanceRequest>(row["request"].clone());
+                if expect["error"] == "invalid_args" {
+                    assert!(parsed.is_err(), "{name}: request must fail deserialization");
+                    checked += 1;
+                    continue;
+                }
+                let request = parsed.unwrap_or_else(|error| panic!("{name}: {error}"));
+
+                let harness = harness(input);
+                let before = harness.store.load();
+                let caller_url: tauri::Url =
+                    format!("{}{caller_path}", input["callerOrigin"].as_str().unwrap())
+                        .parse()
+                        .unwrap();
+                let result = run(&harness, &caller_url, effective_port, request);
+
+                if let Some(code) = expect["error"].as_str() {
+                    let error = result
+                        .err()
+                        .unwrap_or_else(|| panic!("{name}: expected {code}"));
+                    assert_eq!(error.code, code, "{name}: error code");
+                    let after = harness.store.load();
+                    assert_eq!(
+                        after.status, before.status,
+                        "{name}: stored status unchanged"
+                    );
+                    assert_eq!(
+                        after.revision, before.revision,
+                        "{name}: revision unchanged"
+                    );
+                    assert_eq!(
+                        after.raw_content, before.raw_content,
+                        "{name}: content unchanged"
+                    );
+                    assert_candidate(name, &harness, &input["candidate"]);
+                    assert_preview_kept(name, &harness, &input["preview"]);
+                    checked += 1;
+                    continue;
+                }
+
+                let (envelope, emitted) =
+                    result.unwrap_or_else(|error| panic!("{name}: unexpected {error:?}"));
+                let expected = &expect["envelope"];
+                assert_eq!(
+                    envelope.appearance,
+                    stored_value(&expected["appearance"]),
+                    "{name}: appearance"
+                );
+                assert_eq!(
+                    envelope.authoritative,
+                    stored_value(&expected["authoritative"]),
+                    "{name}: authoritative"
+                );
+                assert_eq!(
+                    envelope.source,
+                    serde_json::from_value(expected["source"].clone()).unwrap(),
+                    "{name}: source"
+                );
+                assert_eq!(
+                    envelope.authoritative_source,
+                    serde_json::from_value(expected["authoritativeSource"].clone()).unwrap(),
+                    "{name}: authoritativeSource"
+                );
+                assert_revision(
+                    name,
+                    &expected["revision"],
+                    &envelope.revision,
+                    &before.revision,
+                );
+
+                assert_eq!(
+                    emitted.is_some(),
+                    expect["emitsEvent"].as_bool().unwrap(),
+                    "{name}: emitsEvent"
+                );
+                if let Some(payload) = emitted {
+                    assert_eq!(
+                        payload, envelope,
+                        "{name}: event payload equals the envelope"
+                    );
+                }
+                assert_candidate(name, &harness, &expect["candidateAfter"]);
+                assert_preview_kept(name, &harness, &input["preview"]);
+
+                let after = harness.store.load();
+                if expect["storedAfter"].is_null() {
+                    assert_eq!(after.status, LoadStatus::Missing, "{name}: storedAfter");
+                } else {
+                    assert_eq!(after.status, LoadStatus::Valid, "{name}: storedAfter");
+                    assert_eq!(
+                        value_from_snapshot(&after),
+                        stored_value(&expect["storedAfter"]),
+                        "{name}: storedAfter"
+                    );
+                }
+                checked += 1;
+            }
+            assert_eq!(checked, rows.len());
         }
     }
 }

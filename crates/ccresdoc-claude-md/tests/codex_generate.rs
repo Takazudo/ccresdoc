@@ -7,8 +7,10 @@ use ccresdoc_claude_md::{
     generate_codex, watch_codex, CodexConfig, CodexSource, CodexWatchEvent, GenerateError,
 };
 
+mod common;
+
 fn fixture() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex-representative")
+    common::fixture("codex-representative")
 }
 
 fn config(source: &Path, docs: &Path) -> CodexConfig {
