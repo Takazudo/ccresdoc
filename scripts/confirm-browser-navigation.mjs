@@ -123,6 +123,13 @@ function assertRepositoryContracts() {
     "app/pnpm-lock.yaml must keep the pinned Playwright resolution",
   );
 
+  const appearanceFixture = readAppearanceFixture();
+  assert.equal(appearanceFixture.schemaVersion, 1, "appearance transition fixture schemaVersion drifted");
+  assert(
+    appearanceFixture.rows.some((row) => row.parity === "rust+stub"),
+    "appearance transition fixture must keep rust+stub rows for the harness stub",
+  );
+
   const catalog = readJson(join(appRoot, "src/browser-chrome/command-catalog.json"));
   const commands = new Map(catalog.commands.map((command) => [command.commandId, command]));
   for (const [commandId, binding] of [
@@ -424,8 +431,15 @@ function t() {
   };
 }
 
+const appearanceFixturePath = join(repoRoot, "src-tauri/fixtures/appearance-transitions.json");
+
+function readAppearanceFixture() {
+  return readJson(appearanceFixturePath);
+}
+
 async function installTauriHarness(context) {
-  await context.addInitScript(() => {
+  const fixture = readAppearanceFixture();
+  await context.addInitScript((fixture) => {
     const listeners = new Map();
     const bootstrap = {
       shortcutEntries: [
@@ -448,7 +462,149 @@ async function installTauriHarness(context) {
     window.__ccresdocEmitBootstrap = (payload) => {
       for (const listener of listeners.get("ccresdoc://browser-bootstrap") ?? []) listener({ payload });
     };
-    let appearance = { mode: "system", themePack: "default" };
+
+    // Faithful model of Rust's update_appearance for the config statuses the stub can
+    // represent (missing/valid). Expectations come from
+    // src-tauri/fixtures/appearance-transitions.json (rust+stub rows); see its README.
+    const { effectivePort, defaults } = fixture.constants;
+    const MODES = ["system", "light", "dark"];
+    const INTENTS = ["persist", "legacy_candidate"];
+    const FIELDS = ["mode", "theme_pack"];
+    const REQUEST_KEYS = ["field", "intent", "mode", "themePack"];
+    const clone = (value) => (value === null || value === undefined ? null : JSON.parse(JSON.stringify(value)));
+    const commandError = (code) => ({ code, message: code });
+
+    function createAppearanceStub(initial, emit) {
+      const state = {
+        configStatus: initial.configStatus ?? "missing",
+        stored: clone(initial.stored),
+        candidate: clone(initial.candidate),
+        preview: clone(initial.preview),
+        revision: initial.revision ?? null,
+      };
+      let saves = 0;
+      const envelope = () => {
+        const authoritative = state.stored ? clone(state.stored) : { ...defaults };
+        const authoritativeSource = state.stored ? "authoritative" : "default";
+        if (state.preview) {
+          return { appearance: clone(state.preview), authoritative, revision: state.revision, source: "preview", authoritativeSource };
+        }
+        if (state.candidate && !state.stored) {
+          return { appearance: clone(state.candidate.appearance), authoritative, revision: state.revision, source: "legacy_candidate", authoritativeSource };
+        }
+        return { appearance: clone(authoritative), authoritative, revision: state.revision, source: authoritativeSource, authoritativeSource };
+      };
+      const authorize = (callerUrl) => {
+        let url;
+        try { url = new URL(callerUrl); } catch { throw commandError("forbidden_origin"); }
+        const allowed = url.protocol === "http:"
+          && (url.hostname === "localhost" || url.hostname === "127.0.0.1")
+          && Number(url.port) === effectivePort
+          && url.pathname.startsWith("/docs/");
+        if (!allowed) throw commandError("forbidden_origin");
+      };
+      return {
+        state,
+        // callerUrl is omitted for live harness calls: the harness serves from a random
+        // loopback port, so only the self-check exercises the origin rule.
+        update(request, availableThemePacks, callerUrl) {
+          const valid = request !== null && typeof request === "object" && !Array.isArray(request)
+            && JSON.stringify(Object.keys(request).sort()) === JSON.stringify(REQUEST_KEYS)
+            && MODES.includes(request.mode)
+            && typeof request.themePack === "string"
+            && INTENTS.includes(request.intent)
+            && FIELDS.includes(request.field);
+          if (!valid) throw "invalid args `request` for command `update_appearance`: invalid request shape";
+          if (callerUrl !== undefined) authorize(callerUrl);
+          if (!availableThemePacks.includes(request.themePack)) throw commandError("invalid_theme_pack");
+          if (request.intent === "legacy_candidate") {
+            if (state.configStatus === "missing") {
+              state.candidate = { origin: callerUrl === undefined ? location.origin : new URL(callerUrl).origin, appearance: { mode: request.mode, themePack: request.themePack } };
+              return {
+                appearance: { mode: request.mode, themePack: request.themePack },
+                authoritative: { ...defaults },
+                revision: null,
+                source: "legacy_candidate",
+                authoritativeSource: "default",
+              };
+            }
+            const current = envelope();
+            emit(current);
+            return current;
+          }
+          const base = state.stored ?? { ...defaults };
+          state.stored = { ...base, [request.field === "mode" ? "mode" : "themePack"]: request.field === "mode" ? request.mode : request.themePack };
+          state.configStatus = "valid";
+          state.candidate = null;
+          saves += 1;
+          state.revision = `rev:saved-${saves}`;
+          const result = envelope();
+          emit(result);
+          return result;
+        },
+      };
+    }
+
+    const liveStub = createAppearanceStub({ configStatus: "missing" }, (payload) => {
+      for (const listener of listeners.get("ccresdoc://appearance") ?? []) listener({ payload });
+    });
+    window.__ccresdocStubSnapshot = () => clone({ ...liveStub.state });
+
+    window.__ccresdocStubSelfCheck = (fixtureArg) => {
+      const mismatches = [];
+      const resolveRevision = (value, inputRevision, constants) => {
+        if (value === constants.revisionPlaceholders.stored) return inputRevision;
+        return value;
+      };
+      for (const row of fixtureArg.rows.filter((candidate) => candidate.parity === "rust+stub")) {
+        const events = [];
+        const stub = createAppearanceStub(row.input, (payload) => events.push(clone(payload)));
+        const before = clone(stub.state);
+        const fail = (reason) => mismatches.push({ row: row.name, reason });
+        let result;
+        let thrown;
+        try {
+          result = stub.update(clone(row.request), row.input.availableThemePacks, `${row.input.callerOrigin}${fixtureArg.constants.callerPath}`);
+        } catch (error) {
+          thrown = error;
+        }
+        if ("error" in row.expect) {
+          const code = typeof thrown === "string" ? "invalid_args" : thrown?.code;
+          if (thrown === undefined) fail(`expected error ${row.expect.error} but the call resolved`);
+          else if (code !== row.expect.error) fail(`expected error ${row.expect.error}, got ${code}`);
+          if (JSON.stringify(stub.state) !== JSON.stringify(before)) fail("error row changed stub state");
+          if (events.length > 0) fail("error row emitted an event");
+          continue;
+        }
+        if (thrown !== undefined) {
+          fail(`unexpected rejection ${JSON.stringify(thrown)}`);
+          continue;
+        }
+        const expected = row.expect;
+        const expectedEnvelope = { ...expected.envelope };
+        const placeholders = fixtureArg.constants.revisionPlaceholders;
+        if (expectedEnvelope.revision === placeholders.afterSave) {
+          if (result.revision === null || result.revision === row.input.revision) fail(`revision must be non-null and differ from ${row.input.revision}`);
+          expectedEnvelope.revision = result.revision;
+        } else {
+          expectedEnvelope.revision = resolveRevision(expectedEnvelope.revision, row.input.revision, fixtureArg.constants);
+        }
+        if (JSON.stringify(result) !== JSON.stringify(expectedEnvelope)) {
+          fail(`envelope mismatch: expected ${JSON.stringify(expectedEnvelope)}, got ${JSON.stringify(result)}`);
+        }
+        if (expected.emitsEvent !== events.length > 0) fail(`emitsEvent expected ${expected.emitsEvent}, got ${events.length} event(s)`);
+        if (expected.emitsEvent && JSON.stringify(events[0]) !== JSON.stringify(result)) fail("event payload differs from the returned envelope");
+        if (JSON.stringify(stub.state.candidate) !== JSON.stringify(expected.candidateAfter)) {
+          fail(`candidateAfter expected ${JSON.stringify(expected.candidateAfter)}, got ${JSON.stringify(stub.state.candidate)}`);
+        }
+        if (JSON.stringify(stub.state.stored) !== JSON.stringify(expected.storedAfter)) {
+          fail(`storedAfter expected ${JSON.stringify(expected.storedAfter)}, got ${JSON.stringify(stub.state.stored)}`);
+        }
+        if (JSON.stringify(stub.state.preview) !== JSON.stringify(before.preview)) fail("update_appearance must not change the preview");
+      }
+      return mismatches;
+    };
+
     window.__TAURI__ = {
       core: {
         invoke: async (command, args) => {
@@ -457,20 +613,9 @@ async function installTauriHarness(context) {
           // AppearanceBridge routes every theme change through update_appearance and
           // reverts the DOM to the last authoritative value when the call rejects, so
           // a stub returning undefined makes the theme toggle silently snap back.
-          // Shape mirrors Rust's AppearanceEnvelope (src-tauri/src/appearance.rs).
           if (command === "update_appearance") {
-            const request = args?.request ?? {};
-            appearance = {
-              mode: request.mode ?? appearance.mode,
-              themePack: request.themePack ?? appearance.themePack,
-            };
-            return {
-              appearance: { ...appearance },
-              authoritative: { ...appearance },
-              revision: null,
-              source: "authoritative",
-              authoritativeSource: "authoritative",
-            };
+            const packs = Object.keys(window.__zudoDocThemePacks?.packs ?? {});
+            return liveStub.update(args?.request, [...new Set(["default", ...packs])]);
           }
           return undefined;
         },
@@ -484,7 +629,65 @@ async function installTauriHarness(context) {
         },
       },
     };
-  });
+  }, fixture);
+}
+
+async function assertStubSelfCheck(page, origin) {
+  await openPage(page, origin, appRoutes.root);
+  const fixture = readAppearanceFixture();
+  const mismatches = await page.evaluate((fixtureArg) => window.__ccresdocStubSelfCheck(fixtureArg), fixture);
+  assert.deepEqual(mismatches, [], `update_appearance stub deviates from the shared transition table: ${JSON.stringify(mismatches, null, 2)}`);
+  const applicable = fixture.rows.filter((row) => row.parity === "rust+stub").length;
+  assert(applicable > 0, "the transition table must contain rust+stub rows");
+}
+
+async function assertLegacyCandidateBootstrap(browser, origin) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await installTauriHarness(context);
+  const seeded = { mode: "dark", themePack: "default" };
+  await context.addInitScript((seed) => {
+    if (sessionStorage.getItem("__ccresdocBootstrapSeeded") === null) {
+      localStorage.setItem("zudo-doc-theme", seed.mode);
+      localStorage.setItem("zudo-doc-theme-pack", seed.themePack);
+      sessionStorage.setItem("__ccresdocBootstrapSeeded", "1");
+    }
+    window.__CCRESDOC_APPEARANCE__ = {
+      mode: seed.mode,
+      themePack: seed.themePack,
+      effectiveMode: "dark",
+      revision: null,
+      source: "legacy_candidate",
+      origin: location.origin,
+    };
+  }, seeded);
+  const page = await context.newPage();
+  try {
+    await openPage(page, origin, appRoutes.root);
+    await page.waitForFunction(
+      () => window.__ccresdocTauriCalls.some(({ command }) => command === "update_appearance"),
+      undefined,
+      { timeout: browserTimeoutMs },
+    );
+    await page.waitForFunction(() => window.__ccresdocStubSnapshot().candidate !== null, undefined, { timeout: browserTimeoutMs });
+    await delay(250);
+    const result = await page.evaluate(() => ({
+      calls: window.__ccresdocTauriCalls.filter(({ command }) => command === "update_appearance"),
+      storage: {
+        mode: localStorage.getItem("zudo-doc-theme"),
+        themePack: localStorage.getItem("zudo-doc-theme-pack"),
+      },
+      snapshot: window.__ccresdocStubSnapshot(),
+    }));
+    assert(
+      result.calls.some(({ args }) => args?.request?.intent === "legacy_candidate"),
+      `the bridge must report the legacy candidate through update_appearance, got ${JSON.stringify(result.calls)}`,
+    );
+    assert.deepEqual(result.storage, seeded, "reporting a legacy candidate must leave pre-seeded storage unchanged");
+    assert.equal(result.snapshot.stored, null, "a legacy-candidate report must not create stored config");
+    assert.deepEqual(result.snapshot.candidate?.appearance, seeded, "the stub must hold the reported candidate");
+  } finally {
+    await context.close();
+  }
 }
 
 async function waitForToolbar(page) {
@@ -1500,6 +1703,7 @@ async function run() {
       await installTauriHarness(context);
       const page = await context.newPage();
       try {
+        await assertStubSelfCheck(page, server.origin);
         await assertHistorySurface(page, server.origin);
         await assertReloadAndPageshow(page, server.origin);
         await assertFindSurface(page);
@@ -1519,6 +1723,7 @@ async function run() {
       } finally {
         await context.close();
       }
+      await assertLegacyCandidateBootstrap(browser, server.origin);
       await assertCoarseTargets(browser, server.origin);
       await assertBrowserOnly(browser, server.origin);
       console.log(JSON.stringify({
