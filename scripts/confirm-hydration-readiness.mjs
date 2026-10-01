@@ -483,8 +483,8 @@ async function runBrowserSurface({ context, page, diagnostics, reloadGuard, base
     return performance.now();
   });
   if (transition.missingSince !== null) transition.missingMs = Math.max(transition.missingMs, nowMs - transition.missingSince);
-  assert(transition.missingMs <= 50, `pending treatment remained visible for ${transition.missingMs}ms`);
-  assert(transition.missingFrames <= 3, `pending treatment spanned ${transition.missingFrames} animation frames`);
+  assert(transition.missingMs <= 50, `pending treatment remained visible for ${transition.missingMs}ms\n${await diagnostics.dump()}`);
+  assert(transition.missingFrames <= 3, `pending treatment spanned ${transition.missingFrames} animation frames\n${await diagnostics.dump()}`);
 
   const postSwapTheme = await page.locator("html").getAttribute("data-theme");
   const postSwapToggle = page.locator('[data-zfb-island="ThemeToggle"] button').first();
@@ -499,9 +499,9 @@ async function runBrowserSurface({ context, page, diagnostics, reloadGuard, base
   await page.locator('[data-zfb-island="ThemePackSwitcher"] [data-switcher-card][role="dialog"]').waitFor({ state: "visible", timeout: 5_000 });
 
   const finalModuleFailures = [...moduleRequests.values()].filter((record) => record.status === null || record.status < 200 || record.status >= 300);
-  assert.equal(failedRequests.length, 0, `router swap produced failed module requests: ${JSON.stringify(failedRequests)}`);
-  assert.equal(finalModuleFailures.length, 0, `router swap produced non-2xx module requests: ${JSON.stringify(finalModuleFailures)}`);
-  assert.equal(mainDocumentRequests.length, 1, `router swap must not trigger a second document navigation: ${mainDocumentRequests}`);
+  assert.equal(failedRequests.length, 0, `router swap produced failed module requests: ${JSON.stringify(failedRequests)}\n${await diagnostics.dump()}`);
+  assert.equal(finalModuleFailures.length, 0, `router swap produced non-2xx module requests: ${JSON.stringify(finalModuleFailures)}\n${await diagnostics.dump()}`);
+  assert.equal(mainDocumentRequests.length, 1, `router swap must not trigger a second document navigation: ${mainDocumentRequests}\n${await diagnostics.dump()}`);
   await reloadGuard.assertNoReloadSince("client-router swap");
   assertNoUnexpectedWorkspaceProcesses(workspace);
   await context.close();
