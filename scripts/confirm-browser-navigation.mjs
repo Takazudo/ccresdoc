@@ -25,6 +25,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { guardDocumentReloads, readPlantedState, recordDiagnostics, waitForDevSettled } from "./browser-harness.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appRoot = join(repoRoot, "app");
@@ -768,10 +769,29 @@ async function assertEditingTargetSuppression(page) {
 }
 
 async function assertHistorySurface(page, origin) {
+  // The guard must precede the first page.goto so every document is tokenised.
+  const diagnostics = await recordDiagnostics(page, origin);
+  const guard = await guardDocumentReloads(page, { diagnostics });
+  try {
+    await assertHistorySurfaceGuarded(page, origin, guard, diagnostics);
+  } finally {
+    guard.dispose();
+    await diagnostics.dispose();
+  }
+}
+
+async function assertHistorySurfaceGuarded(page, origin, guard, diagnostics) {
   await openPage(page, origin, appRoutes.root);
+  // zfb dev may still reload the document right after readiness; plant the
+  // trace only once the dev server has been quiet.
+  await waitForDevSettled(origin);
   await page.evaluate(() => {
     const shell = document.querySelector("[data-ccresdoc-browser-toolbar-shell]");
-    window.__ccresdocHistoryTrace = { shell, events: [] };
+    window.__ccresdocHistoryTrace = { events: [] };
+    Object.defineProperty(window.__ccresdocHistoryTrace, "shellPersisted", {
+      enumerable: true,
+      get: () => shell === document.querySelector("[data-ccresdoc-browser-toolbar-shell]"),
+    });
     for (const name of ["zfb:before-preparation", "zfb:after-swap", "zfb:page-load", "zfb:navigation-aborted", "popstate"]) {
       const target = name === "popstate" ? window : document;
       target.addEventListener(name, (event) => window.__ccresdocHistoryTrace.events.push({
@@ -782,6 +802,7 @@ async function assertHistorySurface(page, origin) {
       }));
     }
   });
+  await guard.checkpoint("history checks");
   const first = await managedHistory(page);
   assert(first.stored, "initial managed route must persist a browser-history record");
   assert.equal(first.stored?.boundary, first.stored?.current, "initial managed route starts at its boundary");
@@ -790,17 +811,23 @@ async function assertHistorySurface(page, origin) {
   const onFrameNavigated = (frame) => { if (frame === page.mainFrame()) navigations.push(frame.url()); };
   page.on("framenavigated", onFrameNavigated);
   try {
-    await Promise.allSettled([command(page, "back").click(), command(page, "back").click()]);
+    // Back is asserted disabled above; a forced click lands on the disabled
+    // control without waiting out Playwright's actionability timeout.
+    await command(page, "back").click({ force: true, timeout: 2_000 });
+    await command(page, "back").click({ force: true, timeout: 2_000 });
     await waitForPath(page, appRoutes.root);
     assert(navigations.every((url) => url.startsWith(origin)), `Back exposed a foreign/loading navigation: ${navigations}`);
 
     await routeViaHeader(page, appRoutes.claude);
     await routeViaHeader(page, appRoutes.codex);
     const routedHistory = await managedHistory(page);
-    const historyTrace = await page.evaluate(() => ({
-      shellPersisted: window.__ccresdocHistoryTrace.shell === document.querySelector("[data-ccresdoc-browser-toolbar-shell]"),
-      events: window.__ccresdocHistoryTrace.events,
-    }));
+    const planted = await readPlantedState(page, "__ccresdocHistoryTrace", { diagnostics });
+    if (!planted.present) {
+      await guard.assertNoReloadSince("history checks");
+      throw new Error(`unexpected document reload during history checks: __ccresdocHistoryTrace is absent\n${await diagnostics.dump()}`);
+    }
+    const historyTrace = planted.value;
+    await guard.assertNoReloadSince("history checks");
     assert.equal(
       await command(page, "back").isDisabled(),
       false,
@@ -808,6 +835,7 @@ async function assertHistorySurface(page, origin) {
     );
     await pressShortcut(page, "Mod+[");
     await waitForPath(page, appRoutes.claude);
+    await guard.assertNoReloadSince("history checks");
     // popstate updates the URL/path before zfb:page-load settles the managed
     // traversal. Wait for the exposed Forward affordance instead of racing
     // that intentional traversal lock with the opposite shortcut.
@@ -845,6 +873,8 @@ async function assertHistorySurface(page, origin) {
       throw new Error(`Forward shortcut did not traverse: ${JSON.stringify({ beforeForward, forwardDisabled, diagnostic, history: await managedHistory(page) })}`, { cause: error });
     }
 
+    await guard.assertNoReloadSince("history checks");
+
     // C → Back to B → D (Home) creates a new branch. Forward must remain
     // disabled, and the old C entry must not become reachable again.
     await pressShortcut(page, "Mod+[");
@@ -854,9 +884,11 @@ async function assertHistorySurface(page, origin) {
     await waitForPath(page, appRoutes.root);
     assert.equal(await command(page, "forward").isDisabled(), true, "Forward is disabled after a new branch");
     const branchPath = page.url();
-    await Promise.allSettled([command(page, "forward").click(), pressShortcut(page, "Mod+]")]);
+    await command(page, "forward").click({ force: true, timeout: 2_000 });
+    await pressShortcut(page, "Mod+]");
     await delay(100);
     assert.equal(page.url(), branchPath, "the superseded C entry is unreachable after branching");
+    await guard.assertNoReloadSince("history checks");
 
     // A second generation starts a fresh managed boundary at the current
     // route; it never inherits a Back affordance from the old runtime.
