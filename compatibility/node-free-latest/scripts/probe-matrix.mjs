@@ -24,7 +24,7 @@ for (const variant of variants) {
     filter: (source) => !["node_modules", "dist", ".zfb", ".zfb-build"].includes(source.split(/[\\/]/).at(-1)),
   });
   if (variant === "wholesale") {
-    // pages/docs/probe.tsx collides with the injected /docs catch-all route (zfb >= 2.18 validates routes before bundling); removed in the temp copy only so wholesale reaches the bundler.
+    // pages/docs/probe.tsx collides with the injected /docs catch-all route (zfb >= 2.18 validates routes before bundling); removed in the temp copy only so no failure comes from the fixture.
     rmSync(join(workspace, "pages", "docs", "probe.tsx"));
     // probe.mdx relies on the ProbeCounter component supplied by that host page; keep frontmatter and plain text so the catch-all renders a real doc page.
     writeFileSync(join(workspace, "src", "content", "docs", "probe.mdx"), "---\ntitle: Collection probe\nsidebar_position: 1\n---\n\nPlain collection content.\n");
