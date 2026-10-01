@@ -39,6 +39,7 @@ import {
   assertRuntimeRenderedPrivacy,
   assertRuntimeWorkspacePrivacy,
 } from "./runtime-workspace-files.mjs";
+import { guardDocumentReloads, readPlantedState, recordDiagnostics, waitForDevSettled } from "./browser-harness.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appRoot = join(repoRoot, "app");
@@ -360,9 +361,31 @@ async function waitForHostReady(oraclePage, child, samples, workspace) {
   throw new Error(`timed out waiting for independent host readiness after ${readyTimeoutMs}ms`);
 }
 
+// zudo-doc 5.28 renders ThemeToggle as an Appearance menu (aria-haspopup),
+// so a trigger click only opens it; the theme changes on picking a menuitemradio.
+async function chooseOppositeTheme(page, trigger, currentTheme) {
+  await trigger.click();
+  const label = currentTheme === "dark" ? "Light" : "Dark";
+  await page.getByRole("menuitemradio", { name: label }).click();
+}
+
 async function assertBrowserSurface(browser, firstReady, samples, workspace) {
   const context = await browser.newContext();
   const page = await context.newPage();
+  const docsUrl = `http://127.0.0.1:${port}/docs/`;
+  const baseUrl = `http://127.0.0.1:${port}/`;
+  // Installed before the first goto so every document gets the identity token.
+  const diagnostics = await recordDiagnostics(page, baseUrl);
+  const reloadGuard = await guardDocumentReloads(page, { diagnostics });
+  try {
+    return await runBrowserSurface({ context, page, diagnostics, reloadGuard, baseUrl, docsUrl, firstReady, samples, workspace });
+  } finally {
+    reloadGuard.dispose();
+    await diagnostics.dispose();
+  }
+}
+
+async function runBrowserSurface({ context, page, diagnostics, reloadGuard, baseUrl, docsUrl, firstReady, samples, workspace }) {
   const mainDocumentRequests = [];
   const moduleRequests = new Map();
   const failedRequests = [];
@@ -384,7 +407,6 @@ async function assertBrowserSurface(browser, firstReady, samples, workspace) {
     }
   });
 
-  const docsUrl = `http://127.0.0.1:${port}/docs/`;
   await page.goto(docsUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
   await page.waitForFunction(
     () => document.documentElement.hasAttribute("data-ccresdoc-load-controls-ready"),
@@ -398,9 +420,13 @@ async function assertBrowserSurface(browser, firstReady, samples, workspace) {
   assert.equal(moduleFailures.length, 0, `module entry/chunk response was not 2xx: ${JSON.stringify(moduleFailures)}`);
   assert(moduleRequests.size > 0, "WebKit did not request an island module entry");
 
+  // Settle only after the cold-start assertions above, so the earliest-ready
+  // check is not weakened by waiting first.
+  await waitForDevSettled(baseUrl);
+
   const initialTheme = await page.locator("html").getAttribute("data-theme");
   const themeToggle = page.locator('[data-zfb-island="ThemeToggle"] button').first();
-  await themeToggle.click();
+  await chooseOppositeTheme(page, themeToggle, initialTheme);
   await page.waitForFunction(
     (before) => document.documentElement.getAttribute("data-theme") !== before,
     initialTheme,
@@ -433,6 +459,7 @@ async function assertBrowserSurface(browser, firstReady, samples, workspace) {
     };
     requestAnimationFrame(sample);
   });
+  await reloadGuard.checkpoint("client-router swap");
   const target = page.locator('a[href*="/docs/hydration-pages/page-001/"]').first();
   await target.waitFor({ state: "visible", timeout: 5_000 });
   await target.click();
@@ -443,18 +470,25 @@ async function assertBrowserSurface(browser, firstReady, samples, workspace) {
     { timeout: 15_000 },
   );
   await delay(100);
-  const transition = await page.evaluate(() => {
+  const planted = await readPlantedState(page, "__ccresdocHydrationSamples", { diagnostics });
+  if (!planted.present) {
+    throw new Error(
+      `router swap must not trigger a second document navigation: transition sampler missing after swap: ${mainDocumentRequests}\n${await diagnostics.dump()}`,
+    );
+  }
+  const transition = planted.value;
+  const nowMs = await page.evaluate(() => {
     const state = (window).__ccresdocHydrationSamples;
-    state.stopped = true;
-    if (state.missingSince !== null) state.missingMs = Math.max(state.missingMs, performance.now() - state.missingSince);
-    return state;
+    if (state) state.stopped = true;
+    return performance.now();
   });
+  if (transition.missingSince !== null) transition.missingMs = Math.max(transition.missingMs, nowMs - transition.missingSince);
   assert(transition.missingMs <= 50, `pending treatment remained visible for ${transition.missingMs}ms`);
   assert(transition.missingFrames <= 3, `pending treatment spanned ${transition.missingFrames} animation frames`);
 
   const postSwapTheme = await page.locator("html").getAttribute("data-theme");
   const postSwapToggle = page.locator('[data-zfb-island="ThemeToggle"] button').first();
-  await postSwapToggle.click();
+  await chooseOppositeTheme(page, postSwapToggle, postSwapTheme);
   await page.waitForFunction(
     (before) => document.documentElement.getAttribute("data-theme") !== before,
     postSwapTheme,
@@ -468,6 +502,7 @@ async function assertBrowserSurface(browser, firstReady, samples, workspace) {
   assert.equal(failedRequests.length, 0, `router swap produced failed module requests: ${JSON.stringify(failedRequests)}`);
   assert.equal(finalModuleFailures.length, 0, `router swap produced non-2xx module requests: ${JSON.stringify(finalModuleFailures)}`);
   assert.equal(mainDocumentRequests.length, 1, `router swap must not trigger a second document navigation: ${mainDocumentRequests}`);
+  await reloadGuard.assertNoReloadSince("client-router swap");
   assertNoUnexpectedWorkspaceProcesses(workspace);
   await context.close();
   return {
