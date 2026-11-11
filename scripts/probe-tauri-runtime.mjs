@@ -20,6 +20,7 @@ import {
   assertRuntimeRenderedPrivacy,
   assertRuntimeWorkspacePrivacy,
 } from "./runtime-workspace-files.mjs";
+import { waitForEmptyGroup } from "./lib/process-group.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const stagedRoot = join(repoRoot, "src-tauri", "runtime-workspace");
@@ -31,7 +32,6 @@ const probeRoot = mkdtempSync(join(tmpdir(), "ccresdoc-tauri-runtime-"));
 const workspace = join(probeRoot, "app-workspace");
 const sentinelDir = join(probeRoot, "sentinel-bin");
 const sentinelLog = join(probeRoot, "node-invocations.log");
-const processSamples = [];
 let renderedPrivacyResponses = 0;
 let processSampleFailure;
 const port = 4892;
@@ -62,6 +62,26 @@ if (process.platform === "win32") {
 } else {
   const quotedLog = `'${sentinelLog.replaceAll("'", `'"'"'`)}'`;
   writeFileSync(sentinel, `#!/bin/sh\nprintf '%s\\n' "$*" >> ${quotedLog}\nexit 97\n`, { mode: 0o755 });
+}
+
+// Named HTML entities in headings exercise zudo-doc's extract-headings, which
+// is the staged parse5 edge. The page exists only in this temporary copy.
+const entityPage = join(workspace, "src", "content", "docs", "entity-headings-probe.mdx");
+writeFileSync(entityPage, [
+  "---", "title: Entity headings probe", "sidebar_position: 50", "---", "",
+  "## Tom &amp; Jerry &copy; 2026 &hellip; done", "", "Body.", "",
+  "### Less &lt;than&gt; more", "",
+].join("\n"));
+
+async function assertEntityHeadings() {
+  const body = await fetchUntil("/docs/entity-headings-probe/", "Tom &amp; Jerry");
+  assertRenderedPrivacy("/docs/entity-headings-probe/", body);
+  const h2 = body.match(/<h2 id="([^"]+)"[^>]*>Tom &amp; Jerry © 2026 … done</);
+  assert.ok(h2, "h2 must decode each named entity exactly once");
+  assert.match(body, /<h3 id="[^"]+"[^>]*>Less &lt;than&gt; more</, "h3 must keep escaped angle brackets as text");
+  assert.doesNotMatch(body, /&amp;(?:amp|copy|hellip|lt|gt);/, "no entity may be double-escaped");
+  assert.match(body, /&quot;text&quot;:&quot;Tom &amp; Jerry © 2026 … done&quot;/, "the TOC payload must carry the decoded heading text");
+  assert.ok(body.includes(`href="#${h2[1]}"`), "the TOC must link to the rendered heading id");
 }
 
 const binary = join(workspace, "node_modules", ...manifest.hostPackage.split("/"), process.platform === "win32" ? "zfb.exe" : "zfb");
@@ -127,7 +147,6 @@ function sampleProcesses(child) {
   if (process.platform === "win32") return [];
   const result = spawnSync("ps", ["-eo", "pid=,ppid=,pgid=,args="], { encoding: "utf8" });
   const rows = result.stdout.split("\n").filter((line) => line.includes(workspace) || line.match(new RegExp(`^\\s*${child.pid}\\s`)));
-  processSamples.push(...rows.map((row) => row.replaceAll(workspace, "<workspace>").replace(/\s+/g, " ").trim()));
   assert.equal(rows.some((row) => /plugin-host\.mjs|\/node(?:\s|$)/.test(row)), false, rows.join("\n"));
   return rows;
 }
@@ -202,10 +221,12 @@ async function stop(child) {
     }
     await child.exited;
   }
-  await delay(250);
   if (process.platform !== "win32") {
-    const tree = spawnSync("ps", ["-eo", "pid=,ppid=,pgid=,args="], { encoding: "utf8" }).stdout;
-    assert.equal(tree.includes(workspace), false, `workspace process survived shutdown:\n${tree}`);
+    const survivors = await waitForEmptyGroup(child.pid);
+    assert.deepEqual(survivors, [], "every process in the zfb group, including compiler workers, must exit");
+    const tree = spawnSync("ps", ["-eo", "pid=,ppid=,pgid=,stat=,args="], { encoding: "utf8" }).stdout;
+    const escaped = tree.split("\n").filter((line) => line.includes(workspace) && !/^\s*\d+\s+\d+\s+\d+\s+Z/.test(line));
+    assert.deepEqual(escaped, [], "no live workspace process may survive shutdown");
   }
   await assertPortReleased("after process-group teardown");
 }
@@ -287,10 +308,11 @@ async function runOnce({ hmr }) {
     assert.ok(headerNav, "docs shell must include a header nav element");
     assert.match(headerNav[1], /Claude/);
     assert.match(headerNav[1], /Codex/);
-    assert.match(docs, /data-theme-pack(?:=default|=\"default\")/, "docs shell must bootstrap the default theme pack");
+    assert.match(docs, /data-theme-pack(?:=classic|=\"classic\")/, "docs shell must bootstrap the classic theme pack");
     assert.match(docs, /data-zfb-island(?:=ThemePackSwitcher|=\"ThemePackSwitcher\")/, "docs shell must hydrate the theme-pack switcher");
     assert.match(docs, /data-zd-theme-pack-loading|zudo-doc-theme-pack/, "docs shell must include no-flash theme bootstrap");
     await assertThemeAssetParity();
+    await assertEntityHeadings();
     const missing = await fetch(`http://127.0.0.1:${port}/definitely-missing/`);
     assert.equal(missing.status, 404, "missing routes must return the host-owned 404 response");
     assertRenderedPrivacy("/definitely-missing/", await missing.text());
@@ -360,12 +382,13 @@ try {
     status: "passed",
     port,
     launches: 2,
-    routes: ["/", "/docs/", "/definitely-missing/"],
+    routes: ["/", "/docs/", "/docs/entity-headings-probe/", "/definitely-missing/"],
+    entityHeadingsDecodedOnce: true,
     hmr: true,
     refreshToken: manifest.refreshToken,
     resolvedPluginDescriptors: 0,
     nodeSentinelInvocations: 0,
-    processSamples: processSamples.length,
+    nodeHostObserved: false,
     renderedPrivacyResponses,
     privacyAudit,
     processGroupShutdown: true,

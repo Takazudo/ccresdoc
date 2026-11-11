@@ -54,6 +54,11 @@ export const ZUDO_DOC_PATCH = Object.freeze({
   hash: "d6f52919667c2478934b2e35714e18220341dfd939c9b4f8f9a6317e0de2e5c9",
 });
 
+// zudo-doc dependencies reachable from the package exports the app imports
+// (route-context -> extract-headings -> parse5). Every other zudo-doc
+// dependency serves its Node CLI or disabled plugins and is not staged.
+export const ZUDO_DOC_RUNTIME_DEPENDENCIES = Object.freeze(["parse5"]);
+
 // Packages a migrated scope must not declare directly.
 export const FORBIDDEN_DIRECT_DEPENDENCIES = Object.freeze([
   "@takazudo/zfb-adapter-cloudflare",

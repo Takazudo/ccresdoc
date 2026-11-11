@@ -25,6 +25,7 @@ import {
   copyGeneratedThemePacks,
   copyRuntimeApp,
 } from "./runtime-workspace-files.mjs";
+import { ZUDO_DOC_RUNTIME_DEPENDENCIES } from "./lib/toolchain-contract.mjs";
 import {
   RUNTIME_WORKSPACE_DIGEST_ALGORITHM,
   refreshTokenFromWorkspaceDigest,
@@ -81,15 +82,19 @@ while (packageQueue.length > 0) {
   const manifest = JSON.parse(readFileSync(join(source, "package.json"), "utf8"));
   packages.set(name, { source, version: manifest.version });
 
-  // zudo-doc's declared dependencies power its Node CLI/scaffolding and its
-  // disabled plugin hosts. The selected configuration uses package exports,
-  // CSS and Preact components only; the staged-copy runtime probe is the gate
-  // that makes this edge-level pruning safe.
-  const dependencies = name === "@takazudo/zudo-doc" ? {} : manifest.dependencies ?? {};
+  // zudo-doc's declared dependencies mostly power its Node CLI/scaffolding and
+  // its disabled plugin hosts. Only the edges in ZUDO_DOC_RUNTIME_DEPENDENCIES
+  // are reached from the package exports the app imports; the staged-copy
+  // runtime probe is the gate that makes this edge-level pruning safe.
+  let dependencies = manifest.dependencies ?? {};
   if (name === "@takazudo/zudo-doc") {
-    for (const dependency of Object.keys(manifest.dependencies ?? {})) {
-      skippedZudoDocBuildOnly.add(dependency);
+    for (const required of ZUDO_DOC_RUNTIME_DEPENDENCIES) {
+      assert(Object.hasOwn(dependencies, required), `zudo-doc no longer declares runtime dependency: ${required}`);
     }
+    for (const dependency of Object.keys(dependencies)) {
+      if (!ZUDO_DOC_RUNTIME_DEPENDENCIES.includes(dependency)) skippedZudoDocBuildOnly.add(dependency);
+    }
+    dependencies = Object.fromEntries(ZUDO_DOC_RUNTIME_DEPENDENCIES.map((dependency) => [dependency, dependencies[dependency]]));
   }
   for (const dependency of Object.keys(dependencies)) packageQueue.push(dependency);
 

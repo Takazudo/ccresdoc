@@ -6,6 +6,11 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  FORBIDDEN_DIRECT_DEPENDENCIES,
+  RUNTIME_DEPENDENCIES,
+  ZUDO_DOC_RUNTIME_DEPENDENCIES,
+} from "./lib/toolchain-contract.mjs";
+import {
   RUNTIME_APP_FILES,
   assertAllowlistedInventory,
   assertRuntimeWorkspacePrivacy,
@@ -79,17 +84,14 @@ assert.equal(runtimePackageJson.devDependencies, undefined, "staged package.json
 assert.deepEqual(Object.keys(runtimePackageJson.optionalDependencies), [manifest.hostPackage]);
 
 for (const required of [
-  "@takazudo/zfb",
-  "@takazudo/zfb-md-wasm",
-  "@takazudo/zfb-runtime",
-  "@takazudo/zudo-doc",
-  "preact",
-  "preact-render-to-string",
-  "zod",
-  "katex",
+  ...Object.keys(RUNTIME_DEPENDENCIES),
+  ...ZUDO_DOC_RUNTIME_DEPENDENCIES,
   manifest.hostPackage,
 ]) {
   assert(names.has(required), `required runtime package was not staged: ${required}`);
+}
+for (const forbidden of FORBIDDEN_DIRECT_DEPENDENCIES) {
+  assert(!names.has(forbidden), `forbidden package was staged: ${forbidden}`);
 }
 
 const binary = join(stageRoot, manifest.nativeBinary);

@@ -3,10 +3,11 @@ import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writ
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { resolveNativeBinary, probeRoot } from "./native-binary.mjs";
 import { createSseParser } from "../../../scripts/lib/sse-parser.mjs";
+import { liveGroupMembers, waitForEmptyGroup } from "../../../scripts/lib/process-group.mjs";
 
 const stateDir = mkdtempSync(join(tmpdir(), "ccresdoc-node-free-probe-"));
 const sentinelDir = join(stateDir, "sentinel-bin");
@@ -95,7 +96,6 @@ const childExit = new Promise((resolve) => {
 });
 
 let serverLog = "";
-let processTreeChildren = [];
 const reloadController = new AbortController();
 child.stdout.on("data", (chunk) => { serverLog += chunk; });
 child.stderr.on("data", (chunk) => { serverLog += chunk; });
@@ -214,20 +214,15 @@ try {
   reloadController.abort();
   assert.equal(child.exitCode, null, serverLog);
 
+  // Evidence records semantic outcomes only. PIDs, row counts and which of the
+  // equivalent page/islands reload events arrived first vary between runs.
   if (process.platform !== "win32") {
-    const tree = spawnSync("ps", ["-eo", "pid=,ppid=,args="], { encoding: "utf8" });
-    writeFileSync(processLog, tree.stdout);
-    const descendants = tree.stdout.split("\n").filter((line) => line.includes(String(child.pid)) || line.includes(runtimeRoot));
-    assert.ok(descendants.some((line) => line.trimStart().startsWith(`${child.pid} `)), descendants.join("\n"));
-    assert.equal(descendants.some((line) => /plugin-host\.mjs/.test(line)), false, descendants.join("\n"));
-    processTreeChildren = descendants.map((line) => line
-      .replace(new RegExp(`${probeRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/node_modules/@takazudo/zfb-[^/\\s]+/zfb(?:\\.exe)?`, "g"), "<native-zfb>")
-      .replaceAll(runtimeRoot, "<isolated-workspace>")
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/^\d+ \d+ /, "<pid> <ppid> "));
+    const members = liveGroupMembers(child.pid);
+    writeFileSync(processLog, members.map(({ pid, stat, args }) => `${pid} ${stat} ${args}`).join("\n"));
+    assert.ok(members.some(({ pid }) => pid === child.pid), "the native zfb leader must own its process group");
+    assert.equal(members.some(({ args }) => /plugin-host\.mjs/.test(args)), false, "no Node plugin host may run");
+    assert.equal(members.some(({ args }) => /(?:^|\/)node(?:\s|$)/.test(args)), false, "no Node process may run");
   }
-
   await delay(750);
   assert.equal(readFileSync(sentinelLog, "utf8"), "");
   console.log(JSON.stringify({
@@ -236,16 +231,23 @@ try {
     docsRoute: "/docs/probe/",
     islandMarker: "ProbeCounter",
     contentHmrMarker: hmrMarker,
-    contentReloadEvent: reloadEvent,
+    contentReloadObserved: reloadEvent === "page" || reloadEvent === "islands",
     nodeSentinelInvocations: 0,
     fixedPortSerialized: true,
     portReleasedAfterTeardown: true,
-    processTreeSampled: process.platform !== "win32",
-    processTreeChildren,
+    processGroup: process.platform === "win32" ? "not-sampled-on-windows" : {
+      nativeZfbLeader: true,
+      nodePluginHost: false,
+      nodeProcess: false,
+    },
   }, null, 2));
 } finally {
   reloadController.abort();
   await stopChild();
+  if (process.platform !== "win32" && child.pid) {
+    const survivors = await waitForEmptyGroup(child.pid);
+    assert.deepEqual(survivors, [], "every process in the zfb group, including compiler workers, must exit on teardown");
+  }
   try {
     await new Promise((resolve, reject) => {
       const server = createServer();

@@ -4,12 +4,13 @@
   "docsRoute": "/docs/probe/",
   "islandMarker": "ProbeCounter",
   "contentHmrMarker": "HMR reached the native route at 4892.",
-  "contentReloadEvent": "page",
+  "contentReloadObserved": true,
   "nodeSentinelInvocations": 0,
   "fixedPortSerialized": true,
   "portReleasedAfterTeardown": true,
-  "processTreeSampled": true,
-  "processTreeChildren": [
-    "<pid> <ppid> <native-zfb> dev --port 4892"
-  ]
+  "processGroup": {
+    "nativeZfbLeader": true,
+    "nodePluginHost": false,
+    "nodeProcess": false
+  }
 }
