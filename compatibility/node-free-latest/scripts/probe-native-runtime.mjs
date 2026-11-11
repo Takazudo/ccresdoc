@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { resolveNativeBinary, probeRoot } from "./native-binary.mjs";
 import { createSseParser } from "../../../scripts/lib/sse-parser.mjs";
 import { liveGroupMembers, waitForEmptyGroup } from "../../../scripts/lib/process-group.mjs";
+import { CONTENT_RELOAD_EVENTS, nativeRuntimeEvidence, processGroupOutcome } from "./native-runtime-evidence.mjs";
 
 const stateDir = mkdtempSync(join(tmpdir(), "ccresdoc-node-free-probe-"));
 const sentinelDir = join(stateDir, "sentinel-bin");
@@ -185,7 +186,7 @@ try {
     let found = null;
     const parse = createSseParser((frame) => {
       observed.push(frame.event);
-      if (!found && (frame.event === "page" || frame.event === "islands")) found = frame.event;
+      if (!found && CONTENT_RELOAD_EVENTS.has(frame.event)) found = frame.event;
     });
     while (true) {
       const { done, value } = await reloadReader.read();
@@ -214,33 +215,15 @@ try {
   reloadController.abort();
   assert.equal(child.exitCode, null, serverLog);
 
-  // Evidence records semantic outcomes only. PIDs, row counts and which of the
-  // equivalent page/islands reload events arrived first vary between runs.
+  let processGroup = "not-sampled-on-windows";
   if (process.platform !== "win32") {
     const members = liveGroupMembers(child.pid);
     writeFileSync(processLog, members.map(({ pid, stat, args }) => `${pid} ${stat} ${args}`).join("\n"));
-    assert.ok(members.some(({ pid }) => pid === child.pid), "the native zfb leader must own its process group");
-    assert.equal(members.some(({ args }) => /plugin-host\.mjs/.test(args)), false, "no Node plugin host may run");
-    assert.equal(members.some(({ args }) => /(?:^|\/)node(?:\s|$)/.test(args)), false, "no Node process may run");
+    processGroup = processGroupOutcome(members, child.pid);
   }
   await delay(750);
   assert.equal(readFileSync(sentinelLog, "utf8"), "");
-  console.log(JSON.stringify({
-    status: "passed",
-    homeRoute: "/",
-    docsRoute: "/docs/probe/",
-    islandMarker: "ProbeCounter",
-    contentHmrMarker: hmrMarker,
-    contentReloadObserved: reloadEvent === "page" || reloadEvent === "islands",
-    nodeSentinelInvocations: 0,
-    fixedPortSerialized: true,
-    portReleasedAfterTeardown: true,
-    processGroup: process.platform === "win32" ? "not-sampled-on-windows" : {
-      nativeZfbLeader: true,
-      nodePluginHost: false,
-      nodeProcess: false,
-    },
-  }, null, 2));
+  console.log(JSON.stringify(nativeRuntimeEvidence({ hmrMarker, reloadEvent, processGroup }), null, 2));
 } finally {
   reloadController.abort();
   await stopChild();
