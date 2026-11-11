@@ -6,6 +6,7 @@ import { delimiter, join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { resolveNativeBinary, probeRoot } from "./native-binary.mjs";
+import { createSseParser } from "../../../scripts/lib/sse-parser.mjs";
 
 const stateDir = mkdtempSync(join(tmpdir(), "ccresdoc-node-free-probe-"));
 const sentinelDir = join(stateDir, "sentinel-bin");
@@ -176,13 +177,21 @@ try {
   // unhandled rejections when an earlier runtime assertion fails.
   const reloadEventPromise = (async () => {
     const decoder = new TextDecoder();
-    let transcript = "";
+    const observed = [];
+    let found = null;
+    const parse = createSseParser((frame) => {
+      observed.push(frame.event);
+      if (!found && (frame.event === "page" || frame.event === "islands")) found = frame.event;
+    });
     while (true) {
       const { done, value } = await reloadReader.read();
-      if (done) throw new Error(`reload stream ended before an event: ${transcript}`);
-      transcript += decoder.decode(value, { stream: true });
-      const match = transcript.match(/event:\s*(page|islands)\b/);
-      if (match) return match[1];
+      if (done) {
+        parse(decoder.decode());
+        const partial = parse.end();
+        throw new Error(`reload stream ended before a complete page/islands frame (observed: ${observed.join(", ") || "none"}${partial ? "; partial frame discarded" : ""})`);
+      }
+      parse(decoder.decode(value, { stream: true }));
+      if (found) return found;
     }
   })().then(
     (event) => ({ event }),
