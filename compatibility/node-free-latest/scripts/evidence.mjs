@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { collectPackageFacts } from "./package-facts.mjs";
 import { probeRoot } from "./native-binary.mjs";
-import { formatEvidenceDrift } from "./evidence-diff.mjs";
+import { formatEvidenceDrift, serializeEvidence } from "./evidence-diff.mjs";
 
 const mode = process.argv[2] ?? "--check";
 if (!["--check", "--refresh"].includes(mode)) {
@@ -40,7 +40,7 @@ const changed = [];
 const reports = [];
 for (const [name, value] of Object.entries(generated)) {
   const path = join(probeRoot, "evidence", name);
-  const normalized = `${JSON.stringify(value, null, 2)}\n`;
+  const normalized = serializeEvidence(value);
   if (mode === "--refresh") {
     writeFileSync(path, normalized);
   } else {
