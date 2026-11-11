@@ -116,7 +116,7 @@ Reload/Reapply, caller/navigation denial, and visual no-flash behavior.
 
 ## Resource selection, generation, and package privacy
 
-Schema version 1 has a `[resources]` table (`claude`, `codex`) and a `[source]`
+Schema version 2 has a `[resources]` table (`claude`, `codex`) and a `[source]`
 table (`claude_dir`, `codex_dir`). The compatibility defaults are Claude on and
 Codex off, but Claude-only, Codex-only, both-on, and both-off are all valid.
 The coordinator always keeps the permanent top-level headers at positions 899
@@ -189,13 +189,17 @@ boot-lazy neutralization, refresh/retry generations, workspace refresh tokens,
 native binary resolution, and process-group teardown.
 
 `pnpm b4push` is the repository's real ten-step sequence: zfb pin check; frozen
-app install and installed-tree validation; app typecheck/zfb check/Vitest; Rust
+app install and installed-tree validation; app typecheck/zfb check/Vitest and
+the Settings Node tests; Rust
 fmt; Linux-boundary clippy and tests with `--exclude ccresdoc`; native zfb build;
 the staged runtime digest/verification and serialized two-launch probe; the
 frozen compatibility evidence/package/config/check/build fixture; and the
 actual-key Chromium browser-navigation confirmation. Install Chromium before
-the local b4push run; CI provisions the pinned browser with `--with-deps` in a
-separate step. Theme-pack validation and its standalone Node test are explicit
+the local b4push run. CI strictly installs the pinned Chromium with
+`playwright install chromium`, then runs a separate best-effort
+`playwright install-deps chromium` step for Ubuntu system packages (a warning,
+not a failure); the browser-navigation step must still launch Chromium and
+pass. That apt step is Linux CI provisioning, not a macOS setup step. Theme-pack validation and its standalone Node test are explicit
 focused gates above and are not silently implied by b4push's Vitest step.
 
 The staged runtime gate is:

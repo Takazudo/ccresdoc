@@ -204,7 +204,9 @@ End users need nothing beyond the `.app` bundle. To develop or build from source
 - **Tauri CLI** — `cargo install tauri-cli` or `cargo binstall tauri-cli`
 - **pnpm** — used once at build time to install `app/node_modules` (incl. native `zfb` binary)
 
-The repository requires Node `>=22` and pnpm `>=10` for setup/build tooling.
+Setup/build tooling requires Node `>=24` and pnpm `10.30.3` (the exact
+`packageManager` pinned in the root, `app/`, and compatibility-fixture manifests
+and in `scripts/lib/toolchain-contract.mjs`).
 
 ## Develop
 
@@ -319,8 +321,10 @@ The final automated and host-only acceptance matrix is documented in
 
 GitHub Actions runs frozen published frontend dependency, type, zfb-check,
 Vitest, and native-build gates alongside a separately named actual-key
-Chromium browser-navigation step. CI installs the pinned Playwright Chromium
-with its Ubuntu dependencies before that ten-minute step. Rust runs
+Chromium browser-navigation step. Before that ten-minute step, CI strictly
+installs the pinned Playwright Chromium, then runs a separate best-effort
+`playwright install-deps chromium` for Ubuntu system packages; the browser step
+itself still fails if Chromium cannot launch. Rust runs
 `cargo fmt --check`, `cargo clippy --workspace --exclude ccresdoc`, and
 `cargo test --workspace --exclude ccresdoc`. The `ccresdoc` (src-tauri) crate is
 excluded because webkit2gtk is not available on ubuntu-latest.
@@ -332,12 +336,14 @@ pnpm b4push
 ```
 
 Runs all reliable cross-platform checks locally: frozen dependency install and
-validation, strict TypeScript, `zfb check`, Vitest, native zfb build, cargo fmt,
+validation, strict TypeScript, `zfb check`, Vitest, the Settings Node tests,
+native zfb build, cargo fmt,
 clippy/tests for the pure-Rust generator, the pruned node-free runtime lifecycle,
 the independent compatibility fixture, and actual-key Chromium browser
 navigation. Install the browser once with
-`pnpm --dir app exec playwright install chromium`. The `ccresdoc` Tauri crate is
-excluded from Linux clippy/test because it requires webkit2gtk/gtk3. A release
+`pnpm --dir app exec playwright install chromium`. b4push excludes the
+`ccresdoc` Tauri crate from clippy/test on every host, mirroring Linux CI where
+webkit2gtk/gtk3 is unavailable, so a passing b4push does not cover that crate. A release
 still requires the separate `scripts/test-macos-package.sh` macOS-arm64
 packaged app/WebView gate and the real-WebView visual checks listed in the
 verification matrix. A Linux run may validate staged static inputs and the
