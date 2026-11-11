@@ -35,7 +35,6 @@ export const APP_DEV_DEPENDENCIES = Object.freeze({
   "happy-dom": "21.0.4",
   playwright: "1.62.1",
   typescript: "5.9.2",
-  vite: "8.3.7",
   vitest: "4.1.12",
 });
 
