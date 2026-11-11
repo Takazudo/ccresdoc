@@ -19,10 +19,10 @@ function fixture() {
     light: { bg: "#fff", fg: "#000", accent: "#00f", syntax: { keyword: "#00f", string: "#080", comment: "#555", callable: "#008" } },
     dark: { bg: "#000", fg: "#fff", accent: "#88f", syntax: { keyword: "#88f", string: "#8f8", comment: "#aaa", callable: "#8ff" } },
   };
-  const defaultMeta = {
+  const classicMeta = {
     schemaVersion: 1,
-    slug: "default",
-    name: "Default",
+    slug: "classic",
+    name: "Classic",
     description: "No stylesheet.",
     mode: "dark",
     version: "1.0.0",
@@ -42,13 +42,13 @@ function fixture() {
   const manifest = {
     schemaVersion: 2,
     packs: [
-      { slug: "default", meta: defaultMeta, hasStylesheet: false },
+      { slug: "classic", meta: classicMeta, hasStylesheet: false },
       { slug: "ink", meta: inkMeta, hasStylesheet: true },
     ],
   };
-  mkdirSync(join(sourceRoot, "default"), { recursive: true });
+  mkdirSync(join(sourceRoot, "classic"), { recursive: true });
   mkdirSync(join(sourceRoot, "ink", "fonts"), { recursive: true });
-  writeFileSync(join(sourceRoot, "default", "meta.json"), JSON.stringify(defaultMeta));
+  writeFileSync(join(sourceRoot, "classic", "meta.json"), JSON.stringify(classicMeta));
   writeFileSync(join(sourceRoot, "ink", "meta.json"), JSON.stringify(inkMeta));
   writeFileSync(join(sourceRoot, "ink", "pack.css"), '@font-face { font-family: "Fixture"; src: url("./fonts/fixture.woff2") format("woff2"); }\n');
   writeFileSync(join(sourceRoot, "ink", "fonts", "fixture.woff2"), Buffer.from([0, 1, 2, 255]));
@@ -97,12 +97,12 @@ test("source validation rejects catalog drift and missing referenced fonts", () 
   assert.throws(() => syncThemePacks(options), /font referenced by pack "ink" is missing/);
 });
 
-test("default stays metadata-only and non-default packs require CSS", () => {
+test("stylesheetless packs ship no CSS and stylesheet packs require CSS", () => {
   const options = fixture();
-  writeFileSync(join(options.sourceRoot, "default", "pack.css"), "body {}\n");
-  assert.throws(() => syncThemePacks(options), /default.*metadata-only/);
+  writeFileSync(join(options.sourceRoot, "classic", "pack.css"), "body {}\n");
+  assert.throws(() => syncThemePacks(options), /pack "classic" declares hasStylesheet: false but ships pack.css/);
 
-  rmSync(join(options.sourceRoot, "default", "pack.css"));
+  rmSync(join(options.sourceRoot, "classic", "pack.css"));
   rmSync(join(options.sourceRoot, "ink", "pack.css"));
   assert.throws(() => syncThemePacks(options), /stylesheet is missing/);
 });
@@ -115,7 +115,7 @@ test("catalog v2 entry fields agree with the package metadata and assets", () =>
 
   const missingStylesheetFlag = structuredClone(options.manifest);
   missingStylesheetFlag.packs[1].hasStylesheet = false;
-  assert.throws(() => syncThemePacks({ ...options, manifest: missingStylesheetFlag }), /must declare hasStylesheet: true/);
+  assert.throws(() => syncThemePacks({ ...options, manifest: missingStylesheetFlag }), /pack "ink" declares hasStylesheet: false but ships pack.css/);
 
   const legacyCatalog = structuredClone(options.manifest);
   legacyCatalog.schemaVersion = 1;
@@ -157,4 +157,12 @@ test("validation rejects malformed metadata and font declarations", () => {
   writeFileSync(join(options.sourceRoot, "ink", "meta.json"), JSON.stringify(options.manifest.packs[1].meta));
   writeFileSync(join(options.sourceRoot, "ink", "pack.css"), '@font-face { font-family: "Other"; src: url("./fonts/fixture.woff2") }\n');
   assert.throws(() => syncThemePacks(options), /fonts.loaded has no matching @font-face: Fixture/);
+});
+
+test("the catalog must carry the configured classic pack", () => {
+  const options = fixture();
+  const withoutClassic = structuredClone(options.manifest);
+  withoutClassic.packs = withoutClassic.packs.filter((entry) => entry.slug !== "classic");
+  rmSync(join(options.sourceRoot, "classic"), { recursive: true });
+  assert.throws(() => syncThemePacks({ ...options, manifest: withoutClassic }), /missing the configured "classic" pack/);
 });
