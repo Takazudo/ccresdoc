@@ -27,7 +27,7 @@
     "resources": ["runtime-workspace/**/*"],
     "category": "DeveloperTool",
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": null
     }
   }
 }

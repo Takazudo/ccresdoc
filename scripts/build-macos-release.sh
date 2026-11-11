@@ -94,12 +94,16 @@ done
 [[ "$(uname -s)" == "Darwin" ]] || fail "requires macOS (Darwin)"
 [[ "$(uname -m)" == "arm64" ]] || fail "requires an Apple-silicon arm64 host"
 
-REQUIRED_TOOLS=(cargo pnpm node hdiutil codesign lipo shasum git find readlink stat open curl lsof osascript)
+REQUIRED_TOOLS=(cargo pnpm node hdiutil codesign lipo shasum git find readlink stat open curl lsof osascript sw_vers)
 if [[ -n "$UPLOAD_TAG" ]]; then REQUIRED_TOOLS+=(gh); fi
 for tool in "${REQUIRED_TOOLS[@]}"; do
   command -v "$tool" >/dev/null 2>&1 || fail "required tool not found: $tool"
 done
 [[ -x /usr/libexec/PlistBuddy ]] || fail "required tool not found: /usr/libexec/PlistBuddy"
+MINIMUM_MACOS="$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$REPO_ROOT/src-tauri/Info.plist" 2>/dev/null)" ||
+  fail "src-tauri/Info.plist does not declare LSMinimumSystemVersion"
+[[ "$(sw_vers -productVersion | cut -d. -f1)" -ge "${MINIMUM_MACOS%%.*}" ]] ||
+  fail "requires a macOS $MINIMUM_MACOS or later host to launch the packaged app"
 [[ -f "$PACKAGE_FACTS" ]] || fail "package facts not found: $PACKAGE_FACTS"
 if [[ "$(/usr/bin/osascript -e 'application id "com.takazudo.ccresdoc" is running' 2>/dev/null || true)" == "true" ]]; then
   fail "quit the existing CCResDoc instance before building a release artifact"
@@ -262,6 +266,7 @@ plist_value() { /usr/libexec/PlistBuddy -c "Print :$1" "$INFO_PLIST" 2>/dev/null
 [[ "$(plist_value CFBundleIdentifier)" == "$BUNDLE_ID" ]] || fail "mounted app has the wrong bundle identifier"
 [[ "$(plist_value CFBundleShortVersionString)" == "$VERSION" ]] || fail "mounted app has the wrong short version"
 [[ "$(plist_value CFBundleVersion)" == "$VERSION" ]] || fail "mounted app has the wrong bundle version"
+[[ "$(plist_value LSMinimumSystemVersion)" == "$MINIMUM_MACOS" ]] || fail "mounted app does not require macOS $MINIMUM_MACOS"
 
 APP_BINARY="$APP_PATH/Contents/MacOS/ccresdoc"
 RUNTIME_ROOT="$APP_PATH/Contents/Resources/runtime-workspace/app"

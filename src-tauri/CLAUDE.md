@@ -337,6 +337,13 @@ quit with only app-owned children reaped.
 
 ## Build-time wiring
 
+- **macOS floor**: `src-tauri/Info.plist` sets `LSMinimumSystemVersion` to
+  `27.0`, and `bundle.macOS.minimumSystemVersion` is `null`. A non-null value
+  also exports `MACOSX_DEPLOYMENT_TARGET` to the whole cargo build, and at 27.0
+  the host proc-macro dylibs fail to load with Xcode 27.2's linker. The binary
+  keeps rustc's default deployment target. `scripts/build-macos-release.sh`
+  reads the floor from that file, requires a host at or above it, and rejects a
+  mounted app with a different floor.
 - **`beforeBuildCommand`** runs a frozen app install, native `zfb build`, then
   `scripts/stage-runtime-workspace.mjs` from the repository root.
 - **`version.txt`** is generated from the full staged runtime tree and gates

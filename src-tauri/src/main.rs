@@ -2904,6 +2904,23 @@ mod tests {
     }
 
     #[test]
+    fn tauri_conf_leaves_the_macos_floor_to_the_merged_info_plist() {
+        let conf = read_tauri_conf();
+        assert!(
+            conf["bundle"]["macOS"]["minimumSystemVersion"].is_null(),
+            "minimumSystemVersion must stay null; a value is exported as MACOSX_DEPLOYMENT_TARGET to every crate"
+        );
+        let plist =
+            std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Info.plist"))
+                .expect("Failed to read Info.plist");
+        let compact: String = plist.split_whitespace().collect();
+        assert!(
+            compact.contains("<key>LSMinimumSystemVersion</key><string>27.0</string>"),
+            "Info.plist must require macOS 27.0"
+        );
+    }
+
+    #[test]
     fn tauri_conf_bundles_only_the_staged_runtime_workspace() {
         let conf = read_tauri_conf();
         let resources = conf["bundle"]["resources"].clone();

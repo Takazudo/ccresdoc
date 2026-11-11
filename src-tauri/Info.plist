@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- macOS floor lives here, not in minimumSystemVersion, which breaks the proc-macro build; see #330 -->
+<plist version="1.0">
+<dict>
+	<key>LSMinimumSystemVersion</key>
+	<string>27.0</string>
+</dict>
+</plist>

@@ -282,7 +282,7 @@ skill documents the separate existing-draft upload path.
 ## Install a release
 
 GitHub Releases is the canonical direct download for end users. The current
-artifact is Apple Silicon (`aarch64`) and is effectively macOS 11+:
+artifact is Apple Silicon (`aarch64`) and requires macOS 27 or later:
 `CCResDoc_<version>_aarch64.dmg` with its matching
 `CCResDoc_<version>_aarch64.dmg.sha256` file.
 
