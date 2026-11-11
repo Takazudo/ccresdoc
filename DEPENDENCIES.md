@@ -22,32 +22,20 @@ The repository root `package.json` declares no dependencies.
 
 ### Removed
 
-- **`vite` (app devDependency).** Nothing imports it: `app/vitest.config.ts` imports
-  `vitest/config`. vitest 4.1.12 resolves vite 8.3.7 on its own, so the lockfile
-  keeps the same version. This only tidies the declaration; the package count does
-  not change. Do not add vite back as a direct or production dependency to steer
-  test resolution.
+Nothing. Every declaration in both pnpm scopes and all three Cargo manifests has
+call sites or a recorded reason below. The two candidates that were tried were
+reverted after review (see "Tried and reverted").
 
-### Upgraded or consolidated
+### Updated for security (lockfile only)
 
-- **TOML crates moved to Tauri's stack:** `toml` 0.8 → 1 (generator) and
-  `toml_edit` 0.22 → 0.25 (settings, in `src-tauri` and `ccresdoc-host-domain`).
-  - No code changes were needed. All generator and settings tests pass, including
-    the lossless-save tests.
-  - In the shipped macOS graph this drops `toml` 0.8, `toml_edit` 0.20 and 0.22,
-    `toml_datetime` 0.6, `serde_spanned` 0.6, `toml_write` and `winnow` 0.5, and
-    adds `toml_edit` 0.25.
-  - On Linux, `system-deps` (GTK build) still holds `toml` 0.8.
-  - Both parsers now accept TOML 1.1, a superset of 1.0, so a few documents that
-    used to be malformed now parse.
-- **Security lockfile updates (Rust)**, all within existing semver ranges and each
-  released at least two weeks before the update:
+- **Rust**, all within existing semver ranges and each released at least two
+  weeks before the update:
   - `plist` 1.9.0 → 1.10.3, bringing `quick-xml` 0.39.2 → 0.42.0. This fixes
     RUSTSEC-2026-0194 and RUSTSEC-2026-0195. plist 1.10 adds `base64` 0.23.
   - `anyhow` 1.0.102 → 1.0.104 (RUSTSEC-2026-0190, unsound).
   - `rustix` 1.1.4 → 1.1.6 (RUSTSEC-2026-0486, unsound).
   - `tokio` 1.52.1 → 1.54.1 (RUSTSEC-2026-0386, unsound).
-- **Security lockfile update (JS), both scopes:** `hono` 4.13.3 → 4.13.17.
+- **JS, both scopes:** `hono` 4.13.3 → 4.13.17.
   - hono is reached only through `@takazudo/zfb-runtime` (`^4.12.25`) and is staged
     into the packaged runtime.
   - The update fixes GHSA-gqvv-2mrq-wpjv, GHSA-g6gw-c38x-mqfc, GHSA-crvj-82cr-hjcx,
@@ -60,10 +48,30 @@ Net effect:
 
 | Graph | Before | After |
 | --- | --- | --- |
-| `Cargo.lock` packages | 491 | 490 |
-| macOS arm64 normal+build crates (excluding workspace crates) | 257 | 252 |
+| `Cargo.lock` packages | 491 | 492 (plist's new `base64` 0.23) |
 | `app/pnpm-lock.yaml` packages | 221 | 220 |
 | Compatibility fixture packages | 141 | 141 |
+
+### Tried and reverted (settled; do not re-propose without new evidence)
+
+- **`toml` 0.8 → 1 and `toml_edit` 0.22 → 0.25** (to match Tauri's stack). It
+  compiled with no code changes and would have dropped 7 crates from the macOS
+  graph. It was reverted because both newer crates parse TOML 1.1:
+  - A schema-v1 config that is malformed under TOML 1.0 must be left untouched.
+    Under 1.1 it could instead be recognized and retired at startup.
+  - Ordinary Save would rewrite v2 documents that are currently `Malformed` and
+    need explicit replacement.
+  - The generator would show Codex configs as valid that a TOML 1.0 consumer
+    rejects.
+
+  Revisit only together with tests that pin the malformed-file boundary under the
+  new parser.
+- **Dropping the `vite` dev pin.** Nothing imports vite directly; vitest resolves
+  it. Removing the declaration freed no packages, and it had two side effects.
+  It took vite out of `APP_DEV_DEPENDENCIES`, so the validators no longer check
+  its version. It also took vite out of the staged-runtime exclusion list, which
+  `scripts/verify-runtime-workspace.mjs` derives from the manifest's
+  devDependencies. Keep it as a dev-only pin, never a production dependency.
 
 ### Considered and kept
 
@@ -77,6 +85,7 @@ JS (both scopes):
 | `@takazudo/zfb-runtime` | Imported directly by `app/src/browser-chrome/adapter.ts`. |
 | zfb native carriers | The host resolves the package-root binary; these are declared so every platform's carrier is pinned. |
 | `happy-dom`, `vitest`, `typescript` | Test environment, test runner and typecheck. |
+| `vite` | Dev-only pin for test resolution; see "Tried and reverted". |
 | `playwright` | Browser confirmation scripts under `scripts/`. |
 
 Rust:
@@ -85,7 +94,7 @@ Rust:
 | --- | --- |
 | Every declaration in `ccresdoc-claude-md`, `ccresdoc-host-domain` and `src-tauri` | Each has call sites; checked by hand in this audit. |
 | `thiserror` 1 | Moving our crates to 2 frees nothing: `json-patch` (via `tauri-utils`) and the GTK crates keep 1. |
-| `muda` (direct) | Used directly for the application menu; Tauri also depends on it. |
+| `muda` (direct) | `browser_bridge.rs` parses shortcut accelerators with muda's own parser, so a binding Tauri would silently drop is rejected first. Tauri also depends on it. |
 | `html5ever` | Readiness parses the served HTML for island bundles. |
 
 ### Decided: stay, with a named blocker
@@ -100,8 +109,8 @@ Rust:
     users' own files.
   - The blocker: no maintained, serde-compatible parser removes the libyaml port
     without behavior changes. Revisit when one exists or an actual advisory lands.
-  - Replacing it with first-party code is out of scope: a YAML parser is far past
-    the 40-line abandon rule.
+  - Replacing it with first-party code is out of scope: a YAML parser is not a
+    small utility to hand-roll.
 
 ### Remaining `cargo audit` warnings (upstream, not actionable here)
 
