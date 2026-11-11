@@ -1861,12 +1861,17 @@ mod tests {
                     ),
                     _ => (404, String::new()),
                 };
-                write!(
-                    stream,
-                    "HTTP/1.0 {status} OK\r\nContent-Length: {}\r\n\r\n{body}",
-                    body.len()
-                )
-                .unwrap();
+                // One write: probe_status closes after the status line, so a
+                // later partial write would be reset by the client.
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.0 {status} OK\r\nContent-Length: {}\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .unwrap();
             }
         });
 
