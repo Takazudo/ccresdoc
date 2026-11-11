@@ -13,6 +13,11 @@ function childPath(path, key) {
   return /^[A-Za-z_$][\w$]*$/.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`;
 }
 
+/** The committed-evidence byte format that evidence:check compares. */
+export function serializeEvidence(value) {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
 export function diffJson(before, after, { limit = 20 } = {}) {
   const differences = [];
   let total = 0;

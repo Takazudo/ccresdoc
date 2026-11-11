@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { serializeEvidence } from "./evidence-diff.mjs";
 import { nativeRuntimeEvidence, processGroupOutcome } from "./native-runtime-evidence.mjs";
 
 const committed = readFileSync(new URL("../evidence/native-runtime.json", import.meta.url), "utf8");
-const hmrMarker = "HMR reached the native route at 4892.";
 const zfb = "/work/node_modules/@takazudo/zfb-darwin-arm64/zfb";
 
-// The exact serialization evidence.mjs compares against the committed file.
 function serialize(reloadEvent, members, leaderPid) {
   const processGroup = processGroupOutcome(members, leaderPid);
-  return `${JSON.stringify(nativeRuntimeEvidence({ hmrMarker, reloadEvent, processGroup }), null, 2)}\n`;
+  return serializeEvidence(nativeRuntimeEvidence({ reloadEvent, processGroup }));
 }
 
 const groups = [

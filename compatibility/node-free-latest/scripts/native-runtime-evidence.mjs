@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 
 // zfb dev publishes page and islands frames for one content change in either
 // order; both prove the reload stream observed it.
+export const CONTENT_HMR_MARKER = "HMR reached the native route at 4892.";
+
 export const CONTENT_RELOAD_EVENTS = new Set(["page", "islands"]);
 
 /**
@@ -17,14 +19,14 @@ export function processGroupOutcome(members, leaderPid) {
 }
 
 /** The probe's successful evidence document; every field is run-invariant. */
-export function nativeRuntimeEvidence({ hmrMarker, reloadEvent, processGroup }) {
+export function nativeRuntimeEvidence({ reloadEvent, processGroup }) {
   assert.ok(CONTENT_RELOAD_EVENTS.has(reloadEvent), `unexpected content reload event: ${reloadEvent}`);
   return {
     status: "passed",
     homeRoute: "/",
     docsRoute: "/docs/probe/",
     islandMarker: "ProbeCounter",
-    contentHmrMarker: hmrMarker,
+    contentHmrMarker: CONTENT_HMR_MARKER,
     contentReloadObserved: true,
     nodeSentinelInvocations: 0,
     fixedPortSerialized: true,

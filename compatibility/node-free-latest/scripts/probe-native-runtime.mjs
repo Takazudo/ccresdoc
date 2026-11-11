@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { resolveNativeBinary, probeRoot } from "./native-binary.mjs";
 import { createSseParser } from "../../../scripts/lib/sse-parser.mjs";
 import { liveGroupMembers, waitForEmptyGroup } from "../../../scripts/lib/process-group.mjs";
-import { CONTENT_RELOAD_EVENTS, nativeRuntimeEvidence, processGroupOutcome } from "./native-runtime-evidence.mjs";
+import { CONTENT_HMR_MARKER, CONTENT_RELOAD_EVENTS, nativeRuntimeEvidence, processGroupOutcome } from "./native-runtime-evidence.mjs";
 
 const stateDir = mkdtempSync(join(tmpdir(), "ccresdoc-node-free-probe-"));
 const sentinelDir = join(stateDir, "sentinel-bin");
@@ -203,9 +203,8 @@ try {
     (error) => ({ error }),
   );
   const contentPath = join(runtimeRoot, "src", "content", "docs", "probe.mdx");
-  const hmrMarker = "HMR reached the native route at 4892.";
-  writeFileSync(contentPath, `${readFileSync(contentPath, "utf8")}\n\n${hmrMarker}\n`);
-  await fetchUntil("/docs/probe/", hmrMarker);
+  writeFileSync(contentPath, `${readFileSync(contentPath, "utf8")}\n\n${CONTENT_HMR_MARKER}\n`);
+  await fetchUntil("/docs/probe/", CONTENT_HMR_MARKER);
   const reloadResult = await Promise.race([
     reloadEventPromise,
     delay(10_000).then(() => { throw new Error("timed out waiting for the content reload event"); }),
@@ -223,7 +222,7 @@ try {
   }
   await delay(750);
   assert.equal(readFileSync(sentinelLog, "utf8"), "");
-  console.log(JSON.stringify(nativeRuntimeEvidence({ hmrMarker, reloadEvent, processGroup }), null, 2));
+  console.log(JSON.stringify(nativeRuntimeEvidence({ reloadEvent, processGroup }), null, 2));
 } finally {
   reloadController.abort();
   await stopChild();
