@@ -87,8 +87,10 @@ export const settings = {
   // No frontmatter preview
   frontmatterPreview: false as false,
   packageOwnedRoutes: false,
-  // Explicitly disabled optional features: each would add a Node plugin, a
-  // peer package or a client loader that the node-free runtime does not ship.
+  // Explicitly disabled optional features: the panel and history would add a
+  // Node plugin or a peer package the node-free runtime does not ship. Math
+  // stays off as a product choice; katex is still installed because the
+  // package MDX components reach its loader statically.
   designTokenPanel: false,
   docHistory: false,
   math: false,

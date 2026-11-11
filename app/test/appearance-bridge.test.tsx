@@ -204,6 +204,28 @@ describe("docs appearance bridge", () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
+  it("restores zudo-doc's own state when a change is rejected before any config exists", async () => {
+    const invoke = vi.fn(async () => { throw new Error("rejected"); });
+    const { root } = fakeRoot({ invoke, boot: { mode: "system", source: "default", revision: null } });
+    const scheme = root.__zudoDocColorScheme!;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      start(root);
+      // zudo-doc's toggle stores the choice before the bridge hears about it.
+      scheme.choice = "dark";
+      localStorage.setItem("zudo-doc-theme", "dark");
+      window.dispatchEvent(new CustomEvent("theme-preference-changed"));
+      await tick();
+      await tick();
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(scheme.choice).toBe("system");
+      expect(localStorage.getItem("zudo-doc-theme")).toBe("system");
+      expect(error).toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it("calls the resolved unlisten exactly once on dispose", async () => {
     const { root, unlisten } = fakeRoot();
     const dispose = start(root);

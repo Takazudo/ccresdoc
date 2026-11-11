@@ -77,7 +77,8 @@ export function startAppearanceBridge(root: AppearanceRoot = globalThis as Appea
   let applySequence = 0;
   let disposed = false;
   let unlisten: Unlisten | undefined;
-  const pendingLoads = new Set<{ link: HTMLLinkElement; timer: ReturnType<typeof setTimeout> }>();
+  type PendingLoad = { link: HTMLLinkElement; timer: ReturnType<typeof setTimeout>; settle: (loaded: boolean) => void };
+  const pendingLoads = new Set<PendingLoad>();
 
   const key = (value: Appearance) => `${value.mode}\n${value.themePack}`;
   const isCurrent = (token: number) => !disposed && token === applySequence;
@@ -87,9 +88,9 @@ export function startAppearanceBridge(root: AppearanceRoot = globalThis as Appea
     link.rel = "stylesheet";
     link.setAttribute("data-zd-theme-pack-css-loading", "");
     link.href = href;
-    let entry!: { link: HTMLLinkElement; timer: ReturnType<typeof setTimeout> };
+    let entry!: PendingLoad;
     const loaded = await new Promise<boolean>((resolve) => {
-      entry = { link, timer: setTimeout(() => resolve(false), STYLESHEET_TIMEOUT_MS) };
+      entry = { link, timer: setTimeout(() => resolve(false), STYLESHEET_TIMEOUT_MS), settle: resolve };
       pendingLoads.add(entry);
       link.addEventListener("load", () => resolve(true), { once: true });
       link.addEventListener("error", () => resolve(false), { once: true });
@@ -130,11 +131,14 @@ export function startAppearanceBridge(root: AppearanceRoot = globalThis as Appea
     return true;
   }
 
-  async function apply(value: Appearance, source: AppearanceSource | "media") {
+  // "rollback" restores the authoritative value after a rejected change. It
+  // rewrites zudo-doc's own state like an authoritative apply does, because
+  // the package already stored the rejected choice before the bridge saw it.
+  async function apply(value: Appearance, source: AppearanceSource | "media" | "rollback") {
     if (disposed) return;
     const token = ++applySequence;
     active = { ...value };
-    const persist = source === "authoritative";
+    const persist = source === "authoritative" || source === "rollback";
     const mode = resolveMode(value.mode);
     applying = true;
     try {
@@ -182,7 +186,7 @@ export function startAppearanceBridge(root: AppearanceRoot = globalThis as Appea
       await accept(result);
     } catch (error) {
       pending = "";
-      await apply(authoritative, authoritativeSource);
+      await apply(authoritative, "rollback");
       console.error("update_appearance failed:", error);
     } finally {
       const next = queued;
@@ -231,6 +235,8 @@ export function startAppearanceBridge(root: AppearanceRoot = globalThis as Appea
     for (const entry of pendingLoads) {
       clearTimeout(entry.timer);
       entry.link.remove();
+      // Settle the load so the awaiting apply() finishes as superseded.
+      entry.settle(false);
     }
     pendingLoads.clear();
     window.removeEventListener("theme-preference-changed", preferenceChanged);

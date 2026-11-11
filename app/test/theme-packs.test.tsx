@@ -4,6 +4,8 @@ import { resolveThemePackSsrSlug } from "@takazudo/zudo-doc/theme";
 import { settings, themePackSlugs } from "@/config/settings";
 import { themePackRegistry } from "../pages/lib/_route-context";
 import { config } from "../zfb.config";
+import { DEFAULT_THEME_PACK as BRIDGE_DEFAULT_THEME_PACK } from "../src/appearance/bridge";
+import { DEFAULT_THEME_PACK as SYNC_DEFAULT_THEME_PACK } from "../scripts/sync-theme-packs.mjs";
 
 describe("CCResDoc theme-pack host integration", () => {
   it("derives settings and the typed route registry from the public catalog", () => {
@@ -22,6 +24,13 @@ describe("CCResDoc theme-pack host integration", () => {
     expect(resolveThemePackSsrSlug(themePackRegistry, settings)).toBe(
       "classic",
     );
+  });
+
+  it("keeps every copy of the default pack in step with the configured one", () => {
+    // The client island and the sync script hold their own literal so neither
+    // bundles the settings module or the zod-backed registry.
+    expect(BRIDGE_DEFAULT_THEME_PACK).toBe(settings.themePack);
+    expect(SYNC_DEFAULT_THEME_PACK).toBe(settings.themePack);
   });
 
   it("keeps the compatible preset settings and intentional host deviations", () => {

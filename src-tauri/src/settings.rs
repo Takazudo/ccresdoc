@@ -887,23 +887,36 @@ impl SettingsStore {
                 Err(error)
             };
         }
-        let moved = fs::read(&aside)?;
+        let moved = match fs::read(&aside) {
+            Ok(moved) => moved,
+            Err(error) => {
+                self.restore_aside(&aside, parent)?;
+                return Err(error);
+            }
+        };
         if ContentRevision::from_bytes(&moved) == revision {
             fs::remove_file(&aside)?;
             sync_directory(parent)?;
             return Ok(V1Retirement::Retired(revision));
         }
-        match fs::hard_link(&aside, &self.path) {
+        self.restore_aside(&aside, parent)?;
+        Ok(V1Retirement::Changed)
+    }
+
+    /// Put a moved-aside file back at the active path. If the active path is
+    /// occupied, the moved file stays where it is and the error names it.
+    fn restore_aside(&self, aside: &Path, parent: &Path) -> io::Result<()> {
+        match fs::hard_link(aside, &self.path) {
             Ok(()) => {
-                fs::remove_file(&aside)?;
-                sync_directory(parent)?;
-                Ok(V1Retirement::Changed)
+                fs::remove_file(aside)?;
+                sync_directory(parent)
             }
             Err(error) => Err(io::Error::new(
                 error.kind(),
                 format!(
-                    "a changed settings file was preserved at {} because the active path is occupied: {error}",
-                    aside.display()
+                    "a settings file was preserved at {} because it could not be restored to {}: {error}",
+                    aside.display(),
+                    self.path.display()
                 ),
             )),
         }
@@ -984,7 +997,14 @@ impl SettingsStore {
                     vec![diagnostic(
                         DiagnosticKind::UnsupportedSchemaVersion,
                         Some("schema_version"),
-                        format!("schema version {version} is unsupported"),
+                        if version < CURRENT_SCHEMA_VERSION {
+                            format!(
+                                "schema version {version} is from an earlier CCResDoc and was kept because it has entries this version does not recognize; move or delete {} to start from schema {CURRENT_SCHEMA_VERSION} defaults",
+                                self.path.display()
+                            )
+                        } else {
+                            format!("schema version {version} is unsupported")
+                        },
                         true,
                     )],
                 );
@@ -2261,6 +2281,27 @@ mod tests {
             );
             assert!(target.exists() && store.path().exists());
         }
+    }
+
+    #[test]
+    fn an_unrecognized_v1_document_explains_how_to_start_over() {
+        let (_root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        let content = "schema_version = 1\nhand_added = \"keep\"\n";
+        fs::write(store.path(), content).unwrap();
+        assert_eq!(
+            store.retire_recognized_v1().unwrap(),
+            V1Retirement::NotRecognized
+        );
+        let loaded = store.load();
+        assert_eq!(loaded.status, LoadStatus::UnsupportedVersion);
+        let message = &loaded.validation[0].message;
+        assert!(message.contains("earlier CCResDoc"), "{message}");
+        assert!(
+            message.contains(&store.path().display().to_string()),
+            "{message}"
+        );
+        assert_eq!(fs::read_to_string(store.path()).unwrap(), content);
     }
 
     #[test]

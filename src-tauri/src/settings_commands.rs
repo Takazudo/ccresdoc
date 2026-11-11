@@ -182,12 +182,14 @@ pub struct DraftValidation {
     pub valid: bool,
 }
 
+/// Applies a saved document and emits the authoritative appearance event.
+/// Returns the emitted envelope so a caller can answer with exactly it.
 fn apply_saved(
     app: &AppHandle,
     state: &AppState,
     saved: SaveResult,
     clear_preview: bool,
-) -> RuntimeApplyResult {
+) -> (RuntimeApplyResult, AppearanceEnvelope) {
     let impact = saved.impact.clone();
     let before = state.runtime.snapshot();
     let effective = saved.snapshot.effective.clone();
@@ -226,13 +228,17 @@ fn apply_saved(
         state.appearance.clear_preview();
     }
     let authoritative = state.settings_store.load();
-    let _ = app.emit(APPEARANCE_EVENT, state.appearance.envelope(&authoritative));
+    let envelope = state.appearance.envelope(&authoritative);
+    let _ = app.emit(APPEARANCE_EVENT, &envelope);
 
-    RuntimeApplyResult {
-        snapshot: state.runtime.snapshot(),
-        impact,
-        status,
-    }
+    (
+        RuntimeApplyResult {
+            snapshot: state.runtime.snapshot(),
+            impact,
+            status,
+        },
+        envelope,
+    )
 }
 
 fn save_operation(
@@ -242,7 +248,7 @@ fn save_operation(
 ) -> Result<RuntimeApplyResult, CommandError> {
     state
         .runtime
-        .with_serialized_apply(|| operation().map(|saved| apply_saved(app, state, saved, true)))
+        .with_serialized_apply(|| operation().map(|saved| apply_saved(app, state, saved, true).0))
         .map_err(CommandError::from)
 }
 
@@ -250,10 +256,10 @@ fn appearance_save_operation(
     app: &AppHandle,
     state: &AppState,
     operation: impl FnOnce() -> Result<SaveResult, SaveError>,
-) -> Result<RuntimeApplyResult, CommandError> {
+) -> Result<AppearanceEnvelope, CommandError> {
     state
         .runtime
-        .with_serialized_apply(|| operation().map(|saved| apply_saved(app, state, saved, false)))
+        .with_serialized_apply(|| operation().map(|saved| apply_saved(app, state, saved, false).1))
         .map_err(CommandError::from)
 }
 
@@ -313,8 +319,7 @@ pub(crate) async fn update_appearance(
         let state = task_app.state::<AppState>();
         appearance_save_operation(&task_app, &state, || {
             persist_appearance_update(&state.settings_store, &update)
-        })?;
-        Ok(state.appearance.envelope(&state.settings_store.load()))
+        })
     })
     .await
     .map_err(|error| CommandError::new("task", format!("appearance task failed: {error}")))?

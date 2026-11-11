@@ -247,7 +247,7 @@ var mode=seed.appearance.mode;var pack=seed.appearance.themePack;var source=seed
 if(seed.availableThemePacks.indexOf(pack)===-1)pack=FALLBACK;
 var effective=mode==='system'?(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):mode;
 try{{if(localStorage.getItem(RETIRED)!==null){{localStorage.removeItem(RETIRED);localStorage.removeItem(MODE_KEY);localStorage.removeItem(PACK_KEY);}}
-if(mode==='system')localStorage.removeItem(MODE_KEY);else localStorage.setItem(MODE_KEY,mode);localStorage.setItem(PACK_KEY,pack);localStorage.setItem(CACHE,JSON.stringify({{mode:mode,themePack:pack,revision:seed.revision}}));}}catch(e){{}}
+localStorage.setItem(MODE_KEY,mode);localStorage.setItem(PACK_KEY,pack);localStorage.setItem(CACHE,JSON.stringify({{mode:mode,themePack:pack,revision:seed.revision}}));}}catch(e){{}}
 function paint(r){{r.setAttribute('data-theme',effective);r.style.colorScheme=effective;r.setAttribute('data-theme-pack',pack);r.setAttribute('data-ccresdoc-appearance-ready','true');}}
 if(document.documentElement)paint(document.documentElement);else{{var observer=new MutationObserver(function(){{if(document.documentElement){{paint(document.documentElement);observer.disconnect();}}}});observer.observe(document,{{childList:true}});}}
 window.__CCRESDOC_APPEARANCE__={{mode:mode,themePack:pack,effectiveMode:effective,revision:seed.revision,source:source,origin:loc.origin}};
@@ -505,22 +505,21 @@ mod tests {
         }
 
         /// The command's side-effect path with the Tauri runtime apply
-        /// replaced by the event it emits (`apply_saved` emits
-        /// `envelope(load())` after a successful save).
+        /// replaced by the event it emits. `apply_saved` emits
+        /// `envelope(load())` after a successful save and the command returns
+        /// that same emitted value, so one envelope stands for both.
         fn run(
             harness: &Harness,
             caller_url: &url::Url,
             effective_port: u16,
             request: AppearanceRequest,
-        ) -> Result<(AppearanceEnvelope, AppearanceEnvelope), &'static str> {
+        ) -> Result<AppearanceEnvelope, &'static str> {
             let update = resolve_appearance_update(caller_url, effective_port, request, |slug| {
                 harness.store.supports_theme_pack(slug)
             })
             .map_err(|rejection| rejection.code())?;
             persist_appearance_update(&harness.store, &update).map_err(|error| error.code())?;
-            let emitted = harness.appearance.envelope(&harness.store.load());
-            let envelope = harness.appearance.envelope(&harness.store.load());
-            Ok((envelope, emitted))
+            Ok(harness.appearance.envelope(&harness.store.load()))
         }
 
         fn assert_revision(
@@ -614,8 +613,7 @@ mod tests {
                     continue;
                 }
 
-                let (envelope, emitted) =
-                    result.unwrap_or_else(|error| panic!("{name}: unexpected {error}"));
+                let envelope = result.unwrap_or_else(|error| panic!("{name}: unexpected {error}"));
                 let expected = &expect["envelope"];
                 assert_eq!(
                     envelope.appearance,
@@ -646,10 +644,6 @@ mod tests {
                 assert!(
                     expect["emitsEvent"].as_bool().unwrap(),
                     "{name}: a successful persist always emits"
-                );
-                assert_eq!(
-                    emitted, envelope,
-                    "{name}: event payload equals the envelope"
                 );
                 assert_preview_kept(name, &harness, &input["preview"]);
 

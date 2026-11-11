@@ -40,7 +40,7 @@ import {
   assertRuntimeWorkspacePrivacy,
 } from "./runtime-workspace-files.mjs";
 import { guardDocumentReloads, readPlantedState, recordDiagnostics, waitForDevSettled } from "./browser-harness.mjs";
-import { LOAD_CONTROL_SELECTORS, waitForLoadControls } from "./lib/load-controls.mjs";
+import { LOAD_CONTROL_SELECTORS, loadControlsSettled, waitForLoadControls } from "./lib/load-controls.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appRoot = join(repoRoot, "app");
@@ -438,16 +438,16 @@ async function runBrowserSurface({ context, page, diagnostics, reloadGuard, base
   // Sample zudo-doc's own pending state at frame cadence during a client-router
   // swap. Pending is allowed only for the remount's synchronous load pass;
   // a longer interval would be a visible flash and would leave controls inert.
-  await page.evaluate((selectors) => {
+  // The sampler reuses the shared readiness predicate (the dev server sends no
+  // CSP, so the serialized function can be evaluated in the page).
+  await page.evaluate(({ selectors, settledSource }) => {
+    const settled = (0, eval)(`(${settledSource})`);
     const state = { missingSince: null, missingMs: 0, missingFrames: 0, samples: 0, stopped: false };
     (window).__ccresdocHydrationSamples = state;
     const sample = () => {
       if (state.stopped) return;
       state.samples += 1;
-      const ready = selectors.every((selector) => {
-        const controls = document.querySelectorAll(selector);
-        return controls.length > 0 && [...controls].every((control) => !control.hasAttribute("data-zd-pending"));
-      });
+      const ready = settled(selectors);
       if (!ready) {
         state.missingSince ??= performance.now();
         state.missingFrames += 1;
@@ -458,7 +458,7 @@ async function runBrowserSurface({ context, page, diagnostics, reloadGuard, base
       requestAnimationFrame(sample);
     };
     requestAnimationFrame(sample);
-  }, LOAD_CONTROL_SELECTORS);
+  }, { selectors: LOAD_CONTROL_SELECTORS, settledSource: loadControlsSettled.toString() });
   await reloadGuard.checkpoint("client-router swap");
   const target = page.locator('a[href*="/docs/hydration-pages/page-001/"]').first();
   await target.waitFor({ state: "visible", timeout: 5_000 });
