@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { collectPackageFacts } from "./package-facts.mjs";
 import { probeRoot } from "./native-binary.mjs";
+import { formatEvidenceDrift } from "./evidence-diff.mjs";
 
 const mode = process.argv[2] ?? "--check";
 if (!["--check", "--refresh"].includes(mode)) {
@@ -36,6 +37,7 @@ const generated = {
 };
 
 const changed = [];
+const reports = [];
 for (const [name, value] of Object.entries(generated)) {
   const path = join(probeRoot, "evidence", name);
   const normalized = `${JSON.stringify(value, null, 2)}\n`;
@@ -43,11 +45,15 @@ for (const [name, value] of Object.entries(generated)) {
     writeFileSync(path, normalized);
   } else {
     const committed = readFileSync(path, "utf8");
-    if (committed !== normalized) changed.push(name);
+    if (committed !== normalized) {
+      changed.push(name);
+      reports.push(formatEvidenceDrift(name, committed, value));
+    }
   }
 }
 
 if (mode === "--check") {
+  if (reports.length > 0) console.error(reports.join("\n"));
   assert.deepEqual(changed, [], `compatibility evidence drifted: ${changed.join(", ")}`);
   console.log("compatibility evidence matches observed package and command outputs");
 } else {

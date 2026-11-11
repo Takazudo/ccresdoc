@@ -112,6 +112,8 @@ Committed evidence:
 - `evidence/config-matrix.json`: native `zfb check` and build results plus Node-invocation evidence.
 - `evidence/native-runtime.json`: port 4892 route serving, island marker, live content update, process sample, and silent failing sentinel.
 
+`evidence:check` stays a byte-for-byte comparison. When it fails it first prints, per drifted file, the JSON paths that changed with bounded old and new values (`scripts/evidence-diff.mjs`), so an intermittent drift names its field. The runtime probe reads `/__zfb/reload` through the shared incremental SSE parser (`scripts/lib/sse-parser.mjs`), which dispatches only complete frames, including when a CRLF is split across network chunks.
+
 The app and fixture lockfiles record the exact published tarball resolutions
 for the current pin. The immutable source anchors from issue #93 are retained
 below as historical evidence rather than being treated as the current pin.
