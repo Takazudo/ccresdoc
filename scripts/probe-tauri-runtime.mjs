@@ -162,7 +162,7 @@ async function assertThemeAssetParity() {
   let servedFiles = 1; // index.json
 
   for (const pack of sourceThemeCatalog.packs) {
-    if (pack.slug === "default") continue;
+    if (!pack.hasStylesheet) continue;
     const css = await fetchOk(`/theme-packs/${pack.slug}/pack.css?v=${encodeURIComponent(pack.meta.version)}`);
     servedFiles += 1;
     const referencedFonts = new Set();

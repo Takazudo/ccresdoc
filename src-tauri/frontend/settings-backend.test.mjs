@@ -9,10 +9,10 @@ test("adapter uses exact commands and camelCase arguments", async () => {
   // ShortcutEntry is rename_all = "camelCase" on the Rust side, unlike the rest
   // of SettingsDraft -- a realistic draft must carry shortcuts to catch a
   // blind top-to-bottom key mapper rewriting `commandId` to `command_id`.
-  const draft = { schemaVersion: 1, shortcuts: [{ commandId: "back", bindings: ["Mod+["] }] };
-  const wireDraft = { schema_version: 1, shortcuts: [{ commandId: "back", bindings: ["Mod+["] }] };
+  const draft = { schemaVersion: 2, shortcuts: [{ commandId: "back", bindings: ["Mod+["] }] };
+  const wireDraft = { schema_version: 2, shortcuts: [{ commandId: "back", bindings: ["Mod+["] }] };
   await backend.validateDraft(draft);
-  await backend.previewAppearance("dark", "default");
+  await backend.previewAppearance("dark", "classic");
   await backend.clearAppearancePreview();
   await backend.saveAndApply(draft, "sha256:one");
   await backend.rebaseStale(draft, new Set(["claudeResources", "codexResources", "claudeDir", "codexDir", "shortcuts"]), "sha256:stale");
@@ -20,7 +20,7 @@ test("adapter uses exact commands and camelCase arguments", async () => {
   await backend.setShortcutCaptureActive(true);
   assert.deepEqual(calls, [
     { command: "validate_settings_draft", args: { draft: wireDraft } },
-    { command: "preview_appearance", args: { mode: "dark", themePack: "default" } },
+    { command: "preview_appearance", args: { mode: "dark", themePack: "classic" } },
     { command: "clear_appearance_preview", args: undefined },
     { command: "save_and_apply_settings", args: { draft: wireDraft, expectedRevision: "sha256:one" } },
     { command: "rebase_stale_settings", args: { draft: wireDraft, dirtyFields: ["claude_resources", "codex_resources", "claude_dir", "codex_dir", "shortcuts"], staleRevision: "sha256:stale" } },

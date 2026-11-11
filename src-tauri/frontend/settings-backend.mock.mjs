@@ -5,14 +5,14 @@ export function createMockBackend(overrides = {}) {
   const snapshot = overrides.snapshot ?? {
     settings: {
       status: "missing", revision: null, configPath: "/mock/config.toml", fileExists: false,
-      authored: { schemaVersion: 1, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "default", preferredPort: 4892, fallbackToFreePort: true, shortcuts: [] },
-      effective: { claudeResources: true, codexResources: false, claudeDir: "/mock/.claude", codexDir: null, appearanceMode: "system", themePack: "default", preferredPort: 4892, effectivePort: 4892, fallbackToFreePort: true, shortcuts: [] },
+      authored: { schemaVersion: 2, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "classic", preferredPort: 4892, fallbackToFreePort: true, shortcuts: [] },
+      effective: { claudeResources: true, codexResources: false, claudeDir: "/mock/.claude", codexDir: null, appearanceMode: "system", themePack: "classic", preferredPort: 4892, effectivePort: 4892, fallbackToFreePort: true, shortcuts: [] },
       validation: [],
     },
     runtime: { phase: "idle", active: null },
     actions: { canSave: true, canRebase: false, canReplaceMalformed: false },
-    defaults: { schemaVersion: 1, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "default", preferredPort: 4892, fallbackToFreePort: true, shortcuts: [] },
-    themePacks: ["default"],
+    defaults: { schemaVersion: 2, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "classic", preferredPort: 4892, fallbackToFreePort: true, shortcuts: [] },
+    themePacks: ["classic"],
     shortcutCatalog: { version: 1, commands: [] },
   };
   const result = (method, value) => (...args) => {
@@ -24,8 +24,8 @@ export function createMockBackend(overrides = {}) {
     openSettings: result("openSettings"),
     getSnapshot: result("getSnapshot", snapshot),
     validateDraft: result("validateDraft", { valid: true, diagnostics: [] }),
-    previewAppearance: result("previewAppearance", { appearance: { mode: "system", themePack: "default" } }),
-    clearAppearancePreview: result("clearAppearancePreview", { appearance: { mode: "system", themePack: "default" } }),
+    previewAppearance: result("previewAppearance", { appearance: { mode: "system", themePack: "classic" } }),
+    clearAppearancePreview: result("clearAppearancePreview", { appearance: { mode: "system", themePack: "classic" } }),
     listenAppearance: result("listenAppearance", () => {}),
     saveAndApply: result("saveAndApply", { status: "saved_no_restart" }),
     rebaseStale: result("rebaseStale", { status: "saved_no_restart" }),

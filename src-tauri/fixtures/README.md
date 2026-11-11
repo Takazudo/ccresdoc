@@ -2,7 +2,8 @@
 
 `appearance-transitions.json` is the single source of truth for the behaviour
 of the `update_appearance` Tauri command
-(`src-tauri/src/settings_commands.rs`, `update_appearance`). Two consumers check
+(`src-tauri/src/settings_commands.rs`, which delegates to `resolve_appearance_update`
+and `persist_appearance_update` in `src-tauri/src/appearance.rs`). Two consumers check
 it:
 
 - the Rust parity test, against the real resolver;
@@ -10,8 +11,8 @@ it:
   `scripts/confirm-browser-navigation.mjs`).
 
 Every expectation was derived from the backend code
-(`settings_commands.rs`, `appearance.rs` `AppearanceState::envelope`,
-`settings.rs` `SettingsStore::update_appearance`). When this table and the code
+(`appearance.rs` `resolve_appearance_update`, `persist_appearance_update` and
+`AppearanceState::envelope`, plus `settings.rs` `SettingsStore::update_appearance`). When this table and the code
 disagree, the code wins.
 
 ## Do not change expectations silently
@@ -24,12 +25,12 @@ loosen its assertion or skip a row to make it pass.
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "description": "...",
   "constants": {
     "effectivePort": 4892,
     "callerPath": "/docs/",
-    "defaults": { "mode": "system", "themePack": "default" },
+    "defaults": { "mode": "system", "themePack": "classic" },
     "revisionPlaceholders": { "stored": "rev:stored", "afterSave": "rev:after-save" }
   },
   "rows": [ ... ]
@@ -57,8 +58,6 @@ Each row has the keys `{ name, parity, input, request, expect }`.
   - `stored`: `{mode, themePack}` when `valid`; otherwise `null`.
   - `preview`: `null` | `{mode, themePack}`. This is the active Settings
     preview.
-  - `candidate`: `null` | `{origin, appearance: {mode, themePack}}`. This is
-    the in-memory legacy candidate.
   - `callerOrigin`: the origin of the main window's current URL.
   - `availableThemePacks`: the theme packs that the settings store accepts.
   - `revision`: the stored revision. It is `null` for `missing` and
@@ -66,28 +65,25 @@ Each row has the keys `{ name, parity, input, request, expect }`.
     Otherwise it is the placeholder `"rev:stored"`.
 - `request`: the exact wire object passed as `args.request` to
   `invoke("update_appearance", { request })`. The keys are camelCase and the
-  enum values are snake_case: `{mode, themePack, intent, field}`. Some rows
+  enum values are snake_case: `{mode, themePack, field}`. Some rows
   deliberately send an invalid shape.
 - `expect`: one of two shapes.
   - Success:
-    `{ envelope: {appearance, authoritative, revision, source, authoritativeSource}, emitsEvent, candidateAfter, storedAfter }`.
+    `{ envelope: {appearance, authoritative, revision, source, authoritativeSource}, emitsEvent, storedAfter }`.
     - `envelope` is the `AppearanceEnvelope` that the command returns.
-      `source` and `authoritativeSource` are `authoritative` | `preview` |
-      `legacy_candidate` | `default`.
+      `source` and `authoritativeSource` are `authoritative` | `preview` | `default`.
     - `envelope.revision` is `null` (the config is still missing),
       `"rev:stored"` (the input revision, unchanged), or `"rev:after-save"`.
       The last placeholder means a non-null revision that differs from the
       input revision, because the content hash of the rewritten file changed.
     - `emitsEvent`: whether `ccresdoc://appearance` is emitted. When it is
       emitted, the payload equals the returned envelope.
-    - `candidateAfter`: the in-memory candidate after the call (`null` when it
-      is cleared or absent).
     - `storedAfter`: the stored `{mode, themePack}` after the call. `null`
       means that the config is still missing. Any non-null value means that the
       config is now `valid`.
   - Error: `{ error: "<code>" }`. The code is `CommandError.code` from the
     rejected invoke. On every error row, nothing changes: the stored value, the
-    revision, the preview and the candidate stay the same, and no event is
+    revision and the preview stay the same, and no event is
     emitted.
 
 `update_appearance` never changes the preview. Only `preview_appearance` and
@@ -98,7 +94,7 @@ Each row has the keys `{ name, parity, input, request, expect }`.
 | Code | Source |
 | --- | --- |
 | `forbidden_origin` | `authorize_docs_url`, which is checked before the theme pack |
-| `invalid_theme_pack` | `validate_appearance`, which validates `themePack` for **both** intents and both `field` values, before any status check |
+| `invalid_theme_pack` | `validate_appearance`, which validates `themePack` for both `field` values, before any status check |
 | `malformed` | `SaveError::Malformed` |
 | `latest_not_valid` | `SaveError::LatestNotValid`, which is the error for an `invalid` config |
 | `unsupported_version` | `SaveError::UnsupportedVersion` |
@@ -119,7 +115,8 @@ Deserialization fails for the following reasons, because the request uses
 `deny_unknown_fields` and has no optional keys:
 
 - an unknown extra key;
-- an unknown `intent`, `field` or `mode`;
+- the retired `intent` key, with any value;
+- an unknown `field` or `mode`;
 - a missing key.
 
 ## Parity scope
@@ -136,21 +133,18 @@ The following are out of scope for this table:
   `main` window. The stub has no window labels, and an existing unit test in
   `settings_commands.rs` covers this rejection.
 - Revision conflicts and I/O failures during the save.
-- `legacy_candidate` with a non-missing, non-valid status. That case returns
-  `envelope(latest)` with the status's default projection.
 
-## Contract notes (code vs. the epic #302 summary)
+## Contract notes
 
-- An `invalid` config makes `persist` fail with the code `latest_not_valid`. No
+- An `invalid` config makes the save fail with the code `latest_not_valid`. No
   error code is named `invalid`.
-- `validate_appearance` checks `themePack` even when `field` is `mode` and even
-  for `legacy_candidate`. A request whose untouched `themePack` is unknown is
-  therefore rejected.
+- `validate_appearance` checks `themePack` even when `field` is `mode`. A
+  request whose untouched `themePack` is unknown is therefore rejected.
 - A deserialization failure returns a plain Tauri string error, not a
   `CommandError` code. See `invalid_args` above.
-- `legacy_candidate` with a present config does not report or clear a
-  candidate. Any earlier candidate is kept, and the envelope ignores it.
-- `legacy_candidate` with a missing config replaces any earlier candidate,
-  including its origin.
-- `envelope()` uses the candidate for any origin. `candidate_for(origin)` is not
-  used on this path.
+- Schema v2 has no legacy-candidate path. The docs page never imports old
+  zudo-doc browser storage into the config; only an explicit change on the docs
+  page or a Settings Save writes appearance.
+- The Rust parity test lives in the Tauri-free `ccresdoc-host-domain` crate,
+  which compiles `src-tauri/src/appearance.rs` and `settings.rs` directly, so it
+  runs on any cloud host.

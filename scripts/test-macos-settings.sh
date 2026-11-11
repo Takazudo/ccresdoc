@@ -69,10 +69,10 @@ make_fixtures() {
 write_config() {
   local source="$1" port="$2" fallback="$3"
   {
-    printf '%s\n\n' 'schema_version = 1'
+    printf '%s\n\n' 'schema_version = 2'
     printf '%s\n' '[source]'
     printf 'claude_dir = %s\n\n' "$(json_quote "$source")"
-    printf '%s\n' '[appearance]' 'mode = "dark"' 'theme_pack = "default"' ''
+    printf '%s\n' '[appearance]' 'mode = "dark"' 'theme_pack = "classic"' ''
     printf '%s\n' '[server]'
     printf 'preferred_port = %s\nfallback_to_free_port = %s\n' "$port" "$fallback"
   } > "$CONFIG_PATH"
@@ -349,12 +349,28 @@ test "$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')" = "$malformed_hash"
 quit_released 4892
 foreign_alive
 
+# A recognized schema-v1 file is retired at startup and no config is created
+# until Save; a future-version file is protected byte for byte.
+printf 'schema_version = 1\n\n[appearance]\nmode = "dark"\ntheme_pack = "default"\n' > "$CONFIG_PATH"
+launch_app
+wait_ready 4892 "$default_slug" "Default settings source fixture."
+test ! -e "$CONFIG_PATH"
+quit_released 4892
+
+printf 'schema_version = 3\n\n[server]\npreferred_port = 4892\n' > "$CONFIG_PATH"
+future_hash="$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')"
+launch_app
+wait_ready 4892 "$default_slug" "Default settings source fixture."
+test "$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')" = "$future_hash"
+quit_released 4892
+foreign_alive
+
 node --input-type=module - "$CONFIG_PATH" "$AUTHORED_SOURCE" "$PROBE_HOME" "$PROBE_DIR" "$XDG_CONFIG_HOME" "$FOREIGN_PORT" "$FALLBACK_EFFECTIVE" "$SECOND_EFFECTIVE" <<'NODE'
 const [configPath, source, home, tempDir, xdgConfigHome, preferred, effective, secondEffective] = process.argv.slice(2);
 console.log(JSON.stringify({
   status: "passed",
   isolation: { configPath, source, home, tempDir, xdgConfigHome, ephemeralWebView: true },
-  settings: { preferredPort: Number(preferred), effectivePort: Number(effective), secondEffectivePort: Number(secondEffective), fallbackUsed: Number(preferred) !== Number(effective), missingConfigUsesDefaults: true, malformedBytesPreserved: true },
+  settings: { preferredPort: Number(preferred), effectivePort: Number(effective), secondEffectivePort: Number(secondEffective), fallbackUsed: Number(preferred) !== Number(effective), missingConfigUsesDefaults: true, malformedBytesPreserved: true, recognizedV1Retired: true, futureVersionPreserved: true },
   runtime: { ready: true, relaunch: true, ownedChildCleanup: true, foreignListenerSurvived: true },
   production: { bundleIdentity: "com.takazudo.ccresdoc", testFixturesPackaged: false },
 }, null, 2));

@@ -20,7 +20,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
       active: { usesAuthoredSettings: true, sourceIsAuthored: true, preferredPort: 4892, effectivePort: 4892 }, validation: [],
     },
     runtime: { phase: "ready", active: { ...DEFAULT_DRAFT, shortcuts: defaultShortcuts(), claudeDir: "/Users/test/.claude", effectivePort: 4892 }, fallbackUsed: false, diagnostic: null },
-    actions: { canSave: true, canRebase: true, canReplaceMalformed: false }, defaults: { ...DEFAULT_DRAFT, shortcuts: defaultShortcuts() }, themePacks: ["default", "paper"], shortcutCatalog,
+    actions: { canSave: true, canRebase: true, canReplaceMalformed: false }, defaults: { ...DEFAULT_DRAFT, shortcuts: defaultShortcuts() }, themePacks: ["classic", "graphite"], shortcutCatalog,
   };
   return { ...base, ...overrides } as any;
 }
@@ -199,9 +199,9 @@ describe("bundled Settings editor", () => {
     const current = setup(snapshot(), true); await current.editor.load(); await flush();
     const dark = document.querySelector('[name="appearance-mode"][value="dark"]') as HTMLInputElement;
     dark.checked = true; dark.dispatchEvent(new Event("change", { bubbles: true })); await flush();
-    expect(current.backend.previewAppearance).toHaveBeenCalledWith("dark", "default");
+    expect(current.backend.previewAppearance).toHaveBeenCalledWith("dark", "classic");
     expect(document.documentElement.dataset.theme).toBe("dark");
-    current.backend.clearAppearancePreview.mockResolvedValueOnce({ appearance: { mode: "light", themePack: "default" } });
+    current.backend.clearAppearancePreview.mockResolvedValueOnce({ appearance: { mode: "light", themePack: "classic" } });
     await current.editor.cancel(); await flush();
     expect(current.backend.clearAppearancePreview).toHaveBeenCalled();
     expect(document.documentElement.dataset.theme).toBe("light");
@@ -216,7 +216,7 @@ describe("bundled Settings editor", () => {
 
     const future = setup(snapshot({ settings: { ...snapshot().settings, status: "unsupported_version" }, actions: { canSave: false, canRebase: false, canReplaceMalformed: false } })); await future.editor.load(); await flush(); expect((document.querySelector("#claude-dir") as HTMLInputElement).disabled).toBe(true); expect((document.querySelector("#replace-malformed") as HTMLButtonElement).disabled).toBe(true);
 
-    const unavailable = setup(snapshot({ settings: { ...snapshot().settings, authored: { ...DEFAULT_DRAFT, themePack: "gone" }, effective: { ...snapshot().settings.effective, themePack: "default" }, validation: [{ kind: "theme_pack_unavailable", field: "appearance.theme_pack", message: "gone unavailable", blocking: false }] } })); await unavailable.editor.load(); await flush(); expect((document.querySelector("#theme-pack") as HTMLSelectElement).value).toBe("gone"); expect(document.querySelector("#theme-status")?.textContent).toContain("gone / default"); const dark = document.querySelector('[name="appearance-mode"][value="dark"]') as HTMLInputElement; dark.checked = true; dark.dispatchEvent(new Event("change", { bubbles: true })); await flush(); expect(unavailable.backend.previewAppearance).toHaveBeenCalledWith("dark", "default");
+    const unavailable = setup(snapshot({ settings: { ...snapshot().settings, authored: { ...DEFAULT_DRAFT, themePack: "gone" }, effective: { ...snapshot().settings.effective, themePack: "classic" }, validation: [{ kind: "theme_pack_unavailable", field: "appearance.theme_pack", message: "gone unavailable", blocking: false }] } })); await unavailable.editor.load(); await flush(); expect((document.querySelector("#theme-pack") as HTMLSelectElement).value).toBe("gone"); expect(document.querySelector("#theme-status")?.textContent).toContain("gone / classic"); const dark = document.querySelector('[name="appearance-mode"][value="dark"]') as HTMLInputElement; dark.checked = true; dark.dispatchEvent(new Event("change", { bubbles: true })); await flush(); expect(unavailable.backend.previewAppearance).toHaveBeenCalledWith("dark", "classic");
 
     const stale = setup(); await stale.editor.load(); await flush(); const port = document.querySelector("#preferred-port") as HTMLInputElement; port.value = "5001"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush(); stale.setSnapshot(snapshot({ settings: { ...snapshot().settings, revision: "sha256:external" } })); await stale.editor.load({ detectConflict: true }); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); port.value = "5002"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush(); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); stale.backend.rebaseStale.mockRejectedValueOnce({ code: "revision_conflict", message: "changed again" }); await stale.editor.reapply(); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); expect(stale.backend.rebaseStale).toHaveBeenCalledWith(expect.objectContaining({ preferredPort: 5002 }), new Set(["preferredPort"]), "sha256:one");
   });
