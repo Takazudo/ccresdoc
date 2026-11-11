@@ -57,9 +57,11 @@ pnpm --dir app exec playwright install chromium
 pnpm run test:browser-navigation
 ```
 
-CI installs the pinned Chromium package with `--with-deps` and runs this
-command in its own ten-minute step. `pnpm b4push` includes the same browser
-step when Chromium is installed locally. The harness preflight also checks the
+CI strictly installs the pinned Chromium package, runs a separate best-effort
+`playwright install-deps chromium` step for Ubuntu system packages, and then
+runs this command in its own ten-minute step, which must launch Chromium and
+pass. `pnpm b4push` runs the same browser step as its tenth step and fails it
+when Chromium is not installed locally. The harness preflight also checks the
 runtime source allowlist boundary, narrow Tauri capabilities, command catalog,
 Playwright/lockfile pin, and the exact controlled Find/Search patch digest.
 
