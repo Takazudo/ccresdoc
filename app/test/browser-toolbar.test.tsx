@@ -1,9 +1,5 @@
-/** @jsxRuntime automatic */
-/** @jsxImportSource preact */
-
-import { act } from "preact/test-utils";
-import { render } from "preact";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { mountView, settle } from "./helpers/zudo-react";
 import { BrowserToolbarView } from "../src/browser-chrome/toolbar";
 import type { BrowserCommandEnvelope, BrowserToolbarAdapter, BrowserToolbarSnapshot } from "../src/browser-chrome/types";
 
@@ -22,7 +18,7 @@ const snapshot: BrowserToolbarSnapshot = {
   },
 };
 
-const roots: HTMLElement[] = [];
+const extras: HTMLElement[] = [];
 function mount() {
   const execute = vi.fn(async (_envelope: BrowserCommandEnvelope) => true);
   const adapter: BrowserToolbarAdapter = {
@@ -31,15 +27,9 @@ function mount() {
     start: () => () => undefined,
     execute,
   };
-  const root = document.createElement("div");
-  document.body.append(root); roots.push(root);
-  act(() => render(<BrowserToolbarView adapter={adapter} />, root));
+  const { container: root } = mountView(BrowserToolbarView, { adapter });
   return { root, execute };
 }
-
-afterEach(() => {
-  for (const root of roots.splice(0)) { act(() => render(null, root)); root.remove(); }
-});
 
 describe("browser toolbar", () => {
   it("renders the neutral snapshot with accessible actions and path", () => {
@@ -64,14 +54,14 @@ describe("browser toolbar", () => {
     const { root } = mount();
     const trigger = root.querySelector<HTMLButtonElement>("[data-browser-command='more']")!;
     trigger.focus();
-    act(() => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })); });
-    await Promise.resolve();
+    trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    await settle();
     const menu = root.querySelector<HTMLElement>("[role='menu']")!;
     expect(menu.hidden).toBe(false);
     expect(document.activeElement?.getAttribute("data-browser-command")).toBe("search-documentation");
 
-    act(() => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
-    await Promise.resolve();
+    document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await settle();
     expect(menu.hidden).toBe(true);
     expect(document.activeElement).toBe(trigger);
   });
@@ -79,8 +69,8 @@ describe("browser toolbar", () => {
   it("opens More with ArrowUp focused on the last available item", async () => {
     const { root } = mount();
     const trigger = root.querySelector<HTMLButtonElement>("[data-browser-command='more']")!;
-    act(() => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true })); });
-    await Promise.resolve();
+    trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+    await settle();
     expect(document.activeElement?.getAttribute("data-browser-command")).toBe("copy-page-path");
   });
 
@@ -91,23 +81,22 @@ describe("browser toolbar", () => {
     const outside = document.createElement("button");
     outside.addEventListener("pointerdown", (event) => event.stopPropagation());
     document.body.append(outside);
-    roots.push(outside);
+    extras.push(outside);
 
-    act(() => { trigger.click(); });
-    await Promise.resolve();
+    trigger.click();
+    await settle();
     expect(menu.hidden).toBe(false);
 
-    act(() => {
-      outside.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-    });
-    await Promise.resolve();
+    outside.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    await settle();
     expect(menu.hidden).toBe(true);
   });
 
-  it("routes direct and overflow actions through the same adapter", () => {
+  it("routes direct and overflow actions through the same adapter", async () => {
     const { root, execute } = mount();
     root.querySelector<HTMLButtonElement>("[data-browser-command='back']")!.click();
     root.querySelector<HTMLButtonElement>("[data-browser-command='more']")!.click();
+    await settle();
     root.querySelector<HTMLButtonElement>("[data-browser-command='copy-page-path'][role='menuitem']")!.click();
     expect((execute.mock.calls[0]?.[0] as BrowserCommandEnvelope)).toMatchObject({ commandId: "back", origin: "toolbar" });
     expect((execute.mock.calls[1]?.[0] as BrowserCommandEnvelope)).toMatchObject({ commandId: "copy-page-path", origin: "overflow" });

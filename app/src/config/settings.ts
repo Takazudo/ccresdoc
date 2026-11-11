@@ -87,7 +87,7 @@ export const settings = {
   // No frontmatter preview
   frontmatterPreview: false as false,
   packageOwnedRoutes: false,
-  themePack: "default",
+  themePack: "classic",
   themePackSwitcher: true,
   themePacks: themePackSlugs,
 } satisfies Settings;

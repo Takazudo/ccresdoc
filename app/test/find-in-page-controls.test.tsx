@@ -1,9 +1,6 @@
-/** @jsxRuntime automatic */
-/** @jsxImportSource preact */
-
-import { act } from "preact/test-utils";
-import { render } from "preact";
+import { createIslandTest, type IslandTest } from "@takazudo/zfb/zudo-react/testing";
 import { afterEach, describe, expect, it } from "vitest";
+import { settle } from "./helpers/zudo-react";
 import {
   FindInPageInit,
   closeFindInPage,
@@ -12,8 +9,20 @@ import {
 } from "@takazudo/zudo-doc/find-in-page";
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+const islands: IslandTest[] = [];
+
+async function startFindInPage(): Promise<IslandTest> {
+  const island = createIslandTest(FindInPageInit, { disableBuiltInShortcut: true }, { document });
+  islands.push(island);
+  expect(island.hydrate()).not.toBeNull();
+  expect(island.diagnostics).toEqual([]);
+  await flush();
+  await settle();
+  return island;
+}
 
 afterEach(() => {
+  for (const island of islands.splice(0)) island.dispose();
   delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   document.body.replaceChildren();
 });
@@ -21,9 +30,9 @@ afterEach(() => {
 describe("controlled Find in Page", () => {
   it("opens through the public seam with helper-free search and icon controls", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
-    act(() => render(<FindInPageInit disableBuiltInShortcut />, document.body));
-    await act(async () => { await flush(); });
-    act(() => openFindInPage());
+    const island = await startFindInPage();
+    openFindInPage();
+    await settle();
 
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Find in page"]');
     expect(input).not.toBeNull();
@@ -39,23 +48,24 @@ describe("controlled Find in Page", () => {
     ]);
 
     input?.blur();
-    act(() => openFindInPage());
+    openFindInPage();
+    await settle();
     expect(document.activeElement).toBe(input);
 
-    act(() => closeFindInPage());
+    closeFindInPage();
+    await settle();
     expect(document.querySelector('[data-find-in-page-bar]')).toBeNull();
-    act(() => render(null, document.body));
+    island.dispose();
   });
 
   it.each(["ctrlKey", "metaKey"] as const)("opts out of the built-in shortcut (%s)", async (modifier) => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
-    act(() => render(<FindInPageInit disableBuiltInShortcut />, document.body));
-    await act(async () => { await flush(); });
+    const island = await startFindInPage();
     const event = new KeyboardEvent("keydown", { key: "f", [modifier]: true, bubbles: true, cancelable: true });
     document.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false);
     expect(document.querySelector('[data-find-in-page-bar]')).toBeNull();
-    act(() => render(null, document.body));
+    island.dispose();
   });
 
   it("filters hidden, chrome, script, control, and widget subtrees and restores content idempotently", () => {
@@ -94,21 +104,21 @@ describe("controlled Find in Page", () => {
     article.className = "zd-content";
     article.textContent = "route needle";
     document.body.append(article);
-    const mount = document.createElement("div");
-    document.body.append(mount);
-    act(() => render(<FindInPageInit disableBuiltInShortcut />, mount));
-    await act(async () => { await flush(); });
-    act(() => openFindInPage());
+    const island = await startFindInPage();
+    openFindInPage();
+    await settle();
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Find in page"]')!;
     input.value = "needle";
-    act(() => { input.dispatchEvent(new Event("input", { bubbles: true })); });
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
     expect(article.querySelectorAll("[data-find-match]")).toHaveLength(1);
 
-    act(() => { document.dispatchEvent(new Event("zfb:before-preparation")); });
+    document.dispatchEvent(new Event("zfb:before-preparation"));
+    await settle();
     expect(article.querySelectorAll("[data-find-match]")).toHaveLength(0);
     expect(document.querySelector('[data-find-in-page-bar]')).toBeNull();
 
-    act(() => render(null, mount));
+    island.dispose();
     expect(article.querySelectorAll("[data-find-match]")).toHaveLength(0);
   });
 });

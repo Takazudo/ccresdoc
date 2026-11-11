@@ -1,11 +1,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { act } from "preact/test-utils";
-import { render } from "preact";
+import { createIslandTest } from "@takazudo/zfb/zudo-react/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // The bundled editor is deliberately framework-free and shared verbatim with Tauri.
 import { createSettingsEditor, DEFAULT_DRAFT } from "../../src-tauri/frontend/settings-shell.mjs";
-import { openSettingsFromDocs, SettingsHeaderButton } from "../pages/lib/_chrome";
+import { openSettingsFromDocs, SettingsHeaderButton } from "../pages/lib/_settings-button";
 import shortcutCatalog from "../src/browser-chrome/command-catalog.json";
 
 const htmlPath = resolve(process.cwd(), "../src-tauri/frontend/settings.html");
@@ -224,19 +223,42 @@ describe("bundled Settings editor", () => {
 });
 
 describe("documentation header Settings entry point", () => {
-  it("renders Settings unavailable outside Tauri", () => {
+  it("stays pending until activation, then renders Settings unavailable outside Tauri", async () => {
     delete (globalThis as any).__TAURI__;
-    const mount = document.createElement("div"); document.body.append(mount);
-    act(() => render(SettingsHeaderButton(), mount));
-    const button = mount.querySelector("button")!;
+    const island = createIslandTest(SettingsHeaderButton, {}, { document });
+    const ssrButton = island.host.querySelector("button")!;
+    expect(ssrButton.disabled).toBe(false);
+    expect(ssrButton.getAttribute("aria-disabled")).toBe("true");
+    expect(ssrButton.hasAttribute("data-zd-pending")).toBe(true);
+    expect(island.hydrate()).not.toBeNull();
+    await island.flush();
+    expect(island.diagnostics).toEqual([]);
+    const button = island.host.querySelector("button")!;
     expect(button.disabled).toBe(true);
     expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.hasAttribute("data-zd-pending")).toBe(false);
+    island.dispose();
   });
 
   it("renders an accessible gear and invokes only the narrow open command", async () => {
     const invoke = vi.fn(async () => {}); const root = { __TAURI__: { core: { invoke } } } as any;
     await openSettingsFromDocs(root); expect(invoke).toHaveBeenCalledWith("open_settings_window");
-    const mount = document.createElement("div"); document.body.append(mount); (globalThis as any).__TAURI__ = root.__TAURI__;
-    act(() => render(SettingsHeaderButton(), mount)); const button = mount.querySelector("button")!; expect(button.getAttribute("aria-label")).toBe("Open Settings"); expect(button.title).toBe("Settings"); expect(button.disabled).toBe(false); button.click(); await flush(); expect(invoke).toHaveBeenCalledTimes(2); delete (globalThis as any).__TAURI__;
+    (globalThis as any).__TAURI__ = root.__TAURI__;
+    try {
+      const island = createIslandTest(SettingsHeaderButton, {}, { document });
+      expect(island.hydrate()).not.toBeNull();
+      await island.flush();
+      const button = island.host.querySelector("button")!;
+      expect(button.getAttribute("aria-label")).toBe("Open Settings");
+      expect(button.title).toBe("Settings");
+      expect(button.disabled).toBe(false);
+      expect(button.hasAttribute("aria-disabled")).toBe(false);
+      expect(button.hasAttribute("data-zd-pending")).toBe(false);
+      button.click(); await flush();
+      expect(invoke).toHaveBeenCalledTimes(2);
+      island.dispose();
+    } finally {
+      delete (globalThis as any).__TAURI__;
+    }
   });
 });

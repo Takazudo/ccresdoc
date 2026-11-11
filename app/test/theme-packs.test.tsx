@@ -10,18 +10,17 @@ describe("CCResDoc theme-pack host integration", () => {
     expect(themePackSlugs).toEqual(
       themePackCatalog.packs.map(({ slug }) => slug),
     );
-    expect(settings.themePack).toBe("default");
+    expect(settings.themePack).toBe("classic");
     expect(settings.themePackSwitcher).toBe(true);
     expect(settings.themePacks).toEqual(themePackSlugs);
     expect(themePackRegistry).toEqual(themePackCatalog.packs);
-    expect(themePackRegistry[0]).toMatchObject({
-      slug: "default",
-      hasStylesheet: false,
-    });
-    expect(themePackRegistry.slice(1).every(({ hasStylesheet }) => hasStylesheet))
-      .toBe(true);
+    const stylesheetless = themePackRegistry.filter(
+      ({ hasStylesheet }) => !hasStylesheet,
+    );
+    expect(stylesheetless.map(({ slug }) => slug)).toEqual(["classic"]);
+    expect(themePackRegistry.some(({ slug }) => slug === "default")).toBe(false);
     expect(resolveThemePackSsrSlug(themePackRegistry, settings)).toBe(
-      "default",
+      "classic",
     );
   });
 
