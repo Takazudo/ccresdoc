@@ -1,9 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Tauri merges this file into the bundle. The macOS 27 launch floor lives here, not in
-     tauri.conf.json minimumSystemVersion: that setting also exports MACOSX_DEPLOYMENT_TARGET to the
-     whole cargo build, and at 27.0 the Xcode 27.2 linker emits host proc-macro dylibs that dyld
-     rejects ("mis-aligned LINKEDIT string pool"). See issue #330. -->
+<!-- macOS floor lives here, not in minimumSystemVersion, which breaks the proc-macro build; see #330 -->
 <plist version="1.0">
 <dict>
 	<key>LSMinimumSystemVersion</key>
