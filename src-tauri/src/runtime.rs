@@ -1861,12 +1861,25 @@ mod tests {
                     ),
                     _ => (404, String::new()),
                 };
-                write!(
-                    stream,
-                    "HTTP/1.0 {status} OK\r\nContent-Length: {}\r\n\r\n{body}",
-                    body.len()
-                )
-                .unwrap();
+                let written = stream.write_all(
+                    format!(
+                        "HTTP/1.0 {status} OK\r\nContent-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                );
+                // probe_status closes a module entry after its status line, so
+                // the rest of that response may be reset, as a real server sees.
+                match written {
+                    Err(error)
+                        if path == "/assets/islands.js"
+                            && matches!(
+                                error.kind(),
+                                std::io::ErrorKind::ConnectionReset
+                                    | std::io::ErrorKind::BrokenPipe
+                            ) => {}
+                    other => other.unwrap(),
+                }
             }
         });
 
