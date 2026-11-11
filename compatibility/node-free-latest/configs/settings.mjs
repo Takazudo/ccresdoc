@@ -1,6 +1,6 @@
 export const probeSettings = {
   siteName: "CCResDoc compatibility probe",
-  siteDescription: "zfb 2.22.0 + zudo-doc 5.28.0 node-free architecture probe",
+  siteDescription: "zfb 6.0.1 + zudo-doc 10.0.2 node-free architecture probe",
   port: 4892,
   base: "/",
   trailingSlash: true,
@@ -18,8 +18,10 @@ export const probeSettings = {
   codexResources: false,
   siteTreeNavIgnore: [],
   docHistory: false,
+  designTokenPanel: false,
+  math: false,
   llmsTxt: false,
   changelogs: false,
-  themePack: "default",
+  themePack: "classic",
   themePacks: undefined,
 };

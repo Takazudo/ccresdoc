@@ -156,11 +156,15 @@ try {
   assert.equal(child.exitCode, null, serverLog);
   assert.match(home, /data-zfb-island="ProbeCounter"/);
   assert.match(home, /data-props="\{&quot;initial&quot;:2\}"/);
-  assert.match(home, /<script type="module" src="\/assets\/islands\.js"><\/script>/);
+  // zfb injects the islands entry into <head>; follow the URL the page
+  // actually references instead of assuming a filename.
+  const islandEntries = [...home.matchAll(/<script\b[^>]*\bsrc="?([^"\s>]*islands[^"\s>]*\.js)"?[^>]*>/g)]
+    .map((match) => match[1]);
+  assert.equal(islandEntries.length, 1, `exactly one islands entry script: ${islandEntries.join(", ")}`);
   // The HTML cache can become ready one tick before the island asset cache on
   // a cold native start. Poll both through the same readiness helper so this
   // remains a runtime assertion instead of a scheduler-sensitive race.
-  const islands = await fetchUntil("/assets/islands.js", "ProbeCounter");
+  const islands = await fetchUntil(islandEntries[0], "ProbeCounter");
   assert.match(islands, /ProbeCounter/);
 
   const docs = await fetchUntil("/docs/probe/", "The directive pipeline is active.");

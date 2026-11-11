@@ -15,7 +15,7 @@
       "info package route `/robots.txt` → pages/robots.txt.tsx",
       "info package route `/docs/[[...slug]]` → pages/docs/[[...slug]].tsx",
       "✓ 4 pages built in <duration>",
-      "zfb info: [plugin:search-index] Generated search index with 1 entries"
+      "zfb info: ZB010 plugin:search-index: Generated search index with 1 entries"
     ]
   },
   "routes-off": {
@@ -26,14 +26,14 @@
       "--enable-source-maps <zfb-plugin-host>/plugin-host.mjs"
     ],
     "checkTail": [
-      "zudo-doc: packageOwnedRoutes is off but doc content is configured — no doc routes will be injected; the build will produce only host pages/. Set packageOwnedRoutes: true in settings.",
       "info running <isolated-workspace>/node_modules/.bin/tsc --noEmit",
-      "✓ checked 1 collection and tsc — no errors"
+      "✓ checked 1 collection and tsc — no errors",
+      "zudo-doc: packageOwnedRoutes is off but doc content is configured — no doc routes will be injected; the build will produce only host pages/. Set packageOwnedRoutes: true in settings."
     ],
     "buildTail": [
-      "zudo-doc: packageOwnedRoutes is off but doc content is configured — no doc routes will be injected; the build will produce only host pages/. Set packageOwnedRoutes: true in settings.",
       "✓ 2 pages built in <duration>",
-      "zfb info: [plugin:search-index] Generated search index with 1 entries"
+      "zudo-doc: packageOwnedRoutes is off but doc content is configured — no doc routes will be injected; the build will produce only host pages/. Set packageOwnedRoutes: true in settings.",
+      "zfb info: ZB010 plugin:search-index: Generated search index with 1 entries"
     ]
   },
   "selected": {
@@ -42,13 +42,13 @@
     "nodeInvocationsDuringBuild": 0,
     "nodeInvocationArgs": [],
     "checkTail": [
-      "zudo-doc: packageOwnedRoutes is off but doc content is configured — no doc routes will be injected; the build will produce only host pages/. Set packageOwnedRoutes: true in settings.",
       "info running <isolated-workspace>/node_modules/.bin/tsc --noEmit",
-      "✓ checked 1 collection and tsc — no errors"
+      "✓ checked 1 collection and tsc — no errors",
+      "zudo-doc: packageOwnedRoutes is off but doc content is configured — no doc routes will be injected; the build will produce only host pages/. Set packageOwnedRoutes: true in settings."
     ],
     "buildTail": [
-      "zudo-doc: packageOwnedRoutes is off but doc content is configured — no doc routes will be injected; the build will produce only host pages/. Set packageOwnedRoutes: true in settings.",
-      "✓ 2 pages built in <duration>"
+      "✓ 2 pages built in <duration>",
+      "zudo-doc: packageOwnedRoutes is off but doc content is configured — no doc routes will be injected; the build will produce only host pages/. Set packageOwnedRoutes: true in settings."
     ]
   },
   "manual": {

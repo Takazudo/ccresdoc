@@ -1,6 +1,5 @@
 {
   "wholesale": {
-    "framework": "preact",
     "port": 4892,
     "base": "/",
     "trailingSlash": true,
@@ -28,6 +27,13 @@
             "sidebar_label": {
               "type": "string"
             },
+            "sidebar_initial_expansion": {
+              "type": "string",
+              "enum": [
+                "collapsed",
+                "expanded"
+              ]
+            },
             "tags": {
               "type": "array",
               "items": {
@@ -38,23 +44,15 @@
               "type": "boolean"
             },
             "pagination_next": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
+              "type": [
+                "string",
+                "null"
               ]
             },
             "pagination_prev": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
+              "type": [
+                "string",
+                "null"
               ]
             },
             "draft": {
@@ -140,8 +138,9 @@
               "respectPrefersColorScheme": true
             },
             "siteName": "CCResDoc compatibility probe",
-            "siteDescription": "zfb 2.22.0 + zudo-doc 5.28.0 node-free architecture probe",
+            "siteDescription": "zfb 6.0.1 + zudo-doc 10.0.2 node-free architecture probe",
             "logo": "auto",
+            "headerBrand": false,
             "base": "/",
             "trailingSlash": true,
             "home": {
@@ -150,6 +149,7 @@
               "sitemapHeading": ""
             },
             "siteTreeNavIgnore": [],
+            "siteTreeNavInitiallyCollapsed": [],
             "siteTreeNavSecondary": [],
             "minifyHtml": true,
             "docsDir": "src/content/docs",
@@ -181,6 +181,8 @@
             "tagPlacement": "after-title",
             "tagGovernance": "off",
             "tagVocabulary": false,
+            "agentExport": false,
+            "mcp": false,
             "llmsTxt": false,
             "changelogs": false,
             "math": false,
@@ -224,7 +226,7 @@
               }
             ],
             "packageOwnedRoutes": true,
-            "themePack": "default",
+            "themePack": "classic",
             "themePackSwitcher": false
           },
           "translations": {
@@ -788,7 +790,7 @@
         "name": "@takazudo/zudo-doc/plugins/theme-packs",
         "options": {
           "base": "/",
-          "themePack": "default"
+          "themePack": "classic"
         }
       },
       {
@@ -800,6 +802,14 @@
       },
       {
         "name": "@takazudo/zudo-doc/plugins/zdtp-loader",
+        "options": {}
+      },
+      {
+        "name": "@takazudo/zudo-doc/plugins/katex-loader",
+        "options": {}
+      },
+      {
+        "name": "@takazudo/zudo-doc/plugins/diff-loader",
         "options": {}
       }
     ],
@@ -853,7 +863,6 @@
     "stripMdExt": true
   },
   "routesOff": {
-    "framework": "preact",
     "port": 4892,
     "base": "/",
     "trailingSlash": true,
@@ -881,6 +890,13 @@
             "sidebar_label": {
               "type": "string"
             },
+            "sidebar_initial_expansion": {
+              "type": "string",
+              "enum": [
+                "collapsed",
+                "expanded"
+              ]
+            },
             "tags": {
               "type": "array",
               "items": {
@@ -891,23 +907,15 @@
               "type": "boolean"
             },
             "pagination_next": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
+              "type": [
+                "string",
+                "null"
               ]
             },
             "pagination_prev": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
+              "type": [
+                "string",
+                "null"
               ]
             },
             "draft": {
@@ -1004,7 +1012,7 @@
         "name": "@takazudo/zudo-doc/plugins/theme-packs",
         "options": {
           "base": "/",
-          "themePack": "default"
+          "themePack": "classic"
         }
       },
       {
@@ -1016,6 +1024,14 @@
       },
       {
         "name": "@takazudo/zudo-doc/plugins/zdtp-loader",
+        "options": {}
+      },
+      {
+        "name": "@takazudo/zudo-doc/plugins/katex-loader",
+        "options": {}
+      },
+      {
+        "name": "@takazudo/zudo-doc/plugins/diff-loader",
         "options": {}
       }
     ],
@@ -1069,7 +1085,6 @@
     "stripMdExt": true
   },
   "selected": {
-    "framework": "preact",
     "port": 4892,
     "base": "/",
     "trailingSlash": true,
@@ -1097,6 +1112,13 @@
             "sidebar_label": {
               "type": "string"
             },
+            "sidebar_initial_expansion": {
+              "type": "string",
+              "enum": [
+                "collapsed",
+                "expanded"
+              ]
+            },
             "tags": {
               "type": "array",
               "items": {
@@ -1107,23 +1129,15 @@
               "type": "boolean"
             },
             "pagination_next": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
+              "type": [
+                "string",
+                "null"
               ]
             },
             "pagination_prev": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
+              "type": [
+                "string",
+                "null"
               ]
             },
             "draft": {
@@ -1247,7 +1261,6 @@
     "stripMdExt": true
   },
   "manual": {
-    "framework": "preact",
     "port": 4892,
     "base": "/",
     "trailingSlash": true,
@@ -1275,6 +1288,13 @@
             "sidebar_label": {
               "type": "string"
             },
+            "sidebar_initial_expansion": {
+              "type": "string",
+              "enum": [
+                "collapsed",
+                "expanded"
+              ]
+            },
             "tags": {
               "type": "array",
               "items": {
@@ -1285,23 +1305,15 @@
               "type": "boolean"
             },
             "pagination_next": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
+              "type": [
+                "string",
+                "null"
               ]
             },
             "pagination_prev": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
+              "type": [
+                "string",
+                "null"
               ]
             },
             "draft": {

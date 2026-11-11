@@ -1,6 +1,3 @@
-/** @jsxRuntime automatic */
-/** @jsxImportSource preact */
-
 import { getEntry } from "@takazudo/zfb/content";
 import { mdxComponents } from "../_mdx-components";
 

@@ -19,7 +19,7 @@
     "zfb": "zfb",
     "sync:theme-packs": "node scripts/sync-theme-packs.mjs",
     "validate:theme-packs": "node scripts/sync-theme-packs.mjs --check",
-    "validate:dependencies": "node ../scripts/validate-dependencies.mjs --installed",
+    "validate:dependencies": "node ../scripts/validate-dependencies.mjs --installed --scope app",
     "typecheck": "tsc --noEmit",
     "precheck:zfb": "pnpm run sync:theme-packs",
     "check:zfb": "zfb check",

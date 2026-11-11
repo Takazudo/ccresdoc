@@ -87,6 +87,11 @@ export const settings = {
   // No frontmatter preview
   frontmatterPreview: false as false,
   packageOwnedRoutes: false,
+  // Explicitly disabled optional features: each would add a Node plugin, a
+  // peer package or a client loader that the node-free runtime does not ship.
+  designTokenPanel: false,
+  docHistory: false,
+  math: false,
   themePack: "classic",
   themePackSwitcher: true,
   themePacks: themePackSlugs,
