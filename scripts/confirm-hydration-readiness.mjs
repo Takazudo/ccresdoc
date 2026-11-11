@@ -40,6 +40,7 @@ import {
   assertRuntimeWorkspacePrivacy,
 } from "./runtime-workspace-files.mjs";
 import { guardDocumentReloads, readPlantedState, recordDiagnostics, waitForDevSettled } from "./browser-harness.mjs";
+import { LOAD_CONTROL_SELECTORS, waitForLoadControls } from "./lib/load-controls.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appRoot = join(repoRoot, "app");
@@ -408,11 +409,7 @@ async function runBrowserSurface({ context, page, diagnostics, reloadGuard, base
   });
 
   await page.goto(docsUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
-  await page.waitForFunction(
-    () => document.documentElement.hasAttribute("data-ccresdoc-load-controls-ready"),
-    undefined,
-    { timeout: 30_000 },
-  );
+  await waitForLoadControls(page, 30_000);
   assertNoUnexpectedWorkspaceProcesses(workspace);
   assert.equal(mainDocumentRequests.length, 1, `cold start must have exactly one main-frame document navigation: ${mainDocumentRequests}`);
   assert.equal(failedRequests.length, 0, `WebKit reported failed module requests: ${JSON.stringify(failedRequests)}`);
@@ -438,16 +435,19 @@ async function runBrowserSurface({ context, page, diagnostics, reloadGuard, base
   await page.locator('[data-zfb-island="ThemePackSwitcher"] [data-switcher-card][role="dialog"]').waitFor({ state: "visible", timeout: 5_000 });
   await launcher.click();
 
-  // Capture the pending marker at frame cadence during a client-router swap.
-  // The allowed absence is bounded to the remount's synchronous load pass;
-  // long absence would be a visible flash and would make controls inert.
-  await page.evaluate(() => {
+  // Sample zudo-doc's own pending state at frame cadence during a client-router
+  // swap. Pending is allowed only for the remount's synchronous load pass;
+  // a longer interval would be a visible flash and would leave controls inert.
+  await page.evaluate((selectors) => {
     const state = { missingSince: null, missingMs: 0, missingFrames: 0, samples: 0, stopped: false };
     (window).__ccresdocHydrationSamples = state;
     const sample = () => {
       if (state.stopped) return;
       state.samples += 1;
-      const ready = document.documentElement.hasAttribute("data-ccresdoc-load-controls-ready");
+      const ready = selectors.every((selector) => {
+        const controls = document.querySelectorAll(selector);
+        return controls.length > 0 && [...controls].every((control) => !control.hasAttribute("data-zd-pending"));
+      });
       if (!ready) {
         state.missingSince ??= performance.now();
         state.missingFrames += 1;
@@ -458,17 +458,13 @@ async function runBrowserSurface({ context, page, diagnostics, reloadGuard, base
       requestAnimationFrame(sample);
     };
     requestAnimationFrame(sample);
-  });
+  }, LOAD_CONTROL_SELECTORS);
   await reloadGuard.checkpoint("client-router swap");
   const target = page.locator('a[href*="/docs/hydration-pages/page-001/"]').first();
   await target.waitFor({ state: "visible", timeout: 5_000 });
   await target.click();
   await page.waitForFunction(() => location.pathname.endsWith("/docs/hydration-pages/page-001/"), undefined, { timeout: 15_000 });
-  await page.waitForFunction(
-    () => document.documentElement.hasAttribute("data-ccresdoc-load-controls-ready"),
-    undefined,
-    { timeout: 15_000 },
-  );
+  await waitForLoadControls(page, 15_000);
   await delay(100);
   const planted = await readPlantedState(page, "__ccresdocHydrationSamples", { diagnostics });
   if (!planted.present) {

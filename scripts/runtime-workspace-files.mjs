@@ -9,6 +9,7 @@ import {
   statSync,
 } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
+import { ZUDO_DOC_PATCH } from "./lib/toolchain-contract.mjs";
 
 // This is intentionally a file-level allowlist.  The app source tree also
 // contains tests and, after a launch, generated resource details.  A recursive
@@ -17,16 +18,15 @@ export const RUNTIME_APP_FILES = Object.freeze([
   "package.json",
   "pnpm-lock.yaml",
   "pnpm-workspace.yaml",
-  "patches/@takazudo__zudo-doc@5.28.0.patch",
-  "patches/@takazudo__zfb-runtime@2.22.0.patch",
+  ZUDO_DOC_PATCH.path,
   "tsconfig.json",
   "zfb.config.ts",
   "pages/404.tsx",
   "pages/index.tsx",
   "pages/docs/[[...slug]].tsx",
-  "pages/lib/_chrome.ts",
+  "pages/lib/_chrome.tsx",
   "pages/lib/_route-context.ts",
-  "pages/lib/_settings-button.ts",
+  "pages/lib/_settings-button.tsx",
   "src/appearance/bridge.tsx",
   "src/browser-chrome/command-catalog.json",
   "src/browser-chrome/adapter.ts",

@@ -26,6 +26,9 @@ import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { guardDocumentReloads, readPlantedState, recordDiagnostics, waitForDevSettled } from "./browser-harness.mjs";
+import { waitForLoadControls } from "./lib/load-controls.mjs";
+import { ZUDO_DOC_PATCH } from "./lib/toolchain-contract.mjs";
+import { RUNTIME_APP_FILES } from "./runtime-workspace-files.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appRoot = join(repoRoot, "app");
@@ -152,25 +155,25 @@ function assertRepositoryContracts() {
     "configured shortcuts must use pressShortcut instead of a host-specific Playwright modifier",
   );
 
-  const chromeSource = readFileSync(join(appRoot, "pages/lib/_chrome.ts"), "utf8");
-  assert.match(chromeSource, /FindInPageInit,?\s*\{? disableBuiltInShortcut: true/s, "Find must opt out of the package shortcut");
-  assert.match(chromeSource, /disableBuiltInShortcut:\s*true/, "Search must opt out of the package shortcut");
+  const chromeSource = readFileSync(join(appRoot, "pages/lib/_chrome.tsx"), "utf8");
+  assert.match(chromeSource, /<FindInPageInit\s+disableBuiltInShortcut=\{true\}/, "Find must opt out of the package shortcut");
+  assert.match(chromeSource, /<SearchWidget[^>]*disableBuiltInShortcut=\{true\}/s, "Search must opt out of the package shortcut");
 
   // Test code is deliberately outside the staged app allowlist. These checks
   // make that privacy boundary visible to the browser gate itself.
   const runtimeFiles = readFileSync(join(repoRoot, "scripts/runtime-workspace-files.mjs"), "utf8");
   for (const required of [
-    "patches/@takazudo__zudo-doc@5.28.0.patch",
-    "patches/@takazudo__zfb-runtime@2.22.0.patch",
+    ZUDO_DOC_PATCH.path,
     "src/browser-chrome/command-catalog.json",
     "src/browser-chrome/adapter.ts",
     "src/browser-chrome/history.ts",
     "src/browser-chrome/toolbar.tsx",
     "src/browser-chrome/types.ts",
   ]) {
-    assert.match(runtimeFiles, new RegExp(`"${required.replaceAll(".", "\\.")}"`), `runtime allowlist is missing ${required}`);
+    assert(RUNTIME_APP_FILES.includes(required), `runtime allowlist is missing ${required}`);
   }
   assert.doesNotMatch(runtimeFiles, /confirm-browser-navigation|browser-navigation-contract/);
+  assert(!RUNTIME_APP_FILES.some((path) => /(?:^|\/)(?:test|__tests__)\/|\.test\./.test(path)), "test files must not be staged");
   for (const capability of ["default.json", "settings.json"]) {
     const manifest = readJson(join(repoRoot, "src-tauri/capabilities", capability));
     assert.deepEqual(
@@ -189,12 +192,12 @@ function assertRepositoryContracts() {
     const source = readFileSync(join(generatedPermissions, file), "utf8");
     assert.doesNotMatch(source, /\*|allow-all|test-only|fixture/i, `${file} contains a broad/test-only permission`);
   }
-  const patch = join(appRoot, "patches/@takazudo__zudo-doc@5.28.0.patch");
   assert.equal(
-    createHash("sha256").update(readFileSync(patch)).digest("hex"),
-    "24c9677848a98ae61b2eb39d1245f9409372f327ff5904a82e2bcf702ce0ddcf",
+    createHash("sha256").update(readFileSync(join(appRoot, ZUDO_DOC_PATCH.path))).digest("hex"),
+    ZUDO_DOC_PATCH.hash,
     "the controlled Find/Search patch bytes drifted",
   );
+  assert.deepEqual(readdirSync(join(appRoot, "patches")), [ZUDO_DOC_PATCH.path.slice("patches/".length)], "only the zudo-doc patch may exist");
 }
 
 function nativeZfbPath() {
@@ -709,11 +712,7 @@ async function openPage(page, origin, path) {
   await page.goto(`${origin}${path}`, { waitUntil: "domcontentloaded", timeout: browserTimeoutMs });
   await waitForToolbar(page);
   await waitForPath(page, path);
-  await page.waitForFunction(
-    () => document.documentElement.hasAttribute("data-ccresdoc-load-controls-ready"),
-    undefined,
-    { timeout: browserTimeoutMs },
-  );
+  await waitForLoadControls(page, browserTimeoutMs);
 }
 
 function toolbar(page) {
@@ -1391,7 +1390,7 @@ async function assertChromeOffsetDriftGuard(page, origin) {
 }
 
 // The chrome region wrapper is deliberately NOT a zfb persist root (see the
-// comment above ChromeRegion in pages/lib/_chrome.ts): it is expected to be
+// comment above ChromeRegion in pages/lib/_chrome.tsx): it is expected to be
 // a brand-new node after every soft navigation. Its two children each carry
 // their own independent persist key and must keep node identity. The footer
 // is a third, separate persist root and must also survive (issue #232's R3

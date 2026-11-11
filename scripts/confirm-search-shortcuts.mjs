@@ -15,7 +15,7 @@
  * Cmd/Ctrl+F checks would be false passes.
  *
  * Use --find-mount-only for a small regression proof.  Temporarily remove the
- * FindInPageInit island from app/pages/lib/_chrome.ts, run this mode, and the
+ * FindInPageInit island from app/pages/lib/_chrome.tsx, run this mode, and the
  * command must fail before reporting a green result.
  */
 
@@ -49,7 +49,7 @@ Options:
   --help               Show this help
 
 Regression proof:
-  Temporarily remove the FindInPageInit island from app/pages/lib/_chrome.ts,
+  Temporarily remove the FindInPageInit island from app/pages/lib/_chrome.tsx,
   then run \`pnpm run test:search-shortcuts -- --find-mount-only\`.  The command
   must exit non-zero with a missing-island or missing-find-bar assertion.
 `);
