@@ -1,6 +1,6 @@
 # Sidebar and navigation ownership
 
-CCResDoc uses the public navigation surface in `@takazudo/zudo-doc` 5.28.0.
+CCResDoc uses the public navigation surface in `@takazudo/zudo-doc` 10.0.2.
 The package owns sidebar rendering, filtering, persisted disclosure state,
 soft-navigation active state, mobile and desktop toggles, theme controls, smart
 path wrapping, and tree connector geometry. CCResDoc does not keep local copies
@@ -14,7 +14,7 @@ DOM behavior in happy-dom, and verifies duplicate-safe lifecycle cleanup.
 
 ## Accessibility contract and upstream deviation
 
-zudo-doc 5.28.0 exposes the sidebar as native links and disclosure buttons. The
+zudo-doc 10.0.2 exposes the sidebar as native links and disclosure buttons. The
 controls remain in the normal tab order and publish `aria-current`,
 `aria-expanded`, and descriptive labels. This is an accessible disclosure/link
 pattern, but it is not the WAI-ARIA tree pattern: the current public island does
@@ -25,28 +25,22 @@ retaining its rendering and keyboard state machine would fork the upstream
 component again. The DOM test records the difference so a future upstream
 implementation change is reviewed explicitly. Focus restoration to the
 hamburger after a navigation-driven mobile close is likewise not part of the
-5.28.0 public island contract and should be addressed upstream rather than in a
+10.0.2 public island contract and should be addressed upstream rather than in a
 host wrapper.
 
-At 5.28.0, Escape in the mobile drawer's Appearance menu stops propagation,
-closes the menu, and returns focus to its Appearance trigger; a second Escape
-closes the drawer. Re-checked at 5.28.0, the public island contract otherwise
-held: the package still has `sidebar-toggle-island`,
-`sidebar-tree-island`, and `sidebar-with-defaults`. The scan also covered
-`site-tree-nav-island`, `tree-nav-shared`, and `desktop-sidebar-toggle-island`.
-Those dist files still have no `role="tree"` / `role="treeitem"`, no
-`aria-controls`, and no `tabIndex` or roving tabindex. The islands that publish
-labels still use only `aria-current`, `aria-expanded`, `aria-hidden`, and
-`aria-label`. The disclosure/link pattern and the deviation recorded above are
-unchanged.
+Re-checked against the installed 10.0.2 dist: the package still has
+`sidebar-toggle-island`, `sidebar-tree-island`, `sidebar-with-defaults`,
+`site-tree-nav-island`, `tree-nav-shared` and `desktop-sidebar-toggle-island`.
+None of them emits `role="tree"` / `role="treeitem"` or `aria-controls`. The
+only `tabindex` uses are in `sidebar-tree-island`: `-1` on the `<nav>` as a
+programmatic focus target, and `-1` on a scope-focus button while it is
+`aria-disabled`. Neither is roving tabindex. The disclosure/link pattern and
+the deviation recorded above are unchanged.
 
-The 5.26.3–5.26.4 drawer fixes are behavior inside `sidebar-toggle-island`.
-5.26.3 hides the inactive icon with an inline `display:none`, so an unlayered
-consumer reset cannot paint the hamburger and the X together. 5.26.4 closes
-the open drawer on Escape and returns focus to the toggle; while the drawer is
-open the toggle uses `relative z-modal` so the X sits above the backdrop.
-Escape is listened for only while the drawer is open. A navigation-driven
-close still does not restore focus.
+While the mobile drawer is open, `sidebar-toggle-island` listens for Escape,
+ignores a composing or already-handled (`defaultPrevented`) key, closes the
+drawer and returns focus to the toggle. A navigation-driven close still does not
+restore focus.
 
 ## Browser verification handoff
 

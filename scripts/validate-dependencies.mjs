@@ -1,226 +1,41 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkInstalled, checkScope, checkScopesAgree } from "./lib/dependency-contract.mjs";
 
-const scriptDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = dirname(scriptDir);
-const appRoot = join(repoRoot, "app");
-const packageJson = JSON.parse(readFileSync(join(appRoot, "package.json"), "utf8"));
-const lockfile = readFileSync(join(appRoot, "pnpm-lock.yaml"), "utf8");
-const workspace = readFileSync(join(appRoot, "pnpm-workspace.yaml"), "utf8");
-const checkInstalled = process.argv.includes("--installed");
-const zudoDocPatch = {
-  version: "5.28.0",
-  path: "patches/@takazudo__zudo-doc@5.28.0.patch",
-  hash: "24c9677848a98ae61b2eb39d1245f9409372f327ff5904a82e2bcf702ce0ddcf",
+const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const roots = {
+  app: join(repoRoot, "app"),
+  probe: join(repoRoot, "compatibility", "node-free-latest"),
 };
-const runtimePatch = {
-  version: "2.22.0",
-  path: "patches/@takazudo__zfb-runtime@2.22.0.patch",
-  hash: "d59e187b9bda5edd9ce2c19c0d1be1b5638f7c6cb92aae87f1b13ff74cd53ad7",
-};
+const args = process.argv.slice(2);
+const installed = args.includes("--installed");
+const scopeArg = args.includes("--scope") ? args[args.indexOf("--scope") + 1] : "all";
+const scopes = scopeArg === "all" ? Object.keys(roots) : [scopeArg];
+if (!scopes.every((scope) => Object.hasOwn(roots, scope))) {
+  console.error(`unknown --scope ${scopeArg}; expected app, probe or all`);
+  process.exit(2);
+}
 
-const required = {
-  dependencies: {
-    "@takazudo/zfb": "2.22.0",
-    "@takazudo/zfb-md-wasm": "2.22.0",
-    "@takazudo/zfb-runtime": "2.22.0",
-    "@takazudo/zudo-doc": "5.28.0",
-    katex: "0.16.22",
-    preact: "10.29.1",
-    "preact-render-to-string": "6.6.7",
-    zod: "4.3.6",
-  },
-  optionalDependencies: {
-    "@takazudo/zfb-darwin-arm64": "2.22.0",
-    "@takazudo/zfb-darwin-x64": "2.22.0",
-    "@takazudo/zfb-linux-arm64-gnu": "2.22.0",
-    "@takazudo/zfb-linux-x64-gnu": "2.22.0",
-    "@takazudo/zfb-win32-x64-msvc": "2.22.0",
-  },
-  devDependencies: {
-    "@tailwindcss/vite": "4.2.0",
-    "happy-dom": "20.7.0",
-    playwright: "1.62.1",
-    tailwindcss: "4.2.0",
-    typescript: "5.9.2",
-    vitest: "4.0.17",
-  },
-};
-
+const read = (root, file) => readFileSync(join(root, file), "utf8");
+const manifests = {};
 const errors = [];
-const fail = (message) => errors.push(message);
-const equal = (actual, expected, label) => {
-  if (actual !== expected) fail(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
-};
-const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-equal(packageJson.name, "@ccresdoc/app", "app package name");
-equal(packageJson.packageManager, "pnpm@10.30.3", "app packageManager");
-equal(packageJson.engines?.node, ">=22.0.0", "app engines.node");
-equal(packageJson.engines?.pnpm, ">=10.0.0", "app engines.pnpm");
-
-for (const [section, expectedEntries] of Object.entries(required)) {
-  const actual = packageJson[section] ?? {};
-  for (const [name, version] of Object.entries(expectedEntries)) equal(actual[name], version, `app ${section}.${name}`);
-  for (const name of Object.keys(actual)) {
-    if (!Object.hasOwn(expectedEntries, name)) fail(`unexpected app ${section} entry: ${name}`);
-  }
+for (const scope of scopes) {
+  const root = roots[scope];
+  manifests[scope] = JSON.parse(read(root, "package.json"));
+  errors.push(...checkScope(scope, {
+    packageJson: manifests[scope],
+    lockfile: read(root, "pnpm-lock.yaml"),
+    workspace: read(root, "pnpm-workspace.yaml"),
+    readPatch: (path) => (existsSync(join(root, path)) ? readFileSync(join(root, path)) : null),
+  }));
+  if (installed) errors.push(...checkInstalled(scope, root));
 }
-
-for (const name of [
-  "@takazudo/zfb-adapter-cloudflare",
-  "@types/react",
-  "clsx",
-  "gray-matter",
-  "mermaid",
-  "remark-cjk-friendly",
-  "remark-directive",
-]) {
-  for (const section of ["dependencies", "optionalDependencies", "devDependencies"]) {
-    if (Object.hasOwn(packageJson[section] ?? {}, name)) fail(`forbidden direct dependency: ${name}`);
-  }
-}
-
-if (!/^lockfileVersion: ['"]?9(?:\.0)?['"]?$/m.test(lockfile)) fail("lockfile must use pnpm lockfile v9");
-if (!/^nodeLinker:\s+hoisted$/m.test(workspace)) fail("pnpm-workspace.yaml must set nodeLinker: hoisted");
-if (!/^minimumReleaseAge:\s+1440$/m.test(workspace)) fail("pnpm-workspace.yaml must set minimumReleaseAge: 1440");
-if (workspace.includes("zfb-adapter-cloudflare")) fail("workspace must not mention the removed Cloudflare adapter");
-for (const [name, patch] of [["zudo-doc", zudoDocPatch], ["zfb-runtime", runtimePatch]]) {
-  if (!workspace.includes(`'@takazudo/${name}@${patch.version}': ${patch.path}`)) {
-    fail(`pnpm-workspace.yaml must register the exact ${name} consumer patch`);
-  }
-  const patchPath = join(appRoot, patch.path);
-  if (!existsSync(patchPath)) fail(`${name} patch is missing: ${patch.path}`);
-  else {
-    equal(createHash("sha256").update(readFileSync(patchPath)).digest("hex"), patch.hash, `${name} patch sha256`);
-  }
-  if (!lockfile.includes(`hash: ${patch.hash}`) || !lockfile.includes(`path: ${patch.path}`)) {
-    fail(`lockfile ${name} patchedDependencies hash/path drifted`);
-  }
-}
-
-const importerSection = (section) => {
-  const marker = `    ${section}:\n`;
-  const start = lockfile.indexOf(marker);
-  if (start < 0) return null;
-  const bodyStart = start + marker.length;
-  const next = lockfile.slice(bodyStart).search(/\n    [A-Za-z][^\n]*:\n/);
-  return lockfile.slice(bodyStart, next < 0 ? lockfile.length : bodyStart + next);
-};
-const importerEntry = (sectionText, name) => {
-  const lines = sectionText.split("\n");
-  const key = `      ${name.startsWith("@") ? `'${name}'` : name}:`;
-  const start = lines.indexOf(key);
-  if (start < 0) return null;
-  let end = start + 1;
-  while (end < lines.length && !/^      [^ ]/.test(lines[end])) end += 1;
-  return lines.slice(start + 1, end).join("\n");
-};
-for (const [section, entries] of Object.entries(required)) {
-  const sectionText = importerSection(section);
-  if (!sectionText) {
-    fail(`lockfile importer is missing ${section}`);
-    continue;
-  }
-  for (const [name, version] of Object.entries(entries)) {
-    const entry = importerEntry(sectionText, name);
-    if (!entry) {
-      fail(`lockfile importer is missing ${section}.${name}`);
-      continue;
-    }
-    const specifier = new RegExp("^        specifier: (.+)$", "m").exec(entry)?.[1];
-    const resolved = new RegExp("^        version: (.+)$", "m").exec(entry)?.[1];
-    equal(specifier, version, `lockfile ${section}.${name} specifier`);
-    if (!resolved?.startsWith(version)) fail(`lockfile ${section}.${name} version does not start with ${version}: ${resolved}`);
-  }
-}
-
-const lockPackageVersion = (name) => {
-  const escaped = escapeRegex(name);
-  const match = new RegExp(`^  (?:'${escaped}|${escaped})@([^':(]+)(?:'|\\(|:)`, "m").exec(lockfile);
-  return match?.[1];
-};
-for (const entries of Object.values(required)) {
-  for (const [name, version] of Object.entries(entries)) equal(lockPackageVersion(name), version, `lockfile package ${name}`);
-}
-
-const excluded = new Set([...workspace.matchAll(/^  - ['"]?([^'"\n]+)['"]?$/gm)].map((match) => match[1]));
-for (const entries of [required.dependencies, required.optionalDependencies]) {
-  for (const [name, version] of Object.entries(entries)) {
-    if (name.startsWith("@takazudo/") && !excluded.has(`${name}@${version}`)) {
-      fail(`workspace minimumReleaseAgeExclude is missing ${name}@${version}`);
-    }
-  }
-}
-
-const dependencyImporter = importerSection("dependencies") ?? "";
-const importerVersion = (name) => {
-  return importerEntry(dependencyImporter, name)
-    ?.match(/^        version: (.+)$/m)?.[1];
-};
-const runtimeImporter = importerVersion("@takazudo/zfb-runtime");
-if (!runtimeImporter?.includes(`patch_hash=${runtimePatch.hash}`)) {
-  fail(`zfb-runtime importer must resolve the committed patch hash: ${runtimeImporter ?? "missing"}`);
-}
-if (!runtimeImporter?.includes("@takazudo/zfb@2.22.0")) fail(`zfb-runtime peer must resolve zfb@2.22.0: ${runtimeImporter ?? "missing"}`);
-const zudoImporter = importerVersion("@takazudo/zudo-doc");
-if (!zudoImporter?.includes(`patch_hash=${zudoDocPatch.hash}`)) {
-  fail(`zudo-doc importer must resolve the committed patch hash: ${zudoImporter ?? "missing"}`);
-}
-for (const peer of ["@takazudo/zfb-md-wasm@2.22.0", "@takazudo/zfb-runtime@2.22.0", "@takazudo/zfb@2.22.0", "katex@0.16.22", "preact@10.29.1", "zod@4.3.6"]) {
-  if (!zudoImporter?.includes(peer)) fail(`zudo-doc peer must resolve ${peer}: ${zudoImporter ?? "missing"}`);
-}
-
-if (checkInstalled) {
-  const packageJsonPath = (name) => join(appRoot, "node_modules", ...name.split("/"), "package.json");
-  for (const [section, entries] of Object.entries(required)) {
-    for (const [name, version] of Object.entries(entries)) {
-      const path = packageJsonPath(name);
-      if (!existsSync(path)) {
-        if (section === "optionalDependencies") continue;
-        fail(`installed package is missing: ${name}`);
-        continue;
-      }
-      equal(JSON.parse(readFileSync(path, "utf8")).version, version, `installed ${name}`);
-    }
-  }
-  const host = {
-    "linux-x64": "@takazudo/zfb-linux-x64-gnu",
-    "linux-arm64": "@takazudo/zfb-linux-arm64-gnu",
-    "darwin-arm64": "@takazudo/zfb-darwin-arm64",
-    "darwin-x64": "@takazudo/zfb-darwin-x64",
-    "win32-x64": "@takazudo/zfb-win32-x64-msvc",
-  }[`${process.platform}-${process.arch}`];
-  if (host) {
-    const binaryPath = join(appRoot, "node_modules", ...host.split("/"), process.platform === "win32" ? "zfb.exe" : "zfb");
-    if (!existsSync(binaryPath)) fail(`installed native zfb binary is missing: ${binaryPath}`);
-    else if (process.platform !== "win32" && (statSync(binaryPath).mode & 0o111) === 0) fail(`installed native zfb binary is not executable: ${binaryPath}`);
-  }
-  const installedZudoRoot = join(appRoot, "node_modules", "@takazudo", "zudo-doc", "dist");
-  const installedRouter = readFileSync(join(appRoot, "node_modules", "@takazudo", "zfb-runtime", "dist", "client-router", "router.js"), "utf8");
-  if (!installedRouter.includes('currentTransition.viewTransition.ready.catch((error) => {')
-      || !installedRouter.includes('if (error?.name !== "AbortError") throw error;')) {
-    fail("installed zfb-runtime is missing the skipped-transition rejection patch");
-  }
-  const installedFind = readFileSync(join(installedZudoRoot, "find-in-page", "index.js"), "utf8");
-  const installedSearch = readFileSync(join(installedZudoRoot, "search-widget-script", "index.js"), "utf8");
-  if (!installedFind.includes("openFindInPage") || !installedFind.includes("disableBuiltInShortcut")) {
-    fail("installed zudo-doc is missing the controlled Find patch");
-  }
-  if (!installedSearch.includes("openSearch") || !installedSearch.includes("refreshSearch")) {
-    fail("installed zudo-doc is missing the controlled Search patch");
-  }
-  const installedZdtpLoader = readFileSync(join(installedZudoRoot, "zdtp-loader.js"), "utf8");
-  if (!installedZdtpLoader.startsWith("throw new Error(") || installedZdtpLoader.includes('"@takazudo/zdtp"')) {
-    fail("installed zudo-doc is missing the zdtp-loader stub patch");
-  }
-}
+if (manifests.app && manifests.probe) errors.push(...checkScopesAgree(manifests.app, manifests.probe));
 
 if (errors.length > 0) {
   console.error("dependency validation failed:");
   for (const message of errors) console.error(`- ${message}`);
   process.exit(1);
 }
-console.log(`dependency validation passed (${checkInstalled ? "manifest, lockfile, peers, and installed tree" : "manifest, lockfile, peers"})`);
+console.log(`dependency validation passed (${scopes.join(", ")}: manifest, workspace, lockfile, peers${installed ? ", installed tree" : ""})`);

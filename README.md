@@ -20,8 +20,10 @@ WebView → http://localhost:<effective-port>/docs/
 Key facts:
 
 - **Published toolchain**: the `@takazudo/zfb*` family and all five native
-  carrier packages are pinned to `2.22.0`; `@takazudo/zudo-doc` is pinned to
-  `5.28.0`. The app and compatibility fixture use independent frozen lockfiles.
+  carrier packages are pinned to `6.0.1`; `@takazudo/zudo-doc` is pinned to
+  `10.0.2`. The app and compatibility fixture use independent frozen lockfiles,
+  both checked against the hand-written tuple in
+  `scripts/lib/toolchain-contract.mjs`.
 - **Node-free at runtime**: `zfb dev` with zero `.mjs` plugins spawns no Node host. The native `@takazudo/zfb-<platform>/zfb` binary is bundled in `node_modules` (populated at build/setup time via `pnpm install --frozen-lockfile`, Node at setup only).
 - **Host-owned routes**: `app/` owns the route adapters because the selected
   zfb configuration ends with `plugins: []`; package route/plugin entrypoints
@@ -63,7 +65,7 @@ Settings are a human-editable TOML document. The path is resolved in this order:
 Reading a missing file never creates it. The complete schema and defaults are:
 
 ```toml
-schema_version = 1
+schema_version = 2
 
 [resources]
 claude = true
@@ -75,14 +77,14 @@ codex_dir = "~/.codex"
 
 [appearance]
 mode = "system"       # system | light | dark
-theme_pack = "default"
+theme_pack = "classic"
 
 [server]
 preferred_port = 4892
 fallback_to_free_port = true
 ```
 
-The schema-v1 resource defaults are Claude on and Codex off. Any of the four
+The resource defaults are Claude on and Codex off. Any of the four
 selection states (Claude only, Codex only, both, or both off) is valid: the
 header keeps permanent Claude/Codex categories, while disabled detail
 namespaces are pruned and their overview reports a disabled marker. Claude
@@ -107,7 +109,7 @@ port) are shown as blocking diagnostics and use safe effective defaults until
 repaired. Malformed TOML is preserved byte-for-byte and requires the explicit
 Replace malformed action. An unsupported future `schema_version` is read-only;
 CCResDoc will not overwrite it. A valid but unavailable theme pack is retained
-as authored data while the effective theme falls back to `default`. Existing
+as authored data while the effective theme falls back to `classic`. Existing
 comments, unknown keys, newline style, and file permissions are preserved on a
 successful atomic save.
 
@@ -127,11 +129,20 @@ revision. Reload discards the local draft; Reapply copies only the explicitly
 dirty fields onto the latest valid document, checks that latest revision again
 immediately before replacement, and refuses a second racing edit rather than
 blindly overwriting it. Quick appearance
-controls use the same TOML authority: a missing file may accept a valid legacy
-browser preference as a first-save candidate, while any existing document
-(including malformed or invalid TOML) blocks legacy import. Appearance is
-initialized at document start before the ready marker and is scoped to the
-current loopback origin.
+controls on the docs page use the same TOML authority. Old zudo-doc browser
+preferences are never imported. Appearance is initialized at document start
+before the ready marker and is scoped to the current loopback origin.
+
+Schema v2 is a clean break. At startup CCResDoc retires a config file at the
+active path only when it positively recognizes it as a schema-v1 CCResDoc
+document (valid TOML, `schema_version = 1`, and only the known v1 tables): it
+re-checks the bytes immediately before removing it, and it then runs on v2
+defaults without writing a new file until you Save. It scans no other
+directory. A malformed, unreadable, unrecognized or future-version file is
+never deleted or overwritten. The document-start bootstrap clears the old
+`zudo-doc-theme`/`zudo-doc-theme-pack` browser keys once, when it retires the
+previous appearance cache, and never touches other storage. Your Claude and
+Codex resource directories are only ever read.
 
 The main docs WebView has only the narrow commands it needs. Privileged source,
 server, config-file, and Settings mutations require the `settings` window; docs

@@ -12,7 +12,8 @@ lockfile. The hybrid architecture is documented in the epic issue (#41).
 ## Key architecture facts (claim checklist)
 
 - `node_modules` is populated at **setup/build time only** via `pnpm install --frozen-lockfile` (Node at setup only — NOT at runtime).
-- The published toolchain is `@takazudo/zfb*` `2.22.0` plus `@takazudo/zudo-doc` `5.28.0`; the app and compatibility fixture are validated from their own frozen lockfiles.
+- The published toolchain is `@takazudo/zfb*` `6.0.1` plus `@takazudo/zudo-doc` `10.0.2`, written by hand in `scripts/lib/toolchain-contract.mjs`; the app and compatibility fixture are validated from their own frozen lockfiles against that contract.
+- Settings are schema v2 with the `classic` theme pack. A recognized schema-v1 config is retired at startup; there is no migration and no legacy browser-preference import.
 - The host resolves the **native** zfb binary at the package-root carrier `<workspace>/node_modules/@takazudo/zfb-<platform>/zfb` — NOT the `.bin/zfb` Node-shebang wrapper.
 - **Port 4892**: the authored default. The host passes the validated effective
   port to zfb and may select a free loopback fallback without touching its owner.
@@ -33,6 +34,6 @@ lockfile. The hybrid architecture is documented in the epic issue (#41).
 
 Detailed architecture notes are in per-directory CLAUDE.md files — read these before touching a subdirectory:
 
-- `crates/CLAUDE.md` — Rust workspace layout; the single `ccresdoc-claude-md` generator crate
+- `crates/CLAUDE.md` — Rust workspace layout; the `ccresdoc-claude-md` generator crate and the Tauri-free `ccresdoc-host-domain` test crate
 - `src-tauri/CLAUDE.md` — Tauri host architecture (sidecar spawn, workspace resolution, native zfb binary, readiness poll)
 - `app/CLAUDE.md` — zfb frontend project; MDX content contract; known zfb workarounds

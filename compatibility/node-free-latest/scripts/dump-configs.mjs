@@ -4,7 +4,6 @@ import selected from "../configs/selected.mjs";
 import wholesale from "../configs/wholesale.mjs";
 
 const summarize = (config) => ({
-  framework: config.framework,
   port: config.port,
   base: config.base,
   trailingSlash: config.trailingSlash,

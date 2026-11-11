@@ -3,31 +3,17 @@ import { createHash } from "node:crypto";
 import { createReadStream, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { compile } from "@takazudo/zfb-md-wasm";
+import { checkInstalled } from "../../../scripts/lib/dependency-contract.mjs";
+import {
+  NATIVE_CARRIERS,
+  RELEASE_AGE_EXCLUDES,
+  ZFB_VERSION,
+} from "../../../scripts/lib/toolchain-contract.mjs";
 import { probeRoot, resolveNativeBinary } from "./native-binary.mjs";
 
-const expected = {
-  "@takazudo/zfb": "2.22.0",
-  "@takazudo/zfb-md-wasm": "2.22.0",
-  "@takazudo/zfb-runtime": "2.22.0",
-  "@takazudo/zudo-doc": "5.28.0",
-  katex: "0.16.22",
-  preact: "10.29.1",
-  "preact-render-to-string": "6.6.7",
-  zod: "4.3.6",
-};
-const platformPackages = [
-  "@takazudo/zfb-darwin-arm64",
-  "@takazudo/zfb-darwin-x64",
-  "@takazudo/zfb-linux-arm64-gnu",
-  "@takazudo/zfb-linux-x64-gnu",
-  "@takazudo/zfb-win32-x64-msvc",
-];
+const platformPackages = Object.values(NATIVE_CARRIERS);
 
-for (const [name, version] of Object.entries(expected)) {
-  const manifestPath = join(probeRoot, "node_modules", ...name.split("/"), "package.json");
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  assert.equal(manifest.version, version, `${name} installed version`);
-}
+assert.deepEqual(checkInstalled("probe", probeRoot), [], "installed probe tree matches the audited contract");
 
 const compilerProbe = await compile("# Root compiler entrypoint probe");
 assert.match(compilerProbe.code, /Root compiler entrypoint probe/);
@@ -43,18 +29,12 @@ assert.ok(mdWasmManifest.exports["./parse"], "focused parse entrypoint is export
 const lockfile = readFileSync(join(probeRoot, "pnpm-lock.yaml"), "utf8");
 for (const platformPackage of platformPackages) {
   assert.ok(lockfile.includes(`'${platformPackage}':`), `${platformPackage} importer pin`);
-  assert.ok(lockfile.includes(`'${platformPackage}@2.22.0':`), `${platformPackage} locked package`);
+  assert.ok(lockfile.includes(`'${platformPackage}@${ZFB_VERSION}':`), `${platformPackage} locked package`);
 }
 
 const workspace = readFileSync(join(probeRoot, "pnpm-workspace.yaml"), "utf8");
-for (const [name, version] of [
-  ...Object.entries(expected).filter(([name]) => name.startsWith("@takazudo/")),
-  ...platformPackages.map((name) => [name, "2.22.0"]),
-]) {
-  assert.ok(
-    workspace.includes(`  - "${name}@${version}"`),
-    `${name}@${version} release-age exclusion`,
-  );
+for (const exclusion of RELEASE_AGE_EXCLUDES) {
+  assert.ok(workspace.includes(`  - "${exclusion}"`), `${exclusion} release-age exclusion`);
 }
 
 const packageFacts = JSON.parse(readFileSync(join(probeRoot, "evidence", "package-facts.json"), "utf8"));

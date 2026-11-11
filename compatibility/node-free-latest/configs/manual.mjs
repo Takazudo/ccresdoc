@@ -7,10 +7,8 @@ import { z } from "zod";
 // This is viable, but duplicates package policy and is intentionally rejected
 // in favor of configs/selected.mjs.
 export default defineConfig({
-  framework: "preact",
   port: 4892,
   base: "/",
-  tailwind: { enabled: true },
   collections: [
     {
       name: "docs",

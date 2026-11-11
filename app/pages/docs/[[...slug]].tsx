@@ -1,10 +1,8 @@
-/** @jsxRuntime automatic */
-/** @jsxImportSource preact */
 // Host-owned dynamic route: zfb dev cannot render an injected dynamic route,
 // and plugins are intentionally disabled. All route data and rendering below
 // are nevertheless provided by zudo-doc's public factories.
 
-import type { JSX } from "preact";
+import type { JSX } from "@takazudo/zfb/zudo-react/jsx-runtime";
 import type {
   DocPageAutoIndexProps,
   DocPageEntryProps,

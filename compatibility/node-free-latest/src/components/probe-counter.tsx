@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "preact/hooks";
+import { signal } from "@takazudo/zfb/zudo-react";
 
 export function ProbeCounter({ initial }: { initial: number }) {
-  const [count, setCount] = useState(initial);
+  const count = signal(initial);
   return (
-    <button type="button" data-probe-counter onClick={() => setCount((value) => value + 1)}>
+    <button type="button" data-probe-counter on:click={() => { count.value += 1; }}>
       Count: {count}
     </button>
   );

@@ -389,11 +389,11 @@ test("formatDiagnostics merges node entries and page attribute log by time", () 
       { t: 1000, kind: "document-request", detail: "http://x/docs/" },
       { t: 3000, kind: "sse", detail: "page" },
     ],
-    [{ t: 2000, name: "data-ccresdoc-load-controls-ready", value: "", doc: "abcdef1234" }],
+    [{ t: 2000, name: "data-ccresdoc-browser-state", value: "", doc: "abcdef1234" }],
   );
   const lines = text.split("\n");
   assert.match(lines[1], /document-request http:\/\/x\/docs\//);
-  assert.match(lines[2], /attr data-ccresdoc-load-controls-ready="" doc=abcdef12/);
+  assert.match(lines[2], /attr data-ccresdoc-browser-state="" doc=abcdef12/);
   assert.match(lines[3], /sse page/);
   assert.match(formatDiagnostics([], [], { attributeLogError: "gone" }), /page attribute log unavailable: gone/);
 });
@@ -401,7 +401,7 @@ test("formatDiagnostics merges node entries and page attribute log by time", () 
 test("recordDiagnostics captures page events, SSE events and disposes cleanly", async () => {
   const zfb = await startFakeZfb();
   const page = new FakePage();
-  page.evaluateImpl = () => [{ t: Date.now(), name: "data-ccresdoc-load-controls-ready", value: "" }];
+  page.evaluateImpl = () => [{ t: Date.now(), name: "data-ccresdoc-browser-state", value: "" }];
   const recorder = await recordDiagnostics(page, zfb.baseUrl);
   assert.equal(page.initScripts[0].fn, installAttributeRecorder);
   await waitFor(() => zfb.openSseClients() === 1);
@@ -422,7 +422,7 @@ test("recordDiagnostics captures page events, SSE events and disposes cleanly", 
   assert.match(text, /console-error bad thing/);
   assert.doesNotMatch(text, /ignored/);
   assert.match(text, /pageerror Error: thrown/);
-  assert.match(text, /attr data-ccresdoc-load-controls-ready/);
+  assert.match(text, /attr data-ccresdoc-browser-state/);
 
   await recorder.dispose();
   for (const event of ["request", "framenavigated", "console", "pageerror"]) assert.equal(page.listenerCount(event), 0);
@@ -432,7 +432,7 @@ test("recordDiagnostics captures page events, SSE events and disposes cleanly", 
 test("installAttributeRecorder records initial and mutated data-ccresdoc-* attributes", () => {
   const saved = { document: globalThis.document, MutationObserver: globalThis.MutationObserver };
   const observers = [];
-  const attrs = new Map([["data-ccresdoc-load-controls-ready", ""], ["lang", "en"]]);
+  const attrs = new Map([["data-ccresdoc-browser-state", ""], ["lang", "en"]]);
   const root = {
     get attributes() {
       return [...attrs].map(([name, value]) => ({ name, value }));
@@ -459,8 +459,8 @@ test("installAttributeRecorder records initial and mutated data-ccresdoc-* attri
     assert.equal(observers[0].target, root);
     assert.deepEqual(observers[0].options, { attributes: true });
 
-    attrs.delete("data-ccresdoc-load-controls-ready");
-    observers[0].callback([{ attributeName: "data-ccresdoc-load-controls-ready" }, { attributeName: "data-theme" }]);
+    attrs.delete("data-ccresdoc-browser-state");
+    observers[0].callback([{ attributeName: "data-ccresdoc-browser-state" }, { attributeName: "data-theme" }]);
     assert.equal(buffer.length, 2);
     assert.equal(buffer[1].value, null);
   } finally {

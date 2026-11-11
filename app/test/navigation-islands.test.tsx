@@ -1,9 +1,5 @@
-/** @jsxRuntime automatic */
-/** @jsxImportSource preact */
-
-import { render } from "preact";
-import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { hydrateIsland, renderStatic, settle } from "./helpers/zudo-react";
 import { SidebarTree } from "@takazudo/zudo-doc/sidebar-tree-island";
 import { SidebarToggle } from "@takazudo/zudo-doc/sidebar-toggle-island";
 import {
@@ -71,34 +67,23 @@ const nodes: SidebarNavNode[] = [
   },
 ];
 
-const mountedRoots: HTMLDivElement[] = [];
-
-function mount(node: preact.ComponentChildren): HTMLDivElement {
-  const root = document.createElement("div");
-  document.body.append(root);
-  mountedRoots.push(root);
-  act(() => render(node, root));
-  return root;
+async function click(element: Element): Promise<void> {
+  element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await settle();
 }
 
-function click(element: Element): void {
-  act(() => {
-    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
+async function input(element: HTMLInputElement, value: string): Promise<void> {
+  element.value = value;
+  element.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  await settle();
 }
 
-function input(element: HTMLInputElement, value: string): void {
-  act(() => {
-    element.value = value;
-    element.dispatchEvent(new InputEvent("input", { bubbles: true }));
-  });
+async function dispatchAfterNavigate(): Promise<void> {
+  document.dispatchEvent(new Event(AFTER_NAVIGATE_EVENT));
+  await settle();
 }
 
 afterEach(() => {
-  for (const root of mountedRoots.splice(0)) {
-    act(() => render(null, root));
-    root.remove();
-  }
   document.documentElement.removeAttribute("data-theme");
   document.documentElement.removeAttribute("data-sidebar-hidden");
   document.documentElement.removeAttribute("data-zd-current-path");
@@ -135,8 +120,9 @@ describe("published zudo-doc navigation contracts", () => {
     ]);
   });
 
-  it("keeps native controls keyboard-focusable and exposes disclosure state", () => {
-    const root = mount(<SidebarTree nodes={nodes} currentSlug="welcome" />);
+  it("keeps native controls keyboard-focusable and exposes disclosure state", async () => {
+    const sidebar = await hydrateIsland(SidebarTree, { nodes, currentSlug: "welcome" });
+    const root = sidebar.host;
     const active = root.querySelector<HTMLAnchorElement>('a[href="/docs/welcome/"]');
     const disclosure = root.querySelector<HTMLButtonElement>('button[aria-label="Expand Guides"]');
 
@@ -150,7 +136,7 @@ describe("published zudo-doc navigation contracts", () => {
     disclosure?.focus();
     expect(document.activeElement).toBe(disclosure);
 
-    // zudo-doc 5.6 deliberately publishes a native disclosure/link pattern,
+    // zudo-doc 10 deliberately publishes a native disclosure/link pattern,
     // not a WAI-ARIA tree with roving tabindex or controlled-region ids. Keep
     // these assertions explicit so a future upstream semantic change gets
     // reviewed rather than hidden.
@@ -158,94 +144,89 @@ describe("published zudo-doc navigation contracts", () => {
     expect(root.querySelector('[role="treeitem"]')).toBeNull();
   });
 
-  it("filters descendants, persists open categories, and updates the active path after soft navigation", () => {
+  it("filters descendants, persists open categories, and updates the active path after soft navigation", async () => {
     window.history.replaceState({}, "", "/docs/welcome/");
-    const root = mount(<SidebarTree nodes={nodes} currentSlug="welcome" />);
+    const sidebar = await hydrateIsland(SidebarTree, { nodes, currentSlug: "welcome" });
+    const root = sidebar.host;
     const filter = root.querySelector<HTMLInputElement>('input[aria-label="Filter navigation"]')!;
 
-    input(filter, "very/long");
+    await input(filter, "very/long");
     expect(root.textContent).toContain("https://example.com/a/very/long/path");
     expect(root.textContent).not.toContain("Other guide");
     expect(root.textContent).not.toContain("Welcome");
-    input(filter, "");
+    await input(filter, "");
 
     const disclosure = root.querySelector<HTMLButtonElement>('button[aria-label="Expand Guides"]')!;
-    click(disclosure);
+    await click(disclosure);
     expect(disclosure.getAttribute("aria-expanded")).toBe("true");
     expect(JSON.parse(sessionStorage.getItem("zd-sidebar-open") ?? "[]")).toContain("guides");
 
     window.history.replaceState({}, "", "/docs/guides/other/");
-    act(() => {
-      document.dispatchEvent(new Event(AFTER_NAVIGATE_EVENT));
-    });
+    await dispatchAfterNavigate();
     expect(root.querySelector('a[href="/docs/guides/other/"]')?.getAttribute("aria-current")).toBe("page");
 
-    act(() => render(null, root));
-    act(() => render(<SidebarTree nodes={nodes} currentSlug="welcome" />, root));
-    expect(root.querySelector('button[aria-label="Collapse Guides"]')?.getAttribute("aria-expanded")).toBe("true");
+    sidebar.dispose();
+    const remounted = await hydrateIsland(SidebarTree, { nodes, currentSlug: "welcome" });
+    expect(remounted.host.querySelector('button[aria-label="Collapse Guides"]')?.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("installs and removes one soft-navigation listener per sidebar mount", () => {
+  it("installs and removes one soft-navigation listener per sidebar mount", async () => {
     const add = vi.spyOn(document, "addEventListener");
     const remove = vi.spyOn(document, "removeEventListener");
-    const root = mount(<SidebarTree nodes={nodes} currentSlug="welcome" />);
+    const sidebar = await hydrateIsland(SidebarTree, { nodes, currentSlug: "welcome" });
+    const root = sidebar.host;
 
+    expect(root.isConnected).toBe(true);
     expect(add.mock.calls.filter(([type]) => type === AFTER_NAVIGATE_EVENT)).toHaveLength(1);
-    act(() => render(null, root));
+    sidebar.dispose();
     expect(remove.mock.calls.filter(([type]) => type === AFTER_NAVIGATE_EVENT)).toHaveLength(1);
   });
 });
 
 describe("published mobile, desktop, theme, and tree presentation islands", () => {
-  it("makes the closed mobile drawer inert, locks scroll while open, and closes after navigation", () => {
-    const root = mount(<SidebarToggle nodes={nodes} currentSlug="welcome" />);
+  it("makes the closed mobile drawer inert, locks scroll while open, and closes after navigation", async () => {
+    const root = (await hydrateIsland(SidebarToggle, { nodes, currentSlug: "welcome" })).host;
     const toggle = root.querySelector<HTMLButtonElement>('button[aria-label="Open sidebar"]')!;
     const drawer = root.querySelector<HTMLElement>("[data-zd-mobile-sidebar]")!;
 
     expect(drawer.hasAttribute("inert")).toBe(true);
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    click(toggle);
+    await click(toggle);
     expect(drawer.hasAttribute("inert")).toBe(false);
     expect(document.body.style.overflow).toBe("hidden");
     expect(root.querySelector('button[aria-label="Close sidebar"]')?.getAttribute("aria-expanded")).toBe("true");
 
-    act(() => {
-      document.dispatchEvent(new Event(AFTER_NAVIGATE_EVENT));
-    });
+    await dispatchAfterNavigate();
     expect(drawer.hasAttribute("inert")).toBe(true);
     expect(document.body.style.overflow).toBe("");
   });
 
-  it("persists the desktop sidebar toggle and restores its document state after navigation", () => {
-    const root = mount(<DesktopSidebarToggle />);
+  it("persists the desktop sidebar toggle and restores its document state after navigation", async () => {
+    const root = (await hydrateIsland(DesktopSidebarToggle, {})).host;
     const toggle = root.querySelector<HTMLButtonElement>('button[aria-label="Hide sidebar"]')!;
-    click(toggle);
+    await click(toggle);
 
     expect(localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBe("false");
     expect(document.documentElement.hasAttribute("data-sidebar-hidden")).toBe(true);
 
     document.documentElement.removeAttribute("data-sidebar-hidden");
-    act(() => {
-      document.dispatchEvent(new Event(AFTER_NAVIGATE_EVENT));
-    });
+    await dispatchAfterNavigate();
     expect(document.documentElement.hasAttribute("data-sidebar-hidden")).toBe(true);
   });
 
-  it("switches and persists the package theme through its appearance menu", () => {
+  it("switches and persists the package theme through its appearance menu", async () => {
     localStorage.removeItem("zudo-doc-theme");
     document.documentElement.setAttribute("data-theme", "dark");
-    const root = mount(
-      <ThemeToggle defaultMode="dark" pendingUntilHydrated={false} />,
-    );
+    const root = (await hydrateIsland(ThemeToggle, { defaultMode: "dark" as const, pendingUntilHydrated: false })).host;
     const trigger = root.querySelector<HTMLButtonElement>(
       'button[aria-haspopup="menu"]',
     )!;
     expect(trigger.getAttribute("aria-label")).toMatch(/^Appearance:/);
-    click(trigger);
+    await click(trigger);
     const light = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
       .find((item) => item.textContent?.includes("Light"));
     expect(light).toBeTruthy();
-    click(light!);
+    await click(light!);
 
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(document.documentElement.style.colorScheme).toBe("light");
@@ -254,10 +235,13 @@ describe("published mobile, desktop, theme, and tree presentation islands", () =
     localStorage.removeItem("zudo-doc-theme");
   });
 
-  it("renders site-nav disclosures, smart path breaks, and connector geometry from public modules", () => {
-    const root = mount(
+  it("renders site-nav disclosures, smart path breaks, and connector geometry from public modules", async () => {
+    const siteNavIsland = await hydrateIsland(SiteTreeNav, {
+      tree: nodes,
+      initiallyCollapsedCategorySlugs: ["guides"],
+    });
+    const root = renderStatic(
       <>
-        <SiteTreeNav tree={nodes} initiallyCollapsedCategorySlugs={["guides"]} />
         <SmartBreak>https://example.com/a/very/long/path</SmartBreak>
         <div data-connector-fixture>
           <ConnectorLines depth={2} isLast topPad="1rem" />
@@ -265,11 +249,11 @@ describe("published mobile, desktop, theme, and tree presentation islands", () =
       </>,
     );
 
-    const siteNav = root.querySelector<HTMLElement>("[data-site-nav]")!;
+    const siteNav = siteNavIsland.host.querySelector<HTMLElement>("[data-site-nav]")!;
     const disclosure = siteNav.querySelector<HTMLButtonElement>('button[aria-label="Expand Guides"]')!;
     expect(siteNav.getAttribute("aria-label")).toBe("Site index");
     expect(disclosure.getAttribute("aria-expanded")).toBe("false");
-    click(disclosure);
+    await click(disclosure);
     expect(siteNav.textContent).toContain("Other guide");
     expect(root.querySelectorAll("wbr").length).toBeGreaterThan(3);
     expect(smartBreakToHtml("<script>/a/b")).toContain("&lt;script&gt;");

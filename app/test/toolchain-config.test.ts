@@ -9,8 +9,8 @@ import { contentFixture } from "./fixtures/content";
 describe("latest zudo-doc configuration", () => {
   it("keeps the resolved runtime strictly plugin-free", () => {
     expect(config.plugins).toEqual([]);
+    expect(config).not.toHaveProperty("framework");
     expect(config).toMatchObject({
-      framework: "preact",
       port: 4892,
       base: "/",
       trailingSlash: true,
@@ -77,7 +77,6 @@ describe("latest zudo-doc configuration", () => {
   it("compiles generated content with anchors, directives, GFM, links, code and Mermaid", async () => {
     const result = await compile(contentFixture.markdown, {
       filename: "generated-fixture.mdx",
-      jsxRuntime: "preact",
       pipeline: {
         gfm:
           typeof config.markdown?.gfm === "object"

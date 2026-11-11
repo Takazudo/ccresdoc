@@ -308,6 +308,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ccresdoc-host-domain"
+version = "0.0.0"
+dependencies = [
+ "filetime",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "toml_edit 0.22.27",
+ "url",
+]
+
+[[package]]
 name = "cesu8"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

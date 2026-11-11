@@ -4,25 +4,33 @@ import { resolveThemePackSsrSlug } from "@takazudo/zudo-doc/theme";
 import { settings, themePackSlugs } from "@/config/settings";
 import { themePackRegistry } from "../pages/lib/_route-context";
 import { config } from "../zfb.config";
+import { DEFAULT_THEME_PACK as BRIDGE_DEFAULT_THEME_PACK } from "../src/appearance/bridge";
+import { DEFAULT_THEME_PACK as SYNC_DEFAULT_THEME_PACK } from "../scripts/sync-theme-packs.mjs";
 
 describe("CCResDoc theme-pack host integration", () => {
   it("derives settings and the typed route registry from the public catalog", () => {
     expect(themePackSlugs).toEqual(
       themePackCatalog.packs.map(({ slug }) => slug),
     );
-    expect(settings.themePack).toBe("default");
+    expect(settings.themePack).toBe("classic");
     expect(settings.themePackSwitcher).toBe(true);
     expect(settings.themePacks).toEqual(themePackSlugs);
     expect(themePackRegistry).toEqual(themePackCatalog.packs);
-    expect(themePackRegistry[0]).toMatchObject({
-      slug: "default",
-      hasStylesheet: false,
-    });
-    expect(themePackRegistry.slice(1).every(({ hasStylesheet }) => hasStylesheet))
-      .toBe(true);
-    expect(resolveThemePackSsrSlug(themePackRegistry, settings)).toBe(
-      "default",
+    const stylesheetless = themePackRegistry.filter(
+      ({ hasStylesheet }) => !hasStylesheet,
     );
+    expect(stylesheetless.map(({ slug }) => slug)).toEqual(["classic"]);
+    expect(themePackRegistry.some(({ slug }) => slug === "default")).toBe(false);
+    expect(resolveThemePackSsrSlug(themePackRegistry, settings)).toBe(
+      "classic",
+    );
+  });
+
+  it("keeps every copy of the default pack in step with the configured one", () => {
+    // The client island and the sync script hold their own literal so neither
+    // bundles the settings module or the zod-backed registry.
+    expect(BRIDGE_DEFAULT_THEME_PACK).toBe(settings.themePack);
+    expect(SYNC_DEFAULT_THEME_PACK).toBe(settings.themePack);
   });
 
   it("keeps the compatible preset settings and intentional host deviations", () => {
@@ -39,6 +47,9 @@ describe("CCResDoc theme-pack host integration", () => {
       codexResources: false,
       siteTreeNavIgnore: [],
       packageOwnedRoutes: false,
+      designTokenPanel: false,
+      docHistory: false,
+      math: false,
       headerNav: [
         { label: "Claude", path: "/docs/claude", categoryMatch: "claude", versioned: false },
         { label: "Codex", path: "/docs/codex", categoryMatch: "codex", versioned: false },

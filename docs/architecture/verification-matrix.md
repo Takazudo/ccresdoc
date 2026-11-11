@@ -1,7 +1,7 @@
 # CCResDoc architecture and verification contract
 
 This is the consolidated integration record for the current `@takazudo/zfb`
-2.22.0 / `@takazudo/zudo-doc` 5.28.0 application. CCResDoc is a native viewer
+6.0.1 / `@takazudo/zudo-doc` 10.0.2 application. CCResDoc is a native viewer
 for selected Claude and Codex resources. The generated `/docs/` document is the
 sole product landing surface; `/` is its exact server-rendered alias. The
 product keeps permanent Claude and Codex top-level header categories.
@@ -39,7 +39,7 @@ audit has completed.
 
 `@takazudo/zudo-doc/catalog` is the source of truth. Its schema-version-2
 entries keep package metadata under `pack.meta`; the postinstall/prebuild
-sync validates every metadata file, copies every current non-default `pack.css`
+sync validates every metadata file, copies every current stylesheet pack `pack.css`
 and its referenced fonts to `app/public/theme-packs/`, and writes `index.json`.
 The runtime stage embeds the catalog/file list, then hashes every staged app and
 dependency byte plus the staging/digest implementation into the generated
@@ -50,7 +50,7 @@ tree digest, and a focused test proves a `pages/` edit changes the token.
 The frontend derives route settings, switcher order, and the typed registry
 from the same catalog. The deterministic tests and staged probe verify that
 the served index, each current stylesheet, every referenced font, and every
-declared loaded font family agree. The default pack is metadata-only.
+declared loaded font family agree. The configured `classic` pack is metadata-only (`hasStylesheet: false`).
 
 The theme head bootstrap restores the saved pack before paint, keeps a loading
 attribute until its stylesheet settles, preserves the independent light/dark
@@ -84,7 +84,9 @@ shell and browse-all loads the current catalog lazily.
 
 The settings store resolves `CCRESDOC_CONFIG`, then
 `XDG_CONFIG_HOME/ccresdoc/config.toml`, then `HOME/.config/ccresdoc/config.toml`.
-Missing files use schema-version-1 defaults without creating TOML. Authored
+Missing files use schema-version-2 defaults without creating TOML. A
+recognized schema-v1 file is retired once at startup (rechecked before
+removal); malformed, unreadable, unrecognized and future files are protected. Authored
 source/preferred-port values are reported separately from canonical effective
 source/active-port values; an occupied preferred loopback port uses a free
 fallback only when `fallback_to_free_port` is true. Strict mode, malformed TOML,

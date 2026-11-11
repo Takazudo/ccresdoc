@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@10.30.3",
   "engines": {
-    "node": ">=22.0.0",
+    "node": ">=24.0.0",
     "pnpm": ">=10.0.0"
   },
   "scripts": {
@@ -14,7 +14,8 @@
     "app:build": "cargo tauri build",
     "rebuild:local-app": "bash scripts/rebuild-local-app.sh",
     "b4push": "./scripts/run-b4push.sh",
-    "check:dependencies": "bash scripts/check-zfb-pin.sh && pnpm -C app run validate:dependencies",
+    "check:dependencies": "pnpm run test:dependency-contract && bash scripts/check-zfb-pin.sh && pnpm -C app run validate:dependencies",
+    "test:dependency-contract": "node --test scripts/lib/dependency-contract.test.mjs",
     "check:types": "pnpm -C app run typecheck",
     "check:zfb": "pnpm -C app run check:zfb",
     "test:frontend": "pnpm -C app run test:run",
@@ -23,7 +24,7 @@
     "test:search-shortcuts": "node scripts/confirm-search-shortcuts.mjs",
     "test:browser-navigation": "node scripts/confirm-browser-navigation.mjs",
     "test:browser-navigation-contract": "node scripts/confirm-browser-navigation.mjs --contracts",
-    "test:browser-harness": "node --test scripts/browser-harness.test.mjs scripts/lib/sse-parser.test.mjs",
+    "test:browser-harness": "node --test scripts/browser-harness.test.mjs scripts/lib/sse-parser.test.mjs scripts/lib/process-group.test.mjs",
     "test:macos-settings": "bash scripts/test-macos-settings.sh",
     "test:runtime-digest": "node --test scripts/runtime-workspace-digest.test.mjs",
     "test:runtime-files": "node --test scripts/runtime-workspace-files.test.mjs",

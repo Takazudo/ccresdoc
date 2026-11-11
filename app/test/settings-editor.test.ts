@@ -1,11 +1,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { act } from "preact/test-utils";
-import { render } from "preact";
+import { createIslandTest } from "@takazudo/zfb/zudo-react/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // The bundled editor is deliberately framework-free and shared verbatim with Tauri.
 import { createSettingsEditor, DEFAULT_DRAFT } from "../../src-tauri/frontend/settings-shell.mjs";
-import { openSettingsFromDocs, SettingsHeaderButton } from "../pages/lib/_chrome";
+import { openSettingsFromDocs, SettingsHeaderButton } from "../pages/lib/_settings-button";
 import shortcutCatalog from "../src/browser-chrome/command-catalog.json";
 
 const htmlPath = resolve(process.cwd(), "../src-tauri/frontend/settings.html");
@@ -21,7 +20,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
       active: { usesAuthoredSettings: true, sourceIsAuthored: true, preferredPort: 4892, effectivePort: 4892 }, validation: [],
     },
     runtime: { phase: "ready", active: { ...DEFAULT_DRAFT, shortcuts: defaultShortcuts(), claudeDir: "/Users/test/.claude", effectivePort: 4892 }, fallbackUsed: false, diagnostic: null },
-    actions: { canSave: true, canRebase: true, canReplaceMalformed: false }, defaults: { ...DEFAULT_DRAFT, shortcuts: defaultShortcuts() }, themePacks: ["default", "paper"], shortcutCatalog,
+    actions: { canSave: true, canRebase: true, canReplaceMalformed: false }, defaults: { ...DEFAULT_DRAFT, shortcuts: defaultShortcuts() }, themePacks: ["classic", "graphite"], shortcutCatalog,
   };
   return { ...base, ...overrides } as any;
 }
@@ -200,9 +199,9 @@ describe("bundled Settings editor", () => {
     const current = setup(snapshot(), true); await current.editor.load(); await flush();
     const dark = document.querySelector('[name="appearance-mode"][value="dark"]') as HTMLInputElement;
     dark.checked = true; dark.dispatchEvent(new Event("change", { bubbles: true })); await flush();
-    expect(current.backend.previewAppearance).toHaveBeenCalledWith("dark", "default");
+    expect(current.backend.previewAppearance).toHaveBeenCalledWith("dark", "classic");
     expect(document.documentElement.dataset.theme).toBe("dark");
-    current.backend.clearAppearancePreview.mockResolvedValueOnce({ appearance: { mode: "light", themePack: "default" } });
+    current.backend.clearAppearancePreview.mockResolvedValueOnce({ appearance: { mode: "light", themePack: "classic" } });
     await current.editor.cancel(); await flush();
     expect(current.backend.clearAppearancePreview).toHaveBeenCalled();
     expect(document.documentElement.dataset.theme).toBe("light");
@@ -217,26 +216,49 @@ describe("bundled Settings editor", () => {
 
     const future = setup(snapshot({ settings: { ...snapshot().settings, status: "unsupported_version" }, actions: { canSave: false, canRebase: false, canReplaceMalformed: false } })); await future.editor.load(); await flush(); expect((document.querySelector("#claude-dir") as HTMLInputElement).disabled).toBe(true); expect((document.querySelector("#replace-malformed") as HTMLButtonElement).disabled).toBe(true);
 
-    const unavailable = setup(snapshot({ settings: { ...snapshot().settings, authored: { ...DEFAULT_DRAFT, themePack: "gone" }, effective: { ...snapshot().settings.effective, themePack: "default" }, validation: [{ kind: "theme_pack_unavailable", field: "appearance.theme_pack", message: "gone unavailable", blocking: false }] } })); await unavailable.editor.load(); await flush(); expect((document.querySelector("#theme-pack") as HTMLSelectElement).value).toBe("gone"); expect(document.querySelector("#theme-status")?.textContent).toContain("gone / default"); const dark = document.querySelector('[name="appearance-mode"][value="dark"]') as HTMLInputElement; dark.checked = true; dark.dispatchEvent(new Event("change", { bubbles: true })); await flush(); expect(unavailable.backend.previewAppearance).toHaveBeenCalledWith("dark", "default");
+    const unavailable = setup(snapshot({ settings: { ...snapshot().settings, authored: { ...DEFAULT_DRAFT, themePack: "gone" }, effective: { ...snapshot().settings.effective, themePack: "classic" }, validation: [{ kind: "theme_pack_unavailable", field: "appearance.theme_pack", message: "gone unavailable", blocking: false }] } })); await unavailable.editor.load(); await flush(); expect((document.querySelector("#theme-pack") as HTMLSelectElement).value).toBe("gone"); expect(document.querySelector("#theme-status")?.textContent).toContain("gone / classic"); const dark = document.querySelector('[name="appearance-mode"][value="dark"]') as HTMLInputElement; dark.checked = true; dark.dispatchEvent(new Event("change", { bubbles: true })); await flush(); expect(unavailable.backend.previewAppearance).toHaveBeenCalledWith("dark", "classic");
 
     const stale = setup(); await stale.editor.load(); await flush(); const port = document.querySelector("#preferred-port") as HTMLInputElement; port.value = "5001"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush(); stale.setSnapshot(snapshot({ settings: { ...snapshot().settings, revision: "sha256:external" } })); await stale.editor.load({ detectConflict: true }); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); port.value = "5002"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush(); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); stale.backend.rebaseStale.mockRejectedValueOnce({ code: "revision_conflict", message: "changed again" }); await stale.editor.reapply(); expect(document.querySelector("#conflict-recovery")?.hasAttribute("hidden")).toBe(false); expect(stale.backend.rebaseStale).toHaveBeenCalledWith(expect.objectContaining({ preferredPort: 5002 }), new Set(["preferredPort"]), "sha256:one");
   });
 });
 
 describe("documentation header Settings entry point", () => {
-  it("renders Settings unavailable outside Tauri", () => {
+  it("stays pending until activation, then renders Settings unavailable outside Tauri", async () => {
     delete (globalThis as any).__TAURI__;
-    const mount = document.createElement("div"); document.body.append(mount);
-    act(() => render(SettingsHeaderButton(), mount));
-    const button = mount.querySelector("button")!;
+    const island = createIslandTest(SettingsHeaderButton, {}, { document });
+    const ssrButton = island.host.querySelector("button")!;
+    expect(ssrButton.disabled).toBe(false);
+    expect(ssrButton.getAttribute("aria-disabled")).toBe("true");
+    expect(ssrButton.hasAttribute("data-zd-pending")).toBe(true);
+    expect(island.hydrate()).not.toBeNull();
+    await island.flush();
+    expect(island.diagnostics).toEqual([]);
+    const button = island.host.querySelector("button")!;
     expect(button.disabled).toBe(true);
     expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.hasAttribute("data-zd-pending")).toBe(false);
+    island.dispose();
   });
 
   it("renders an accessible gear and invokes only the narrow open command", async () => {
     const invoke = vi.fn(async () => {}); const root = { __TAURI__: { core: { invoke } } } as any;
     await openSettingsFromDocs(root); expect(invoke).toHaveBeenCalledWith("open_settings_window");
-    const mount = document.createElement("div"); document.body.append(mount); (globalThis as any).__TAURI__ = root.__TAURI__;
-    act(() => render(SettingsHeaderButton(), mount)); const button = mount.querySelector("button")!; expect(button.getAttribute("aria-label")).toBe("Open Settings"); expect(button.title).toBe("Settings"); expect(button.disabled).toBe(false); button.click(); await flush(); expect(invoke).toHaveBeenCalledTimes(2); delete (globalThis as any).__TAURI__;
+    (globalThis as any).__TAURI__ = root.__TAURI__;
+    try {
+      const island = createIslandTest(SettingsHeaderButton, {}, { document });
+      expect(island.hydrate()).not.toBeNull();
+      await island.flush();
+      const button = island.host.querySelector("button")!;
+      expect(button.getAttribute("aria-label")).toBe("Open Settings");
+      expect(button.title).toBe("Settings");
+      expect(button.disabled).toBe(false);
+      expect(button.hasAttribute("aria-disabled")).toBe(false);
+      expect(button.hasAttribute("data-zd-pending")).toBe(false);
+      button.click(); await flush();
+      expect(invoke).toHaveBeenCalledTimes(2);
+      island.dispose();
+    } finally {
+      delete (globalThis as any).__TAURI__;
+    }
   });
 });

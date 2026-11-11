@@ -119,7 +119,7 @@ is never created by discovery. The effective source is canonicalized from the
 authored `source.claude_dir`/`source.codex_dir`; the enabled generator receives
 that source as both its source and `project_root` — **never `$HOME`**, since it
 rejects `project_root == $HOME` (`GenerateError::ProjectRootTooBroad`, scoped-
-walk safety). Schema-v1 defaults are `[resources] claude = true, codex = false`
+walk safety). Schema-v2 defaults are `[resources] claude = true, codex = false`
 with `~/.claude` and `~/.codex` source paths. Both-off is valid and still
 publishes stable disabled overview markers. Explicit temporary sources are used
 by package verification.
@@ -256,16 +256,17 @@ commands require the `settings` label, docs appearance mutation requires the
 active `/docs/` loopback origin, and the main window receives only its
 explicitly listed commands. `src/settings_window.rs` owns singleton
 create/show/focus and close-to-hide lifecycle; `src/appearance.rs` owns
-document-start appearance authority, origin-scoped legacy candidates, previews,
-and authoritative events. The docs gear lives in the scanner-visible
-`app/pages/lib/_settings-button.ts` client module so its server-rendered markup
+document-start appearance authority, docs-origin authorization, previews and
+authoritative events. It and `settings.rs` stay Tauri-free so that
+`crates/ccresdoc-host-domain` can test them on any host. The docs gear lives in the scanner-visible
+`app/pages/lib/_settings-button.tsx` client module so its server-rendered markup
 hydrates, while Cancel uses only the Settings window's narrow
 `core:window:allow-hide` grant.
 
 The config path is resolved as `CCRESDOC_CONFIG` (non-empty override), then
 `XDG_CONFIG_HOME/ccresdoc/config.toml`, then `HOME/.config/ccresdoc/config.toml`.
-The default document is schema version 1 with Claude enabled at `~/.claude` and
-Codex disabled at `~/.codex`, system/default appearance, preferred port 4892,
+The default document is schema version 2 with Claude enabled at `~/.claude` and
+Codex disabled at `~/.codex`, system/classic appearance, preferred port 4892,
 and `fallback_to_free_port = true`. A missing document is read as defaults and
 is never created by discovery. Authored source and preferred port are retained
 in the settings snapshot; effective sources are canonicalized and the runtime's
@@ -277,12 +278,24 @@ A semantic-invalid document uses safe effective defaults and remains repairable.
 Malformed TOML is retained byte-for-byte and can only be replaced through the
 explicit replacement command. Unsupported future schema versions are
 read-only. Valid unavailable theme-pack names remain authored while the
-effective theme falls back to `default`. Save/rebase preserves comments,
+effective theme falls back to `classic`. Save/rebase preserves comments,
 unknown keys, permissions, and newline style, and revision checks reject stale
 or racing writes. Appearance-only apply does not restart the sidecar; source,
 preferred-port, and fallback changes perform one serialized runtime transition.
 A failed transition is `saved_not_active`, with Settings left available for
 recovery.
+
+Schema v2 is a clean break with no migration. Before the first load, `main()`
+calls `SettingsStore::retire_recognized_v1()`. It removes the file at the
+active config path only when the bytes are valid UTF-8 TOML with an integer
+`schema_version = 1` and only the known v1 tables, and only after renaming it
+aside and confirming the bytes did not change; otherwise it restores the file.
+It never follows a symlink, scans no directories and writes no new config.
+Malformed, unreadable, unrecognized and future-version files are left byte for
+byte. The docs-page bootstrap writes the versioned `ccresdoc-appearance-v2`
+cache and clears the old `zudo-doc-theme`/`zudo-doc-theme-pack` keys once, when
+it finds the retired `ccresdoc-appearance-v1` cache; it never calls
+`localStorage.clear()`.
 
 All privileged commands and settings fixtures are tested separately from the
 production capability files. `scripts/test-macos-settings.sh --fixtures-only`

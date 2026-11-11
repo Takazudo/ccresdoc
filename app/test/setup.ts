@@ -1,7 +1,9 @@
 import { afterEach } from "vitest";
+import { unmountAll } from "./helpers/zudo-react";
 
 // Keep DOM state isolated even when a later suite enables Vitest's in-band mode.
 afterEach(() => {
+  unmountAll();
   document.body.replaceChildren();
   window.localStorage.clear();
   window.sessionStorage.clear();

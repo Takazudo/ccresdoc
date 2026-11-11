@@ -1,5 +1,6 @@
 [
-  "default",
+  "graphite",
+  "classic",
   "academia",
   "bauhaus",
   "beacon",
@@ -21,6 +22,7 @@
   "observatory",
   "onyx",
   "phosphor",
+  "quiet-slate",
   "riso",
   "sakura",
   "scandi",
@@ -29,5 +31,6 @@
   "swissgrid",
   "tidepool",
   "timberline",
+  "warm-mineral",
   "washi"
 ]

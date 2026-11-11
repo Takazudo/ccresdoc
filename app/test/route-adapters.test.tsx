@@ -1,13 +1,12 @@
-/** @jsxRuntime automatic */
-/** @jsxImportSource preact */
-
-import { render } from "preact-render-to-string";
-import type { ComponentType } from "preact";
+import type { Component } from "@takazudo/zfb/zudo-react";
+import type { Child } from "@takazudo/zfb/zudo-react";
+import { renderToString } from "@takazudo/zfb/zudo-react/server";
+import { withIslandTestContext } from "@takazudo/zfb/zudo-react/testing";
 import { describe, expect, it, vi } from "vitest";
 import themePackCatalog from "@takazudo/zudo-doc/catalog";
 
 const content = vi.hoisted(() => {
-  type Components = Record<string, ComponentType<Record<string, unknown>>>;
+  type Components = Record<string, Component<Record<string, unknown>>>;
 
   const entries = [
     {
@@ -162,6 +161,28 @@ import HomePage from "../pages/index";
 import DocsPage, { paths } from "../pages/docs/[[...slug]]";
 import { routeContext } from "../pages/lib/_route-context";
 
+// Every island a host-owned page ships. zfb's scanner supplies these names in
+// a real build; an unexpected island fails rendering here.
+const PAGE_ISLANDS = [
+  "AppearanceBridge",
+  "CCResDocBrowserToolbar",
+  "DesktopSidebarToggle",
+  "DesktopTocToggle",
+  "FindInPageInit",
+  "MobileToc",
+  "SettingsHeaderButton",
+  "SidebarToggle",
+  "SidebarTree",
+  "ThemePackSwitcher",
+  "ThemeToggle",
+  "Toc",
+];
+const islandNames = PAGE_ISLANDS.map((name) =>
+  Object.defineProperty(() => null, "name", { value: name }) as Component<Record<string, unknown>>,
+);
+const render = (node: Child) =>
+  withIslandTestContext({ components: islandNames }, () => renderToString(node));
+
 describe("host-owned package route adapters", () => {
   const routeItems = paths();
   const routeParams = routeItems.map((item) => item.params.slug.join("/"));
@@ -284,11 +305,21 @@ describe("host-owned package route adapters", () => {
     expect(settingsIsland).not.toBeNull();
     expect(settingsIsland?.getAttribute("data-when")).toBe("load");
     expect(settingsIsland?.querySelector('button[aria-label="Open Settings"]')).not.toBeNull();
+    // JS-only controls render pending until their own island activates.
+    for (const name of ["ThemeToggle", "ThemePackSwitcher", "SettingsHeaderButton"]) {
+      const button = shell.querySelector(`[data-zfb-island="${name}"] button`);
+      expect(button, name).not.toBeNull();
+      expect(button!.hasAttribute("data-zd-pending"), name).toBe(true);
+    }
+    expect(html).not.toContain("data-ccresdoc-load-controls-ready");
     const toolbarIsland = shell.querySelector<HTMLElement>(
       '[data-zfb-island="CCResDocBrowserToolbar"]',
     );
     expect(toolbarIsland).not.toBeNull();
-    expect(toolbarIsland?.hasAttribute("data-ccresdoc-browser-toolbar-shell")).toBe(true);
+    expect(toolbarIsland?.hasAttribute("data-ccresdoc-browser-toolbar-shell")).toBe(false);
+    expect(
+      toolbarIsland?.querySelector(':scope > nav[data-ccresdoc-browser-toolbar-shell]'),
+    ).not.toBeNull();
     expect(toolbarIsland?.getAttribute("data-zfb-transition-persist")).toBe(
       "ccresdoc-browser-toolbar",
     );
@@ -330,7 +361,7 @@ describe("host-owned package route adapters", () => {
     const children = Array.from(region!.children);
     expect(children).toHaveLength(2);
     expect(children[0].getAttribute("data-zfb-island")).toBe("CCResDocBrowserToolbar");
-    expect(children[0].hasAttribute("data-ccresdoc-browser-toolbar-shell")).toBe(true);
+    expect(children[0].querySelector("nav[data-ccresdoc-browser-toolbar-shell]")).not.toBeNull();
     expect(children[0].getAttribute("data-zfb-transition-persist")).toBe(
       "ccresdoc-browser-toolbar",
     );
@@ -417,7 +448,7 @@ describe("host-owned package route adapters", () => {
     const shell = document.createElement("div");
     shell.innerHTML = html;
 
-    expect(html).toContain('data-theme-pack="default"');
+    expect(html).toContain('data-theme-pack="classic"');
     expect(html).toContain('var defaultMode="dark",respectPrefersColorScheme=true;');
     expect(html).toContain('var STORAGE_KEY="zudo-doc-theme";');
     expect(html).toContain("zudo-doc-theme-pack");
@@ -433,7 +464,7 @@ describe("host-owned package route adapters", () => {
     expect(switcher).not.toBeNull();
     const props = JSON.parse(switcher!.getAttribute("data-props") ?? "null");
     expect(props).toEqual({
-      active: "default",
+      active: "classic",
       base: "/",
       pendingUntilHydrated: true,
       order: themePackCatalog.packs.map(

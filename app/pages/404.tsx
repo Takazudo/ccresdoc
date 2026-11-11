@@ -1,7 +1,5 @@
-/** @jsxRuntime automatic */
-/** @jsxImportSource preact */
 
-import type { JSX } from "preact";
+import type { JSX } from "@takazudo/zfb/zudo-react/jsx-runtime";
 import { DocLayoutWithDefaults } from "@takazudo/zudo-doc/doclayout";
 import {
   BodyEndIslands,

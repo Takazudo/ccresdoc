@@ -20,6 +20,10 @@ export const catalogFile = fileURLToPath(import.meta.resolve("@takazudo/zudo-doc
 export const packageThemePacksRoot = join(dirname(catalogFile), "theme-packs");
 export const generatedThemePacksRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../public/theme-packs");
 
+// The app's configured default pack. Whether a pack ships a stylesheet is read
+// from the catalog's hasStylesheet flag, never inferred from its slug.
+export const DEFAULT_THEME_PACK = "classic";
+
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const cssUrlPattern = /url\(\s*(["']?)([^"')]+)\1\s*\)/g;
@@ -100,7 +104,7 @@ export function inspectThemePackInputs({ manifest = catalog, sourceRoot = packag
   if (manifest?.schemaVersion !== 2 || !Array.isArray(manifest.packs)) {
     fail("catalog must have schemaVersion 2 and a packs array");
   }
-  if (manifest.packs.length === 0) fail("catalog must contain at least the default pack");
+  if (manifest.packs.length === 0) fail(`catalog must contain at least the "${DEFAULT_THEME_PACK}" pack`);
 
   const slugs = new Set();
   const packs = [];
@@ -141,14 +145,13 @@ export function inspectThemePackInputs({ manifest = catalog, sourceRoot = packag
     }
 
     const cssPath = join(packRoot, "pack.css");
-    if (meta.slug === "default") {
-      if (entry.hasStylesheet) fail('reserved pack "default" must declare hasStylesheet: false');
-      if (existsSync(cssPath)) fail('reserved pack "default" must be metadata-only (pack.css is forbidden)');
+    if (!entry.hasStylesheet) {
+      if (existsSync(cssPath)) fail(`pack "${meta.slug}" declares hasStylesheet: false but ships pack.css`);
+      if (meta.fonts.loaded.length > 0) fail(`pack "${meta.slug}" declares hasStylesheet: false but lists loaded fonts`);
       packs.push({ meta, metaPath, cssPath: null, fonts: [] });
       continue;
     }
 
-    if (!entry.hasStylesheet) fail(`pack "${meta.slug}" must declare hasStylesheet: true`);
     assertFile(cssPath, `pack "${meta.slug}" stylesheet`);
     const css = readFileSync(cssPath, "utf8");
     if (css.trim().length === 0) fail(`pack "${meta.slug}" stylesheet is empty`);
@@ -166,7 +169,7 @@ export function inspectThemePackInputs({ manifest = catalog, sourceRoot = packag
     });
     packs.push({ meta, metaPath, cssPath, fonts });
   }
-  if (!slugs.has("default")) fail('catalog is missing the reserved "default" pack');
+  if (!slugs.has(DEFAULT_THEME_PACK)) fail(`catalog is missing the configured "${DEFAULT_THEME_PACK}" pack`);
   return packs;
 }
 

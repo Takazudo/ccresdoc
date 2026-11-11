@@ -7,7 +7,7 @@ const facts = {
     { name: "@takazudo/zfb", version: "6.0.1", integrity: "sha512-AAA", sha256: "aa11" },
     { name: "@takazudo/zudo-doc", version: "10.0.2", integrity: "sha512-BBB", sha256: "bb22" },
   ],
-  contentReloadEvent: "page",
+  contentReloadObserved: true,
 };
 
 function changed(mutate) {
@@ -32,7 +32,7 @@ test("a changed file hash or version is never treated as equal", () => {
   for (const mutate of [
     (value) => { value.packages[0].sha256 = "aa12"; },
     (value) => { value.packages[0].version = "6.0.2"; },
-    (value) => { value.contentReloadEvent = "islands"; },
+    (value) => { value.contentReloadObserved = false; },
   ]) {
     assert.equal(diffJson(facts, changed(mutate)).total, 1);
   }

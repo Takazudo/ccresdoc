@@ -1,22 +1,11 @@
-/* Package layer order is load-bearing: flow sits above preflight while the
- * unlayered Tailwind utilities remain able to override content rhythm. */
-@layer zd-preflight, zd-flow;
-@import "tailwindcss/preflight" layer(zd-preflight);
-@import "tailwindcss/utilities";
+/* zfb's zudo-wind preset owns the reset and generated utility layer. Declare
+ * the package layers first so authored flow styles keep their cascade order. */
+@layer zw-reset, zd-flow;
 
 @import "@takazudo/zudo-doc/theme.css";
-@import "@takazudo/zudo-doc/safelist.css";
 @import "@takazudo/zudo-doc/content.css";
 @import "@takazudo/zudo-doc/page-loading.css";
 @import "@takazudo/zudo-doc/features.css";
-
-/* Consumer sources are explicit because the bundled writable workspace does
- * not include repository metadata for Tailwind's automatic discovery. */
-@source "src/components/**/*.{tsx,ts,jsx,js,mdx,md}";
-@source "src/content/**/*.{mdx,md}";
-@source "src/hooks/**/*.{tsx,ts,jsx,js}";
-@source "src/utils/**/*.{tsx,ts,jsx,js}";
-@source "pages/**/*.{tsx,ts,jsx,js}";
 
 :root {
   --ccresdoc-browser-toolbar-h: 3.25rem;
@@ -389,18 +378,6 @@ nav[data-zd-toc] {
   scroll-margin-top: calc(var(--ccresdoc-complete-chrome-offset) + var(--spacing-vsp-sm));
 }
 
-/* zfb does not expose a post-mount island marker, so the AppearanceBridge
- * removes this pending treatment after the synchronous load-island pass.
- * This is visual and pointer affordance only: CSS cannot provide true
- * aria-disabled/inert keyboard semantics. Keep non-JS links usable. */
-html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="ThemeToggle"] button,
-html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="ThemePackSwitcher"] button,
-html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="SettingsHeaderButton"] button {
-  cursor: default;
-  opacity: 0.55;
-  pointer-events: none;
-}
-
 /* CCResDoc-specific Tauri/WebView accessibility hardening. */
 @media (forced-colors: active) {
   :focus-visible {
@@ -435,9 +412,9 @@ html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="SettingsHeaderBu
     color: ButtonText;
   }
 
-  html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="ThemeToggle"] button,
-  html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="ThemePackSwitcher"] button,
-  html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="SettingsHeaderButton"] button {
+  /* features.css dims pending JS-only controls with opacity, which forced
+   * colors discards; GrayText keeps the pending state visible there. */
+  button[data-zd-pending] {
     border-color: GrayText;
     color: GrayText;
   }

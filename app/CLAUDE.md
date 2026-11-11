@@ -4,10 +4,10 @@ zudo-doc consumer project built by zfb. Output in `dist/` is served by `zfb dev`
 
 ## Architecture
 
-- **Framework**: Preact + zfb SSG
-- **Published toolchain**: `@takazudo/zfb@2.22.0` plus native carrier packages
+- **Framework**: zudo-react islands + zfb SSG (no Preact)
+- **Published toolchain**: `@takazudo/zfb@6.0.1` plus native carrier packages
   (the host resolves the matching package-root `zfb` binary) and
-  `@takazudo/zudo-doc@5.28.0` (components)
+  `@takazudo/zudo-doc@10.0.2` (components)
 - **Port**: 4892 (pinned in `zfb.config.ts`)
 - **Node-free mode**: Zero `.mjs` plugins → no `plugin-host.mjs` spawned
 - **Collections**: single `"docs"` collection at `src/content/docs/`
@@ -29,8 +29,7 @@ pnpm exec zfb build   # setup/build check: wrapper spawns native binary
 ```
 
 **`app/` is a STANDALONE pnpm project with a hoisted node-linker** — set as
-`nodeLinker: hoisted` in `app/pnpm-workspace.yaml` (pnpm 10+/11 no longer reads
-`node-linker` from `app/.npmrc`, which is kept only as a legacy/back-compat marker),
+`nodeLinker: hoisted` in `app/pnpm-workspace.yaml` (the only place it is set),
 NOT a workspace member. This is required for the bundled `.app`: the Tauri host
 bundles `app/node_modules` and copies it (dereferencing symlinks) into a writable
 workspace at runtime. pnpm's default isolated `.pnpm` store does not survive that
@@ -52,9 +51,15 @@ single-source mechanism in JSON; `scripts/check-zfb-pin.sh` is the enforcement g
 
 ### Published toolchain contract
 
-The first-party zfb packages and all five native platform packages are pinned to
-`2.22.0`; zudo-doc is pinned to `5.28.0`. Reachable runtime peers are pinned to
-`preact@10.29.1`, `preact-render-to-string@6.6.7`, `zod@4.3.6`, and `katex@0.16.22`.
+The audited tuple is written by hand in `scripts/lib/toolchain-contract.mjs`;
+the validators compare manifests, lockfiles and installed trees against it, never
+against values read back from the manifests. The first-party zfb packages and
+all five native platform packages are pinned to `6.0.1`; zudo-doc is pinned to
+`10.0.2` and is the only `minimumReleaseAge` exclusion. Reachable runtime peers
+are pinned to `zod@4.6.7` and `katex@0.19.1`. Preact, `preact-render-to-string`,
+`@types/react` and the other packages in `FORBIDDEN_DIRECT_DEPENDENCIES` must not
+be declared. The single zudo-doc patch is described in
+`docs/architecture/zudo-doc-find-search-patch.md`.
 The Cloudflare adapter and legacy local Markdown mirrors are intentionally absent:
 zudo-doc supplies the selected Markdown pipeline while CCResDoc's Rust generator
 owns content generation.
@@ -70,7 +75,7 @@ not `node_modules/.bin/zfb`; Node is needed for install and build checks only.
 app/
   zfb.config.ts           — zudoDoc config with a final plugins: [] override
   package.json            — deps: @takazudo/zudo-doc + zfb devDep
-  tsconfig.json           — extends zudo-doc's Preact base; paths: @/* → src/*
+  tsconfig.json           — extends zudo-doc's zudo-react base; paths: @/* → src/*
   pages/
     index.tsx             — home page
     404.tsx               — 404 page
@@ -78,7 +83,8 @@ app/
       [[...slug]].tsx     — catch-all docs route
     lib/
       _route-context.ts   — serializable host payload → zudo-doc RouteContext
-      _chrome.ts          — one createChrome() seam shared by host routes
+      _chrome.tsx         — one createChrome() seam shared by host routes
+      _settings-button.tsx — the docs Settings gear island
   src/
     config/
       settings.ts         — shared typed settings for config and host routes
@@ -98,22 +104,14 @@ route tracking, filtering, and connector geometry come directly from the public
 components; see `docs/architecture/sidebar-navigation.md` for the ownership and
 accessibility contract.
 
-### Load-control readiness marker
+### Load-control readiness
 
-`AppearanceBridge` sets the host-owned
-`data-ccresdoc-load-controls-ready` attribute on `<html>` one animation frame
-after it mounts. The marker means only that synchronous `when: "load"` islands
-have completed their mount pass; it is deliberately not named or treated as a
-general hydration marker. Until it appears, host CSS gives the JS-only
-`ThemeToggle`, `ThemePackSwitcher`, and `SettingsHeaderButton` controls a pending
-visual and pointer affordance without affecting progressively enhanced links.
-This CSS does not provide keyboard or ARIA disabled semantics.
-
-Dynamic page transitions remove the attribute during each body swap and the
-remounted bridge sets it again. Do not add it to
-`zfb-preserve-html-attrs`: the incoming load islands really are pending during
-that interval. Bridge cleanup cancels its pending animation frame and removes
-the marker so a torn-down page cannot leave or re-arm stale readiness state.
+There is no host readiness marker. zudo-doc marks its own JS-only controls with
+`data-zd-pending` until each island activates: the `ThemeToggle` button and the
+`ThemePackSwitcher` `[data-switcher-launcher]`. CCResDoc's
+`SettingsHeaderButton` follows the same convention and is `aria-disabled` while
+pending. Browser checks wait for every selector in
+`scripts/lib/load-controls.mjs` to be present with no `data-zd-pending`.
 
 ## MDX Content Contract
 

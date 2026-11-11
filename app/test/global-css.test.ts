@@ -11,7 +11,6 @@ describe("package CSS foundation", () => {
   it("loads package styles in their required order", () => {
     const imports = [
       "@takazudo/zudo-doc/theme.css",
-      "@takazudo/zudo-doc/safelist.css",
       "@takazudo/zudo-doc/content.css",
       "@takazudo/zudo-doc/page-loading.css",
       "@takazudo/zudo-doc/features.css",
@@ -25,12 +24,12 @@ describe("package CSS foundation", () => {
     }
   });
 
-  it("keeps the resetting theme entrypoint rather than theme-no-reset.css", () => {
-    // zudo-doc 5.20.0 added `theme-no-reset.css` for embedders that cannot
-    // control stylesheet import order. CCResDoc owns global.css outright and
-    // imports the package before its own rules, so the reset is wanted here;
-    // this pins that decision against an accidental swap.
-    expect(css).not.toContain("@takazudo/zudo-doc/theme-no-reset.css");
+  it("uses zfb's zudo-wind layers with no Tailwind entrypoints", () => {
+    expect(css).toMatch(/^@layer zw-reset, zd-flow;$/m);
+    expect(css.indexOf("@layer zw-reset, zd-flow;")).toBeLessThan(
+      css.indexOf("@takazudo/zudo-doc/theme.css"),
+    );
+    expect(css).not.toMatch(/tailwindcss|@source|@theme|safelist\.css|theme-no-reset\.css/);
   });
 
   it("does not retain package-owned token or code-style mirrors", () => {
@@ -40,17 +39,11 @@ describe("package CSS foundation", () => {
     expect(css).toContain("@media (forced-colors: active)");
   });
 
-  it("limits the pre-hydration affordance to JS-only load controls", () => {
-    expect(css).toContain(
-      'html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="ThemeToggle"] button',
-    );
-    expect(css).toContain(
-      'html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="ThemePackSwitcher"] button',
-    );
-    expect(css).toContain(
-      'html:not([data-ccresdoc-load-controls-ready]) [data-zfb-island="SettingsHeaderButton"] button',
-    );
-    expect(css).not.toMatch(/data-ccresdoc-load-controls-ready[^\n]*SidebarTree/);
+  it("leaves pending JS-only controls to the package affordance", () => {
+    // features.css dims button[data-zd-pending]; the host only adds the
+    // forced-colors treatment, and no global readiness marker survives.
+    expect(css).not.toContain("data-ccresdoc-load-controls-ready");
+    expect(css).toMatch(/@media \(forced-colors: active\)[\s\S]*button\[data-zd-pending\] \{\n {4}border-color: GrayText;/);
     expect(css).not.toMatch(/\[data-zfb-island\][^\n]*button/);
   });
 

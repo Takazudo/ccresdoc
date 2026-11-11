@@ -5,13 +5,13 @@ import { applyDirectorySelection, cloneDraft, DEFAULT_DRAFT, displayShortcutBind
 
 test("resource defaults and dirty fields match the additive schema-v1 contract", () => {
   assert.deepEqual(DEFAULT_DRAFT, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     claudeResources: true,
     codexResources: false,
     claudeDir: "~/.claude",
     codexDir: "~/.codex",
     appearanceMode: "system",
-    themePack: "default",
+    themePack: "classic",
     preferredPort: 4892,
     fallbackToFreePort: true,
     shortcuts: [],

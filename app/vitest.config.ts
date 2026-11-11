@@ -5,12 +5,14 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      // zfb resolves this bare specifier itself; Vite needs the package path.
       "zfb/config": "@takazudo/zfb/config",
-      "react/jsx-runtime": "preact/jsx-runtime",
-      "react/jsx-dev-runtime": "preact/jsx-runtime",
-      "react-dom/test-utils": "preact/test-utils",
-      "react-dom": "preact/compat",
-      react: "preact/compat",
+    },
+  },
+  oxc: {
+    jsx: {
+      runtime: "automatic",
+      importSource: "@takazudo/zfb/zudo-react",
     },
   },
   test: {
@@ -21,13 +23,9 @@ export default defineConfig({
     restoreMocks: true,
     server: {
       deps: {
-        // The published zfb runtime imports React-compatible entrypoints.
-        // Inline it so Vite applies the Preact aliases above.
-        inline: [
-          /@takazudo\/zudo-doc/,
-          /@takazudo\/zfb-runtime/,
-          /@takazudo\/zfb(?:\/|$)/,
-        ],
+        // Route tests mock @takazudo/zfb/content; zudo-doc must go through
+        // Vite for that mock to reach the package's own content import.
+        inline: [/@takazudo\/zudo-doc/],
       },
     },
   },

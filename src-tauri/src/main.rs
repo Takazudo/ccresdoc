@@ -237,7 +237,6 @@ fn navigate_to_docs(app_handle: &AppHandle) {
             // One WebKit task updates the appearance-only navigation seed and
             // starts navigation. The installed initialization script consumes
             // it at DocumentStart on the exact destination origin.
-            state.appearance.clear_candidate();
             let snapshot = state.settings_store.load();
             let seed =
                 appearance::bootstrap_seed(&snapshot, state.settings_store.available_theme_packs());
@@ -253,7 +252,6 @@ fn navigate_to_docs(app_handle: &AppHandle) {
 #[cfg(target_os = "macos")]
 fn navigate_fresh_main_to_docs(app_handle: &AppHandle) {
     let state = app_handle.state::<AppState>();
-    state.appearance.clear_candidate();
     let port = state.effective_port.load(Ordering::SeqCst);
     if let (Some(window), Ok(url)) = (
         app_handle.get_webview_window("main"),
@@ -268,7 +266,6 @@ fn navigate_fresh_main_to_docs(app_handle: &AppHandle) {
 /// lease and semantic-readiness classifier.
 fn navigate_to_loading(app_handle: &AppHandle) {
     let state = app_handle.state::<AppState>();
-    state.appearance.clear_candidate();
     state.browser_bridge.deactivate();
     if let Some(w) = app_handle.get_webview_window("main") {
         if let Ok(url) = LOADING_URL.parse::<tauri::Url>() {
@@ -2252,6 +2249,20 @@ fn main() {
         .unwrap_or_else(|_| home.join(".config/ccresdoc/config.toml"));
     let settings_store =
         SettingsStore::with_theme_packs(config_path, home, settings::bundled_theme_pack_slugs());
+    // Schema v2 is a clean break: a positively recognized v1 file at the active
+    // path is removed once so v2 defaults load. Nothing is written until Save.
+    match settings_store.retire_recognized_v1() {
+        Ok(settings::V1Retirement::Retired(revision)) => eprintln!(
+            "settings: retired schema-v1 config {} ({})",
+            settings_store.path().display(),
+            revision.0
+        ),
+        Ok(settings::V1Retirement::Changed) => {
+            eprintln!("settings: schema-v1 config changed during retirement and was kept")
+        }
+        Ok(settings::V1Retirement::Absent | settings::V1Retirement::NotRecognized) => {}
+        Err(error) => eprintln!("settings: schema-v1 retirement failed: {error}"),
+    }
     let settings_snapshot = settings_store.load();
     let appearance_seed =
         appearance::bootstrap_seed(&settings_snapshot, settings_store.available_theme_packs());
