@@ -262,6 +262,7 @@ plist_value() { /usr/libexec/PlistBuddy -c "Print :$1" "$INFO_PLIST" 2>/dev/null
 [[ "$(plist_value CFBundleIdentifier)" == "$BUNDLE_ID" ]] || fail "mounted app has the wrong bundle identifier"
 [[ "$(plist_value CFBundleShortVersionString)" == "$VERSION" ]] || fail "mounted app has the wrong short version"
 [[ "$(plist_value CFBundleVersion)" == "$VERSION" ]] || fail "mounted app has the wrong bundle version"
+[[ "$(plist_value LSMinimumSystemVersion)" == "27.0" ]] || fail "mounted app does not require macOS 27"
 
 APP_BINARY="$APP_PATH/Contents/MacOS/ccresdoc"
 RUNTIME_ROOT="$APP_PATH/Contents/Resources/runtime-workspace/app"
