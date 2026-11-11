@@ -15,9 +15,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 use toml_edit::{value, Array, DocumentMut, Item, Table, Value};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 1;
+pub const CURRENT_SCHEMA_VERSION: i64 = 2;
+/// The only earlier schema the startup retirement recognizes.
+pub const RETIRED_SCHEMA_VERSION: i64 = 1;
 pub const DEFAULT_PORT: u16 = 4892;
-pub const DEFAULT_THEME_PACK: &str = "default";
+pub const DEFAULT_THEME_PACK: &str = "classic";
 pub const COMMAND_CATALOG_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -508,6 +510,55 @@ pub enum SaveError {
     Io(#[from] io::Error),
 }
 
+impl SaveError {
+    /// Stable wire code shared by the command boundary and its parity tests.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::RevisionConflict { .. } => "revision_conflict",
+            Self::Malformed => "malformed",
+            Self::UnsupportedVersion(_) => "unsupported_version",
+            Self::Unreadable(_) => "unreadable",
+            Self::Validation(_) => "validation",
+            Self::NotStale => "not_stale",
+            Self::LatestNotValid => "latest_not_valid",
+            Self::ReplacementNotAllowed => "replacement_not_allowed",
+            Self::Io(_) => "io",
+        }
+    }
+}
+
+/// Result of the explicit startup retirement of a schema-v1 config.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum V1Retirement {
+    /// No file exists at the active config path.
+    Absent,
+    /// The file is not a positively recognized schema-v1 CCResDoc config
+    /// (current, future, malformed, unreadable or foreign); it is untouched.
+    NotRecognized,
+    /// The file changed between recognition and removal; it was restored.
+    Changed,
+    /// The recognized file was removed. Nothing is written in its place.
+    Retired(ContentRevision),
+}
+
+const V1_SECTIONS: [&str; 5] = ["resources", "source", "appearance", "server", "shortcuts"];
+
+fn recognized_v1(bytes: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let Ok(doc) = text.parse::<DocumentMut>() else {
+        return false;
+    };
+    if integer_at(&doc, &["schema_version"]) != Some(RETIRED_SCHEMA_VERSION) {
+        return false;
+    }
+    let recognized = doc.iter().all(|(key, item)| {
+        key == "schema_version" || (V1_SECTIONS.contains(&key) && item.is_table_like())
+    });
+    recognized
+}
+
 #[derive(Debug)]
 enum ReadState {
     Missing,
@@ -784,6 +835,78 @@ impl SettingsStore {
             impact: ApplyImpact::RestartRuntime,
             rebased: false,
         })
+    }
+
+    /// Explicit, bounded startup operation: remove a positively recognized
+    /// schema-v1 config at the active path so v2 defaults load. It never scans
+    /// other paths, never converts values and never writes a new config; every
+    /// other document is left exactly as it is.
+    pub fn retire_recognized_v1(&self) -> io::Result<V1Retirement> {
+        match fs::symlink_metadata(&self.path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(V1Retirement::Absent)
+            }
+            Err(_) => return Ok(V1Retirement::NotRecognized),
+            Ok(metadata) if !metadata.file_type().is_file() => {
+                return Ok(V1Retirement::NotRecognized)
+            }
+            Ok(_) => {}
+        }
+        let bytes = match fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(V1Retirement::Absent)
+            }
+            Err(_) => return Ok(V1Retirement::NotRecognized),
+        };
+        if !recognized_v1(&bytes) {
+            return Ok(V1Retirement::NotRecognized);
+        }
+        let revision = ContentRevision::from_bytes(&bytes);
+
+        #[cfg(test)]
+        if let Some(hook) = &self.before_replace {
+            hook(&self.path);
+        }
+
+        // Move the file aside atomically, then recheck the bytes that were
+        // actually moved. A file that changed after recognition goes back.
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        let (aside, reservation) = create_unique_temp(
+            parent,
+            self.path
+                .file_name()
+                .unwrap_or_else(|| OsStr::new("config.toml")),
+        )?;
+        drop(reservation);
+        if let Err(error) = fs::rename(&self.path, &aside) {
+            let _ = fs::remove_file(&aside);
+            return if error.kind() == io::ErrorKind::NotFound {
+                Ok(V1Retirement::Changed)
+            } else {
+                Err(error)
+            };
+        }
+        let moved = fs::read(&aside)?;
+        if ContentRevision::from_bytes(&moved) == revision {
+            fs::remove_file(&aside)?;
+            sync_directory(parent)?;
+            return Ok(V1Retirement::Retired(revision));
+        }
+        match fs::hard_link(&aside, &self.path) {
+            Ok(()) => {
+                fs::remove_file(&aside)?;
+                sync_directory(parent)?;
+                Ok(V1Retirement::Changed)
+            }
+            Err(error) => Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "a changed settings file was preserved at {} because the active path is occupied: {error}",
+                    aside.display()
+                ),
+            )),
+        }
     }
 
     fn read_state(&self) -> ReadState {
@@ -1845,7 +1968,7 @@ mod tests {
     }
 
     fn valid_toml(home: &Path) -> String {
-        format!("schema_version = 1\n\n[resources]\nclaude = true\ncodex = false\n\n[source]\nclaude_dir = {:?}\ncodex_dir = \"~/.codex\"\n\n[appearance]\nmode = \"dark\"\ntheme_pack = \"default\"\n\n[server]\npreferred_port = 5000\nfallback_to_free_port = false\n", home.join(".claude").to_string_lossy())
+        format!("schema_version = 2\n\n[resources]\nclaude = true\ncodex = false\n\n[source]\nclaude_dir = {:?}\ncodex_dir = \"~/.codex\"\n\n[appearance]\nmode = \"dark\"\ntheme_pack = \"classic\"\n\n[server]\npreferred_port = 5000\nfallback_to_free_port = false\n", home.join(".claude").to_string_lossy())
     }
 
     #[test]
@@ -1885,7 +2008,8 @@ mod tests {
     #[test]
     fn bundled_theme_catalog_exposes_supported_nondefault_packs() {
         let packs = bundled_theme_pack_slugs();
-        assert_eq!(packs.first().map(String::as_str), Some(DEFAULT_THEME_PACK));
+        assert!(packs.iter().any(|slug| slug == DEFAULT_THEME_PACK));
+        assert!(!packs.iter().any(|slug| slug == "default"));
         assert!(packs.len() > 1);
         assert!(packs.contains(&"eink".to_string()));
     }
@@ -1928,7 +2052,7 @@ mod tests {
         fs::write(
             &path,
             format!(
-                "schema_version = 1\n[source]\nclaude_dir = {:?}\n[server]\npreferred_port = 53001\nfallback_to_free_port = true\n",
+                "schema_version = 2\n[source]\nclaude_dir = {:?}\n[server]\npreferred_port = 53001\nfallback_to_free_port = true\n",
                 source.to_string_lossy()
             ),
         )
@@ -1953,7 +2077,7 @@ mod tests {
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
         fs::write(
             store.path(),
-            "schema_version = 1\n\n[appearance]\nmode = \"light\"\n",
+            "schema_version = 2\n\n[appearance]\nmode = \"light\"\n",
         )
         .unwrap();
         let loaded = store.load();
@@ -1972,7 +2096,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_and_missing_documents_inherit_resource_defaults_without_rewrite() {
+    fn partial_and_missing_documents_inherit_resource_defaults_without_rewrite() {
         let (_root, store) = fixture();
         let missing = store.load();
         assert!(missing.authored.claude_resources);
@@ -1982,13 +2106,181 @@ mod tests {
         assert!(!store.path().exists());
 
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
-        let legacy = "schema_version = 1\n[appearance]\nmode = \"dark\"\n";
-        fs::write(store.path(), legacy).unwrap();
+        let partial = "schema_version = 2\n[appearance]\nmode = \"dark\"\n";
+        fs::write(store.path(), partial).unwrap();
         let loaded = store.load();
         assert_eq!(loaded.status, LoadStatus::Valid);
         assert!(loaded.authored.claude_resources);
         assert!(!loaded.authored.codex_resources);
-        assert_eq!(fs::read_to_string(store.path()).unwrap(), legacy);
+        assert_eq!(fs::read_to_string(store.path()).unwrap(), partial);
+    }
+
+    fn v1_config(home: &Path) -> String {
+        format!(
+            "# kept by hand\nschema_version = 1\n\n[resources]\nclaude = true\ncodex = false\n\n[source]\nclaude_dir = {:?}\n\n[appearance]\nmode = \"dark\"\ntheme_pack = \"default\"\n\n[server]\npreferred_port = 5000\n",
+            home.join(".claude").to_string_lossy()
+        )
+    }
+
+    #[test]
+    fn ordinary_load_protects_a_v1_config_until_explicit_retirement() {
+        let (root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        let v1 = v1_config(&root.path().join("home"));
+        fs::write(store.path(), &v1).unwrap();
+        let loaded = store.load();
+        assert_eq!(loaded.status, LoadStatus::UnsupportedVersion);
+        assert!(matches!(
+            store.save(&SettingsDraft::defaults(), loaded.revision.as_ref()),
+            Err(SaveError::UnsupportedVersion(1))
+        ));
+        assert_eq!(fs::read_to_string(store.path()).unwrap(), v1);
+    }
+
+    #[test]
+    fn recognized_v1_is_retired_to_v2_defaults_without_writing_a_config() {
+        let (root, store) = fixture();
+        let home = root.path().join("home");
+        let source = home.join(".claude");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("CLAUDE.md"), "user source data\n").unwrap();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        let sibling = store.path().with_file_name("config.toml.bak");
+        fs::write(&sibling, v1_config(&home)).unwrap();
+        fs::write(store.path(), v1_config(&home)).unwrap();
+        let revision = ContentRevision::from_bytes(v1_config(&home).as_bytes());
+
+        assert_eq!(
+            store.retire_recognized_v1().unwrap(),
+            V1Retirement::Retired(revision)
+        );
+        assert!(
+            !store.path().exists(),
+            "no v2 config is created before Save"
+        );
+        let loaded = store.load();
+        assert_eq!(loaded.status, LoadStatus::Missing);
+        assert_eq!(loaded.authored, SettingsDraft::defaults());
+        assert_eq!(loaded.effective.theme_pack, DEFAULT_THEME_PACK);
+        // Only the active path is retired: no directory scan, no source data.
+        assert_eq!(fs::read_to_string(&sibling).unwrap(), v1_config(&home));
+        assert_eq!(
+            fs::read_to_string(source.join("CLAUDE.md")).unwrap(),
+            "user source data\n"
+        );
+        let mut entries = fs::read_dir(store.path().parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        entries.sort();
+        assert_eq!(entries, ["config.toml.bak"]);
+        // A second startup finds nothing to do.
+        assert_eq!(store.retire_recognized_v1().unwrap(), V1Retirement::Absent);
+    }
+
+    #[test]
+    fn v2_save_after_retirement_persists_across_relaunch() {
+        let (root, store) = fixture();
+        fs::create_dir_all(root.path().join("home/.claude")).unwrap();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(store.path(), v1_config(&root.path().join("home"))).unwrap();
+        assert!(matches!(
+            store.retire_recognized_v1().unwrap(),
+            V1Retirement::Retired(_)
+        ));
+        let mut draft = store.load().authored;
+        draft.appearance_mode = "light".into();
+        draft.theme_pack = "graphite".into();
+        let saved = store.save(&draft, None).unwrap();
+        assert_eq!(saved.snapshot.status, LoadStatus::Valid);
+        assert!(fs::read_to_string(store.path())
+            .unwrap()
+            .contains("schema_version = 2"));
+
+        // Relaunch: retirement leaves the saved v2 config alone.
+        let relaunched = SettingsStore::with_theme_packs(
+            store.path().to_path_buf(),
+            root.path().join("home"),
+            ["classic", "graphite"],
+        );
+        assert_eq!(
+            relaunched.retire_recognized_v1().unwrap(),
+            V1Retirement::NotRecognized
+        );
+        let loaded = relaunched.load();
+        assert_eq!(loaded.status, LoadStatus::Valid);
+        assert_eq!(loaded.effective.appearance_mode, AppearanceMode::Light);
+        assert_eq!(loaded.effective.theme_pack, "graphite");
+    }
+
+    #[test]
+    fn retirement_protects_malformed_future_unreadable_and_foreign_documents() {
+        let (root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        for content in [
+            "schema_version = 1\n[source\nnope".to_string(),
+            "schema_version = 3\nfuture = true\n".to_string(),
+            "schema_version = 2\n[appearance]\nmode = \"dark\"\n".to_string(),
+            "[appearance]\nmode = \"dark\"\n".to_string(),
+            "schema_version = 1\n[unrelated]\nkey = 1\n".to_string(),
+            "schema_version = 1\nname = \"another tool\"\n".to_string(),
+            "schema_version = \"1\"\n".to_string(),
+        ] {
+            fs::write(store.path(), &content).unwrap();
+            assert_eq!(
+                store.retire_recognized_v1().unwrap(),
+                V1Retirement::NotRecognized,
+                "{content:?}"
+            );
+            assert_eq!(fs::read_to_string(store.path()).unwrap(), content);
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::write(store.path(), v1_config(&root.path().join("home"))).unwrap();
+            fs::set_permissions(store.path(), fs::Permissions::from_mode(0o000)).unwrap();
+            // A process that cannot read the file cannot recognize it and
+            // leaves it in place; root can read it, so it is a genuine v1.
+            match store.retire_recognized_v1().unwrap() {
+                V1Retirement::NotRecognized => {
+                    assert!(store.path().exists());
+                    fs::set_permissions(store.path(), fs::Permissions::from_mode(0o600)).unwrap();
+                }
+                V1Retirement::Retired(_) => assert!(!store.path().exists()),
+                other => panic!("unexpected {other:?}"),
+            }
+
+            let target = root.path().join("linked-v1.toml");
+            fs::write(&target, v1_config(&root.path().join("home"))).unwrap();
+            fs::remove_file(store.path()).ok();
+            std::os::unix::fs::symlink(&target, store.path()).unwrap();
+            assert_eq!(
+                store.retire_recognized_v1().unwrap(),
+                V1Retirement::NotRecognized
+            );
+            assert!(target.exists() && store.path().exists());
+        }
+    }
+
+    #[test]
+    fn retirement_restores_a_file_that_changed_after_recognition() {
+        let (root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(store.path(), v1_config(&root.path().join("home"))).unwrap();
+        let replacement = "schema_version = 2\n[appearance]\nmode = \"light\"\n";
+        let store = store.with_before_replace(move |path| {
+            fs::write(path, replacement).unwrap();
+        });
+        assert_eq!(store.retire_recognized_v1().unwrap(), V1Retirement::Changed);
+        assert_eq!(fs::read_to_string(store.path()).unwrap(), replacement);
+        assert_eq!(
+            fs::read_dir(store.path().parent().unwrap())
+                .unwrap()
+                .count(),
+            1,
+            "the aside file is removed after restoring"
+        );
     }
 
     #[test]
@@ -2067,8 +2359,8 @@ mod tests {
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
         fs::create_dir_all(root.path().join("home/.codex")).unwrap();
         for original in [
-            "schema_version = 1\n[resources]\nclaude = true # keep claude\ncodex = false\nfuture = \"keep\"\n[source]\nclaude_dir = \"~/.claude\"\ncodex_dir = \"~/.codex\"\n",
-            "schema_version = 1\nresources = { claude = true, codex = false, future = \"keep\" } # resources note\nsource = { claude_dir = \"~/.claude\", codex_dir = \"~/.codex\", future = \"keep\" } # source note\n",
+            "schema_version = 2\n[resources]\nclaude = true # keep claude\ncodex = false\nfuture = \"keep\"\n[source]\nclaude_dir = \"~/.claude\"\ncodex_dir = \"~/.codex\"\n",
+            "schema_version = 2\nresources = { claude = true, codex = false, future = \"keep\" } # resources note\nsource = { claude_dir = \"~/.claude\", codex_dir = \"~/.codex\", future = \"keep\" } # source note\n",
         ] {
             fs::write(store.path(), original).unwrap();
             let loaded = store.load();
@@ -2087,7 +2379,7 @@ mod tests {
     fn malformed_has_location_and_requires_explicit_replacement() {
         let (_root, store) = fixture();
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
-        fs::write(store.path(), "schema_version = 1\n[source\nnope").unwrap();
+        fs::write(store.path(), "schema_version = 2\n[source\nnope").unwrap();
         let loaded = store.load();
         assert_eq!(loaded.status, LoadStatus::Malformed);
         assert!(loaded.validation[0].location.is_some());
@@ -2107,7 +2399,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let (_root, store) = fixture();
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
-        fs::write(store.path(), "schema_version = 1\n").unwrap();
+        fs::write(store.path(), "schema_version = 2\n").unwrap();
         fs::set_permissions(store.path(), fs::Permissions::from_mode(0o000)).unwrap();
         let loaded = store.load();
         assert_eq!(loaded.status, LoadStatus::Unreadable);
@@ -2124,12 +2416,12 @@ mod tests {
     fn future_version_cannot_be_saved_or_replaced() {
         let (_root, store) = fixture();
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
-        fs::write(store.path(), "schema_version = 2\nfuture = true\n").unwrap();
+        fs::write(store.path(), "schema_version = 3\nfuture = true\n").unwrap();
         let loaded = store.load();
         assert_eq!(loaded.status, LoadStatus::UnsupportedVersion);
         assert!(matches!(
             store.save(&loaded.authored, loaded.revision.as_ref()),
-            Err(SaveError::UnsupportedVersion(2))
+            Err(SaveError::UnsupportedVersion(3))
         ));
         assert!(matches!(
             store.replace_malformed(&loaded.authored, loaded.revision.as_ref().unwrap()),
@@ -2141,7 +2433,7 @@ mod tests {
     fn semantic_errors_can_be_repaired() {
         let (_root, store) = fixture();
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
-        fs::write(store.path(), "schema_version = 1\n[source]\nclaude_dir = \"relative\"\n[appearance]\nmode = \"sepia\"\n[server]\npreferred_port = 0\n").unwrap();
+        fs::write(store.path(), "schema_version = 2\n[source]\nclaude_dir = \"relative\"\n[appearance]\nmode = \"sepia\"\n[server]\npreferred_port = 0\n").unwrap();
         let loaded = store.load();
         assert_eq!(loaded.status, LoadStatus::Invalid);
         assert!(!loaded.active.uses_authored_settings);
@@ -2164,7 +2456,7 @@ mod tests {
         let (root, store) = fixture();
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
         fs::write(root.path().join("plain-file"), "x").unwrap();
-        fs::write(store.path(), format!("schema_version = 1\n[source]\nclaude_dir = {:?}\n[appearance]\nmode = 7\ntheme_pack = \"lost\"\n[server]\npreferred_port = 70000\n", root.path().join("plain-file").to_string_lossy())).unwrap();
+        fs::write(store.path(), format!("schema_version = 2\n[source]\nclaude_dir = {:?}\n[appearance]\nmode = 7\ntheme_pack = \"lost\"\n[server]\npreferred_port = 70000\n", root.path().join("plain-file").to_string_lossy())).unwrap();
         let loaded = store.load();
         assert_eq!(loaded.status, LoadStatus::Invalid);
         assert!(loaded
@@ -2191,7 +2483,7 @@ mod tests {
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
         fs::write(
             store.path(),
-            "schema_version = 1\nsource = \"not a table\" # keep note\n",
+            "schema_version = 2\nsource = \"not a table\" # keep note\n",
         )
         .unwrap();
         let loaded = store.load();
@@ -2214,7 +2506,7 @@ mod tests {
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
         fs::write(
             store.path(),
-            "schema_version = 1\nsource = { claude_dir = \"~/.claude\", future = \"keep\" } # source note\nappearance = { mode = \"system\", theme_pack = \"default\" }\nserver = { preferred_port = 4892, fallback_to_free_port = true }\n",
+            "schema_version = 2\nsource = { claude_dir = \"~/.claude\", future = \"keep\" } # source note\nappearance = { mode = \"system\", theme_pack = \"classic\" }\nserver = { preferred_port = 4892, fallback_to_free_port = true }\n",
         )
         .unwrap();
         let loaded = store.load();
@@ -2234,7 +2526,7 @@ mod tests {
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
         fs::write(
             store.path(),
-            "schema_version = 1\n[appearance]\ntheme_pack = \"uninstalled-pack\"\n",
+            "schema_version = 2\n[appearance]\ntheme_pack = \"uninstalled-pack\"\n",
         )
         .unwrap();
         let loaded = store.load();
@@ -2259,7 +2551,7 @@ mod tests {
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
         fs::write(
             store.path(),
-            "schema_version = 1\n[source]\nclaude_dir = \"~/link\"\n",
+            "schema_version = 2\n[source]\nclaude_dir = \"~/link\"\n",
         )
         .unwrap();
         assert_eq!(
@@ -2280,7 +2572,7 @@ mod tests {
         fs::write(
             store.path(),
             format!(
-                "schema_version = 1\n[source]\nclaude_dir = {:?}\n",
+                "schema_version = 2\n[source]\nclaude_dir = {:?}\n",
                 locked.to_string_lossy()
             ),
         )
@@ -2343,7 +2635,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let (root, store) = fixture();
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
-        let content = format!("# human note\nschema_version = 1\nunknown = \"keep\"\n[source]\nclaude_dir = {:?}\n[appearance]\nmode = \"system\" # inline\ntheme_pack = \"default\"\n[server]\npreferred_port = 4892\nfallback_to_free_port = true\n", root.path().join("home/.claude").to_string_lossy());
+        let content = format!("# human note\nschema_version = 2\nunknown = \"keep\"\n[source]\nclaude_dir = {:?}\n[appearance]\nmode = \"system\" # inline\ntheme_pack = \"classic\"\n[server]\npreferred_port = 4892\nfallback_to_free_port = true\n", root.path().join("home/.claude").to_string_lossy());
         fs::write(store.path(), content).unwrap();
         #[cfg(unix)]
         fs::set_permissions(store.path(), fs::Permissions::from_mode(0o640)).unwrap();
@@ -2388,7 +2680,7 @@ mod tests {
         use std::io::Read;
         let (_root, store) = fixture();
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
-        fs::write(store.path(), "schema_version = 1\n# old inode\n").unwrap();
+        fs::write(store.path(), "schema_version = 2\n# old inode\n").unwrap();
         let loaded = store.load();
         let mut old_handle = File::open(store.path()).unwrap();
         let mut draft = loaded.authored;
@@ -2396,7 +2688,7 @@ mod tests {
         store.save(&draft, loaded.revision.as_ref()).unwrap();
         let mut old_bytes = String::new();
         old_handle.read_to_string(&mut old_bytes).unwrap();
-        assert_eq!(old_bytes, "schema_version = 1\n# old inode\n");
+        assert_eq!(old_bytes, "schema_version = 2\n# old inode\n");
         assert!(fs::read_to_string(store.path())
             .unwrap()
             .contains("mode = \"dark\""));
@@ -2508,7 +2800,7 @@ mod tests {
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
         fs::write(
             store.path(),
-            "schema_version = 1\r\n[resources]\r\nclaude = true\r\ncodex = false\r\n",
+            "schema_version = 2\r\n[resources]\r\nclaude = true\r\ncodex = false\r\n",
         )
         .unwrap();
         let loaded = store.load();
@@ -2577,14 +2869,14 @@ mod tests {
         let store = SettingsStore::with_theme_packs(
             path.clone(),
             root.path().join("home"),
-            ["default", "paper"],
+            ["classic", "graphite"],
         );
         let first = store
-            .update_appearance(Some(AppearanceMode::Dark), Some("paper"))
+            .update_appearance(Some(AppearanceMode::Dark), Some("graphite"))
             .unwrap();
         assert_eq!(first.impact, ApplyImpact::AppearanceOnly);
         assert_eq!(first.snapshot.authored.appearance_mode, "dark");
-        assert_eq!(first.snapshot.authored.theme_pack, "paper");
+        assert_eq!(first.snapshot.authored.theme_pack, "graphite");
 
         let mut raw = fs::read_to_string(&path).unwrap();
         raw.push_str("\n# external edit\nfuture_key = \"keep\"\n");
@@ -2595,7 +2887,7 @@ mod tests {
         let racing = SettingsStore::with_theme_packs(
             path.clone(),
             root.path().join("home"),
-            ["default", "paper"],
+            ["classic", "graphite"],
         )
         .with_before_replace(move |_| {
             if !fired_hook.swap(true, Ordering::SeqCst) {
@@ -2608,7 +2900,7 @@ mod tests {
             }
         });
         let saved = racing
-            .update_appearance(Some(AppearanceMode::Light), Some("default"))
+            .update_appearance(Some(AppearanceMode::Light), Some("classic"))
             .unwrap();
         assert_eq!(saved.snapshot.authored.preferred_port, 6001);
         let final_raw = fs::read_to_string(&path).unwrap();
@@ -2623,7 +2915,7 @@ mod tests {
         fs::write(
             store.path(),
             format!(
-                "schema_version = 1\n[source]\nclaude_dir = {:?}\n[appearance]\nmode = \"system\"\ntheme_pack = \"not-installed\"\n[server]\npreferred_port = 4892\nfallback_to_free_port = true\n",
+                "schema_version = 2\n[source]\nclaude_dir = {:?}\n[appearance]\nmode = \"system\"\ntheme_pack = \"not-installed\"\n[server]\npreferred_port = 4892\nfallback_to_free_port = true\n",
                 root.path().join("home/.claude").to_string_lossy()
             ),
         )
@@ -2653,12 +2945,12 @@ mod tests {
         ));
 
         let stale_revision = current.revision.unwrap();
-        fs::write(store.path(), "schema_version = 1\n[broken\n").unwrap();
+        fs::write(store.path(), "schema_version = 2\n[broken\n").unwrap();
         assert!(matches!(
             store.rebase_dirty(&current.authored, &dirty, &stale_revision),
             Err(SaveError::LatestNotValid)
         ));
-        fs::write(store.path(), "schema_version = 2\n").unwrap();
+        fs::write(store.path(), "schema_version = 3\n").unwrap();
         assert!(matches!(
             store.rebase_dirty(&current.authored, &dirty, &stale_revision),
             Err(SaveError::LatestNotValid)
@@ -2828,7 +3120,7 @@ mod tests {
         assert!(rebased.contains("external = \"preserve\""));
         assert!(rebased.contains("future_command_id = [\"future+binding\"]"));
 
-        fs::write(store.path(), "schema_version = 1\n[broken\n").unwrap();
+        fs::write(store.path(), "schema_version = 2\n[broken\n").unwrap();
         let malformed = store.load();
         let replaced = store
             .replace_malformed(&draft, malformed.revision.as_ref().unwrap())
@@ -2909,13 +3201,13 @@ mod tests {
         assert_eq!(
             serde_json::to_value(SettingsDraft::defaults()).unwrap(),
             serde_json::json!({
-                "schema_version": 1,
+                "schema_version": 2,
                 "claude_resources": true,
                 "codex_resources": false,
                 "claude_dir": "~/.claude",
                 "codex_dir": "~/.codex",
                 "appearance_mode": "system",
-                "theme_pack": "default",
+                "theme_pack": "classic",
                 "preferred_port": 4892,
                 "fallback_to_free_port": true,
                 "shortcuts": default_shortcut_entries()

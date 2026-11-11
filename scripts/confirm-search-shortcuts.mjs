@@ -136,7 +136,7 @@ async function dispatchShortcut(page, key, modifier) {
     metaKey: modifier.metaKey,
     ctrlKey: modifier.ctrlKey,
   });
-  // The find island adds its document listener from a Preact effect.  Two
+  // The find island adds its document listener on activation.  Two
   // frames keep this helper deterministic without a timing-based sleep.
   await waitForTwoFrames(page);
 }
@@ -267,13 +267,39 @@ async function assertSpaCleanup(page, modifier) {
   await waitForFindBar(page, false);
 }
 
+const islandMountFailures = new WeakMap();
+
+function trackIslandMountFailures(page) {
+  if (islandMountFailures.has(page)) return islandMountFailures.get(page);
+  const failures = [];
+  islandMountFailures.set(page, failures);
+  page.on("console", (message) => {
+    if (message.type() === "error" && /island .* mount failed/.test(message.text())) failures.push(message.text().split("\n")[0]);
+  });
+  return failures;
+}
+
 async function preparePage(page, url) {
+  const failures = trackIslandMountFailures(page);
+  failures.length = 0;
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
   await page.waitForFunction(() => document.readyState !== "loading", undefined, { timeout: timeoutMs });
   const platform = await page.evaluate(() => navigator.userAgentData?.platform ?? navigator.platform);
   assert.match(platform, /Mac/i, "Cmd/Ctrl coexistence requires the harness's macOS platform emulation");
   await assertFindMount(page);
+  // The search shortcut drives zudo-doc's generated <site-search> element; on
+  // a cold dev server its script can define the element after the toolbar
+  // islands activate, so wait for the definition rather than racing it.
+  await page.waitForFunction(() => customElements.get("site-search") !== undefined, undefined, { timeout: timeoutMs });
   await waitForTwoFrames(page);
+  // A dev server started beside a stale app/dist serves that build as its
+  // boot seed, whose island identities do not match the dev bundle. Report
+  // that setup error instead of exercising half-mounted controls.
+  assert.deepEqual(
+    failures,
+    [],
+    "islands failed to mount; restart the dev server without a stale app/dist build seed",
+  );
   await waitForSearchDialog(page, false);
   await waitForFindBar(page, false);
 }

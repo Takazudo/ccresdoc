@@ -21,7 +21,8 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -40,6 +41,7 @@ const artifactDir = process.env.CCRESDOC_BROWSER_ARTIFACT_DIR
   ? resolve(process.env.CCRESDOC_BROWSER_ARTIFACT_DIR)
   : undefined;
 let activeServerChild;
+let activePreviewChild;
 let activeBrowser;
 let activeCleanupPromise;
 const appRoutes = {
@@ -47,7 +49,6 @@ const appRoutes = {
   claude: "/docs/claude/",
   codex: "/docs/codex/",
   missing: "/docs/browser-navigation-missing/",
-  notFound: "/404.html",
 };
 
 const nativePackages = {
@@ -127,7 +128,7 @@ function assertRepositoryContracts() {
   );
 
   const appearanceFixture = readAppearanceFixture();
-  assert.equal(appearanceFixture.schemaVersion, 1, "appearance transition fixture schemaVersion drifted");
+  assert.equal(appearanceFixture.schemaVersion, 2, "appearance transition fixture schemaVersion drifted");
   assert(
     appearanceFixture.rows.some((row) => row.parity === "rust+stub"),
     "appearance transition fixture must keep rust+stub rows for the harness stub",
@@ -384,6 +385,70 @@ async function startServer() {
   throw new Error(`could not start zfb on a collision-safe loopback port: ${lastError?.message ?? "unknown error"}`);
 }
 
+// zfb dev answers an unknown URL with its own minimal 404 and does not route
+// the host 404 page, so the checked-in page is exercised where it is served:
+// a fresh native build in a private outdir behind `zfb preview`.
+async function startPreviewServer() {
+  const binary = nativeZfbPath();
+  const workRoot = mkdtempSync(join(tmpdir(), "ccresdoc-browser-404-"));
+  const outdir = join(workRoot, "dist");
+  const scratch = join(workRoot, "scratch");
+  const build = appendOutput(spawn(binary, ["build", "--outdir", outdir, "--scratch-dir", scratch], {
+    cwd: appRoot,
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  }));
+  const built = await build.exited;
+  assert.equal(built.code, 0, `native zfb build for the 404 surface failed:\n${build.output}`);
+  assert(existsSync(join(outdir, "404.html")), "the native build must emit the host 404 page");
+  const port = await freeLoopbackPort();
+  const child = appendOutput(spawn(binary, [
+    "preview", "--host", "127.0.0.1", "--port", String(port), "--outdir", outdir, "--scratch-dir", scratch,
+  ], {
+    cwd: appRoot,
+    detached: process.platform !== "win32",
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  }));
+  activePreviewChild = child;
+  const origin = `http://127.0.0.1:${port}`;
+  const deadline = Date.now() + semanticReadyTimeoutMs;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`zfb preview exited early:\n${child.output}`);
+    }
+    if ((await fetchText(`${origin}${appRoutes.root}`)).status === 200) {
+      return { child, origin, workRoot };
+    }
+    await delay(100);
+  }
+  throw new Error(`timed out waiting for zfb preview:\n${child.output}`);
+}
+
+async function assertBuiltNotFoundRecovery(browser) {
+  const preview = await startPreviewServer();
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  const page = await context.newPage();
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  try {
+    const response = await page.goto(`${preview.origin}${appRoutes.missing}`, { waitUntil: "domcontentloaded", timeout: browserTimeoutMs });
+    assert.equal(response?.status(), 404, "the built site answers an unknown route with HTTP 404");
+    assert.match(await page.locator("body").innerText(), /Page not found/i, "the checked-in host 404 renders through package chrome");
+    await waitForToolbar(page);
+    await waitForLoadControls(page, browserTimeoutMs);
+    await command(page, "home").click();
+    await page.waitForFunction((expected) => location.pathname === expected, appRoutes.root, { timeout: browserTimeoutMs });
+    await waitForToolbar(page);
+    assert.deepEqual(pageErrors, [], `the built 404 raised page exceptions: ${pageErrors.join("; ")}`);
+  } finally {
+    await context.close();
+    await stopServer(preview.child);
+    if (activePreviewChild === preview.child) activePreviewChild = undefined;
+    rmSync(preview.workRoot, { recursive: true, force: true });
+  }
+}
+
 async function closeActiveResources() {
   if (!activeCleanupPromise) {
     activeCleanupPromise = (async () => {
@@ -393,6 +458,9 @@ async function closeActiveResources() {
       const child = activeServerChild;
       activeServerChild = undefined;
       if (child) await stopServer(child);
+      const preview = activePreviewChild;
+      activePreviewChild = undefined;
+      if (preview) await stopServer(preview);
     })();
   }
   return activeCleanupPromise;
@@ -471,9 +539,8 @@ async function installTauriHarness(context) {
     // src-tauri/fixtures/appearance-transitions.json (rust+stub rows); see its README.
     const { effectivePort, defaults } = fixture.constants;
     const MODES = ["system", "light", "dark"];
-    const INTENTS = ["persist", "legacy_candidate"];
     const FIELDS = ["mode", "theme_pack"];
-    const REQUEST_KEYS = ["field", "intent", "mode", "themePack"];
+    const REQUEST_KEYS = ["field", "mode", "themePack"];
     const clone = (value) => (value === null || value === undefined ? null : JSON.parse(JSON.stringify(value)));
     const commandError = (code) => ({ code, message: code });
 
@@ -481,7 +548,6 @@ async function installTauriHarness(context) {
       const state = {
         configStatus: initial.configStatus ?? "missing",
         stored: clone(initial.stored),
-        candidate: clone(initial.candidate),
         preview: clone(initial.preview),
         revision: initial.revision ?? null,
       };
@@ -491,9 +557,6 @@ async function installTauriHarness(context) {
         const authoritativeSource = state.stored ? "authoritative" : "default";
         if (state.preview) {
           return { appearance: clone(state.preview), authoritative, revision: state.revision, source: "preview", authoritativeSource };
-        }
-        if (state.candidate && !state.stored) {
-          return { appearance: clone(state.candidate.appearance), authoritative, revision: state.revision, source: "legacy_candidate", authoritativeSource };
         }
         return { appearance: clone(authoritative), authoritative, revision: state.revision, source: authoritativeSource, authoritativeSource };
       };
@@ -515,30 +578,13 @@ async function installTauriHarness(context) {
             && JSON.stringify(Object.keys(request).sort()) === JSON.stringify(REQUEST_KEYS)
             && MODES.includes(request.mode)
             && typeof request.themePack === "string"
-            && INTENTS.includes(request.intent)
             && FIELDS.includes(request.field);
           if (!valid) throw "invalid args `request` for command `update_appearance`: invalid request shape";
           if (callerUrl !== undefined) authorize(callerUrl);
           if (!availableThemePacks.includes(request.themePack)) throw commandError("invalid_theme_pack");
-          if (request.intent === "legacy_candidate") {
-            if (state.configStatus === "missing") {
-              state.candidate = { origin: callerUrl === undefined ? location.origin : new URL(callerUrl).origin, appearance: { mode: request.mode, themePack: request.themePack } };
-              return {
-                appearance: { mode: request.mode, themePack: request.themePack },
-                authoritative: { ...defaults },
-                revision: null,
-                source: "legacy_candidate",
-                authoritativeSource: "default",
-              };
-            }
-            const current = envelope();
-            emit(current);
-            return current;
-          }
           const base = state.stored ?? { ...defaults };
           state.stored = { ...base, [request.field === "mode" ? "mode" : "themePack"]: request.field === "mode" ? request.mode : request.themePack };
           state.configStatus = "valid";
-          state.candidate = null;
           saves += 1;
           state.revision = `rev:saved-${saves}`;
           const result = envelope();
@@ -597,9 +643,6 @@ async function installTauriHarness(context) {
         }
         if (expected.emitsEvent !== events.length > 0) fail(`emitsEvent expected ${expected.emitsEvent}, got ${events.length} event(s)`);
         if (expected.emitsEvent && JSON.stringify(events[0]) !== JSON.stringify(result)) fail("event payload differs from the returned envelope");
-        if (JSON.stringify(stub.state.candidate) !== JSON.stringify(expected.candidateAfter)) {
-          fail(`candidateAfter expected ${JSON.stringify(expected.candidateAfter)}, got ${JSON.stringify(stub.state.candidate)}`);
-        }
         if (JSON.stringify(stub.state.stored) !== JSON.stringify(expected.storedAfter)) {
           fail(`storedAfter expected ${JSON.stringify(expected.storedAfter)}, got ${JSON.stringify(stub.state.stored)}`);
         }
@@ -618,7 +661,7 @@ async function installTauriHarness(context) {
           // a stub returning undefined makes the theme toggle silently snap back.
           if (command === "update_appearance") {
             const packs = Object.keys(window.__zudoDocThemePacks?.packs ?? {});
-            return liveStub.update(args?.request, [...new Set(["default", ...packs])]);
+            return liveStub.update(args?.request, [...new Set(["classic", ...packs])]);
           }
           return undefined;
         },
@@ -644,10 +687,12 @@ async function assertStubSelfCheck(page, origin) {
   assert(applicable > 0, "the transition table must contain rust+stub rows");
 }
 
-async function assertLegacyCandidateBootstrap(browser, origin) {
+// Schema v2 is a clean break: a missing config boots from v2 defaults and the
+// bridge never reports stored zudo-doc preferences back to the host.
+async function assertDefaultBootstrapImportsNothing(browser, origin) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   await installTauriHarness(context);
-  const seeded = { mode: "dark", themePack: "default" };
+  const seeded = { mode: "dark", themePack: "graphite" };
   await context.addInitScript((seed) => {
     if (sessionStorage.getItem("__ccresdocBootstrapSeeded") === null) {
       localStorage.setItem("zudo-doc-theme", seed.mode);
@@ -655,39 +700,25 @@ async function assertLegacyCandidateBootstrap(browser, origin) {
       sessionStorage.setItem("__ccresdocBootstrapSeeded", "1");
     }
     window.__CCRESDOC_APPEARANCE__ = {
-      mode: seed.mode,
-      themePack: seed.themePack,
-      effectiveMode: "dark",
+      mode: "system",
+      themePack: "classic",
+      effectiveMode: "light",
       revision: null,
-      source: "legacy_candidate",
+      source: "default",
       origin: location.origin,
     };
   }, seeded);
   const page = await context.newPage();
   try {
     await openPage(page, origin, appRoutes.root);
-    await page.waitForFunction(
-      () => window.__ccresdocTauriCalls.some(({ command }) => command === "update_appearance"),
-      undefined,
-      { timeout: browserTimeoutMs },
-    );
-    await page.waitForFunction(() => window.__ccresdocStubSnapshot().candidate !== null, undefined, { timeout: browserTimeoutMs });
     await delay(250);
     const result = await page.evaluate(() => ({
       calls: window.__ccresdocTauriCalls.filter(({ command }) => command === "update_appearance"),
-      storage: {
-        mode: localStorage.getItem("zudo-doc-theme"),
-        themePack: localStorage.getItem("zudo-doc-theme-pack"),
-      },
       snapshot: window.__ccresdocStubSnapshot(),
     }));
-    assert(
-      result.calls.some(({ args }) => args?.request?.intent === "legacy_candidate"),
-      `the bridge must report the legacy candidate through update_appearance, got ${JSON.stringify(result.calls)}`,
-    );
-    assert.deepEqual(result.storage, seeded, "reporting a legacy candidate must leave pre-seeded storage unchanged");
-    assert.equal(result.snapshot.stored, null, "a legacy-candidate report must not create stored config");
-    assert.deepEqual(result.snapshot.candidate?.appearance, seeded, "the stub must hold the reported candidate");
+    assert.deepEqual(result.calls, [], "a default boot must not send stored preferences to the host");
+    assert.equal(result.snapshot.stored, null, "a default boot must not create stored config");
+    assert.equal(result.snapshot.configStatus, "missing");
   } finally {
     await context.close();
   }
@@ -1661,15 +1692,37 @@ async function assertBrowserOnly(browser, origin) {
     await waitForPath(page, appRoutes.claude);
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
-    const missing = await fetchText(`${origin}${appRoutes.missing}`);
-    assert.equal(missing.status, 404, "the deterministic missing route keeps its HTTP 404 contract");
-    // zfb dev intentionally answers an unknown URL with its own minimal 404.
-    // Open the generated host page to exercise CCResDoc's toolbar and Home
-    // recovery behavior instead of asserting against that carrier fallback.
-    await openPage(page, origin, appRoutes.notFound);
-    assert.match(await page.locator("body").innerText(), /Page not found/i, "the checked-in host 404 renders through package chrome");
+
+    // A genuine DOM-update failure must still be reported, not swallowed with
+    // the skipped-transition rejection above, and must not leave the router
+    // unable to navigate.
+    const routerLogs = [];
+    const onConsole = (message) => {
+      if (message.text().includes("[zfb]")) routerLogs.push(message.text());
+    };
+    page.on("console", onConsole);
+    await page.evaluate(() => {
+      document.addEventListener("zfb:before-swap", (event) => {
+        event.swap = () => {
+          throw new Error("ccresdoc-dom-update-probe");
+        };
+      }, { once: true });
+    });
+    await page.locator(`header a[href$="${appRoutes.claude}"]`).first().click();
+    const deadline = Date.now() + browserTimeoutMs;
+    while (!routerLogs.some((text) => text.includes("ccresdoc-dom-update-probe")) && Date.now() < deadline) await delay(50);
+    page.off("console", onConsole);
+    assert(
+      routerLogs.some((text) => text.includes("ccresdoc-dom-update-probe")),
+      `a DOM-update failure must be reported by the router, got ${JSON.stringify(routerLogs)}`,
+    );
+    assert(!pageErrors.some((message) => message.includes("ccresdoc-dom-update-probe")), "the reported DOM-update failure must not escape as an unhandled error");
+    await openPage(page, origin, appRoutes.root);
+    await routeViaHeader(page, appRoutes.claude);
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
+    const missing = await fetchText(`${origin}${appRoutes.missing}`);
+    assert.equal(missing.status, 404, "the deterministic missing route keeps its HTTP 404 contract");
     assert.equal(await page.evaluate(() => "__TAURI__" in window), false, "browser-only interactions never create a Tauri bridge");
     assert.deepEqual(pageErrors, [], `browser-only interactions raised page exceptions: ${pageErrors.join("; ")}`);
   } finally {
@@ -1726,9 +1779,10 @@ async function run() {
       } finally {
         await context.close();
       }
-      await assertLegacyCandidateBootstrap(browser, server.origin);
+      await assertDefaultBootstrapImportsNothing(browser, server.origin);
       await assertCoarseTargets(browser, server.origin);
       await assertBrowserOnly(browser, server.origin);
+      await assertBuiltNotFoundRecovery(browser);
       console.log(JSON.stringify({
         status: "passed",
         browser: "chromium",

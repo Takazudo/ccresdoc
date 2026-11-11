@@ -178,7 +178,7 @@ export function startAppearanceBridge(root: AppearanceRoot = globalThis as Appea
     if (key(value) === key(authoritative)) return;
     pending = key(value);
     try {
-      const result = await invoke("update_appearance", { request: { ...value, intent: "persist", field } }) as AppearanceEnvelope;
+      const result = await invoke("update_appearance", { request: { ...value, field } }) as AppearanceEnvelope;
       await accept(result);
     } catch (error) {
       pending = "";
