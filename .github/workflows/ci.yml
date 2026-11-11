@@ -63,7 +63,16 @@ jobs:
         run: pnpm --dir app run test:settings
 
       - name: Install pinned Playwright Chromium
-        run: pnpm --dir app exec playwright install --with-deps chromium
+        run: pnpm --dir app exec playwright install chromium
+
+      # The runner images already carry Chromium's system libraries; apt adds
+      # only fonts here. An archive outage must not block the run: the browser
+      # suite below still fails if Chromium cannot actually launch.
+      - name: Install Chromium system dependencies (best effort)
+        run: |
+          if ! pnpm --dir app exec playwright install-deps chromium; then
+            echo "::warning::playwright install-deps failed; continuing with the runner image's libraries"
+          fi
 
       - name: Browser navigation actual-key confirmation
         timeout-minutes: 10

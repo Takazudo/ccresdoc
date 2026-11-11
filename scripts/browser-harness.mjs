@@ -13,7 +13,11 @@
 // - HTML page responses carry `x-zfb-dev-generation: <n>` and
 //   `x-zfb-dev-ready: true|false` (non-HTML responses carry neither).
 // - GET /__zfb/reload is an SSE stream with named events `page`, `css`,
-//   `islands` (data may be empty) plus `:` keep-alive comments every 15s.
+//   `islands`, each with a `data:` line (possibly `{}`), plus `:` keep-alive comments every 15s.
+
+import { createSseParser } from "./lib/sse-parser.mjs";
+
+export { createSseParser };
 
 export const READINESS_ATTRIBUTE_PREFIX = "data-ccresdoc-";
 const DOC_ID_GLOBAL = "__ccresdocDocId";
@@ -65,36 +69,6 @@ async function boundedFetch(url, { timeoutMs, signal, readBody }) {
   }
 }
 
-// Incremental parser for a text/event-stream body. Feed decoded text chunks;
-// each completed event is passed to `onEvent({ event, data })`.
-export function createSseParser(onEvent) {
-  let buffer = "";
-  let event = "";
-  let data = [];
-  const dispatch = () => {
-    if (event || data.length > 0) onEvent({ event: event || "message", data: data.join("\n") });
-    event = "";
-    data = [];
-  };
-  return (chunk) => {
-    buffer += chunk;
-    let newline;
-    while ((newline = buffer.search(/\r\n|\r|\n/)) !== -1) {
-      const line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + (buffer.startsWith("\r\n", newline) ? 2 : 1));
-      if (line === "") dispatch();
-      else if (line.startsWith(":")) continue;
-      else {
-        const colon = line.indexOf(":");
-        const field = colon === -1 ? line : line.slice(0, colon);
-        const value = colon === -1 ? "" : line.slice(colon + 1).replace(/^ /, "");
-        if (field === "event") event = value;
-        else if (field === "data") data.push(value);
-      }
-    }
-  };
-}
-
 // Opens GET <base>/__zfb/reload from Node. `live` resolves once the response
 // headers arrived (subscription is active); `closed` resolves with the reason
 // the stream ended. Establishing the stream is bounded by `connectTimeoutMs`.
@@ -128,7 +102,9 @@ export function openReloadStream(baseUrl, { onEvent, connectTimeoutMs = 5000 }) 
       const parse = createSseParser((event) => onEvent?.(event));
       const decoder = new TextDecoder();
       for await (const chunk of response.body) parse(decoder.decode(chunk, { stream: true }));
-      return { reason: "ended", byCaller: closedByCaller };
+      parse(decoder.decode());
+      const partialFrameDiscarded = parse.end();
+      return { reason: partialFrameDiscarded ? "ended mid-frame" : "ended", byCaller: closedByCaller };
     } catch (error) {
       rejectLive(error);
       return { reason: closedByCaller ? "closed" : String(error?.message ?? error), byCaller: closedByCaller, error };
