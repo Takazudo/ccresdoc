@@ -40,6 +40,7 @@ export function createSseParser(onEvent) {
 
   const feed = (chunk) => {
     let text = String(chunk);
+    if (text === "") return;
     if (pendingCr) {
       pendingCr = false;
       if (text.startsWith("\n")) text = text.slice(1);

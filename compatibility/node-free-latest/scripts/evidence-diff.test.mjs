@@ -64,3 +64,8 @@ test("serialization-only differences are named as such", () => {
   assert.match(formatEvidenceDrift("a.json", JSON.stringify(facts), facts), /same JSON value, different serialization/);
   assert.match(formatEvidenceDrift("a.json", "{not json", facts), /not valid JSON/);
 });
+
+test("values that do not serialize as JSON are compared as they serialize", () => {
+  assert.match(formatEvidenceDrift("x.json", '{"a":1}', { a: 2, b: undefined }), /^x\.json: 1 changed value\n  \$\.a: 1 -> 2$/);
+  assert.match(formatEvidenceDrift("x.json", '{"a":1}', { a: Number.NaN }), /\$\.a: 1 -> null/);
+});

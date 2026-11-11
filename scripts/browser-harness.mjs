@@ -13,7 +13,7 @@
 // - HTML page responses carry `x-zfb-dev-generation: <n>` and
 //   `x-zfb-dev-ready: true|false` (non-HTML responses carry neither).
 // - GET /__zfb/reload is an SSE stream with named events `page`, `css`,
-//   `islands` (data may be empty) plus `:` keep-alive comments every 15s.
+//   `islands`, each with a `data:` line (possibly `{}`), plus `:` keep-alive comments every 15s.
 
 import { createSseParser } from "./lib/sse-parser.mjs";
 

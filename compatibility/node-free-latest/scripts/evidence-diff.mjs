@@ -41,7 +41,7 @@ export function diffJson(before, after, { limit = 20 } = {}) {
 
 function render(value, maxLength) {
   if (value === MISSING) return "<missing>";
-  const text = JSON.stringify(value);
+  const text = JSON.stringify(value) ?? String(value);
   return text.length > maxLength ? `${text.slice(0, maxLength)}… (${text.length} chars)` : text;
 }
 
@@ -52,7 +52,10 @@ export function formatEvidenceDrift(name, committedText, generatedValue, { limit
   } catch (error) {
     return `${name}: committed file is not valid JSON (${error.message})`;
   }
-  const { differences, total } = diffJson(committed, generatedValue, { limit });
+  // Compare the value as it serializes, so undefined, NaN and toJSON values
+  // diff exactly as the byte comparison sees them.
+  const generated = JSON.parse(JSON.stringify(generatedValue));
+  const { differences, total } = diffJson(committed, generated, { limit });
   if (total === 0) return `${name}: same JSON value, different serialization (run evidence:refresh)`;
   const lines = [`${name}: ${total} changed value${total === 1 ? "" : "s"}`];
   for (const difference of differences) {

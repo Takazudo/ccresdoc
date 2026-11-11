@@ -66,3 +66,7 @@ test("field values keep everything after the first colon and one optional space"
   assert.deepEqual(collect(["data:  two spaces: kept\n\n"]).events, [{ event: "message", data: " two spaces: kept" }]);
   assert.deepEqual(collect(["data\n\n"]).events, [{ event: "message", data: "" }]);
 });
+
+test("empty chunks between a trailing CR and its LF keep the CRLF pair", () => {
+  assert.deepEqual(collect(["data: a\r", "", "\ndata: b\n\n"]).events, [{ event: "message", data: "a\nb" }]);
+});
