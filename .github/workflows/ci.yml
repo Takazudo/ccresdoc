@@ -17,7 +17,9 @@ permissions:
 jobs:
   frontend:
     name: Frontend published-toolchain gates
-    runs-on: ubuntu-latest
+    # Playwright's --with-deps apt install cannot resolve the ubuntu-latest
+    # (26.04) archive mirrors; 24.04 keeps the browser dependencies installable.
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
 
     steps:
