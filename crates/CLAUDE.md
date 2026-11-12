@@ -78,8 +78,9 @@ parity table, and the runtime policy: loopback port choice, origin/navigation
 checks, semantic readiness, generation supersession and serialized apply) run
 with plain `cargo test -p ccresdoc-host-domain` on any Linux host, and therefore
 in CI's `cargo test --workspace --exclude ccresdoc` and b4push. Those three
-modules must stay free of Tauri imports; `runtime.rs` additionally depends only
-on `crate::settings` and `html5ever` (kept at the same version as `src-tauri`).
+modules must stay free of Tauri imports; beyond the crates settings/appearance
+already use, `runtime.rs` needs only `crate::settings` and `html5ever` (kept at
+the same version as `src-tauri`).
 This is runtime-policy coverage only: it does not build the Tauri app and does
 not establish WKWebView, FSEvents, native command delivery or packaged process
 behavior, which stay with the macOS acceptance gates. `search_index_publication.rs`

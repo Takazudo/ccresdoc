@@ -327,8 +327,8 @@ installs the pinned Playwright Chromium, then runs a separate best-effort
 itself still fails if Chromium cannot launch. Rust runs
 `cargo fmt --check`, `cargo clippy --workspace --exclude ccresdoc`, and
 `cargo test --workspace --exclude ccresdoc`. The `ccresdoc` (src-tauri) crate is
-excluded because webkit2gtk is not available on ubuntu-latest; its Tauri-free
-`settings.rs`, `appearance.rs` and `runtime.rs` modules and their unit tests are
+excluded because webkit2gtk is not available on ubuntu-latest; three of its
+Tauri-free modules, `settings.rs`, `appearance.rs` and `runtime.rs`, and their unit tests are
 still compiled and run there through the `ccresdoc-host-domain` crate.
 
 ## Before pushing
