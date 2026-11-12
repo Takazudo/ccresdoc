@@ -111,8 +111,9 @@ jobs:
       # in webkit2gtk / gtk3 system libs that aren't on ubuntu-latest by default.
       # The Tauri host is verified locally via `cargo tauri build` (mac-only).
       # `ccresdoc-claude-md` (the selected-resource MDX generator + watcher) and
-      # `ccresdoc-host-domain` (a Tauri-free build of the host's settings and
-      # appearance modules) are pure Rust and run cleanly on any platform.
+      # `ccresdoc-host-domain` (a Tauri-free build of the host's settings,
+      # appearance and runtime-policy modules) are pure Rust and run cleanly on
+      # any platform.
       - name: cargo clippy --workspace --exclude ccresdoc --all-targets
         run: cargo clippy --workspace --exclude ccresdoc --all-targets -- -D warnings
 
