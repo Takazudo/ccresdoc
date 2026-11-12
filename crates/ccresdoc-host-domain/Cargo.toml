@@ -3,7 +3,7 @@ name = "ccresdoc-host-domain"
 version = "0.0.0"
 edition = "2021"
 publish = false
-description = "Cloud test boundary: compiles the Tauri host's platform-independent settings and appearance modules without Tauri."
+description = "Cloud test boundary: compiles the Tauri host's platform-independent settings, appearance and runtime-policy modules without Tauri."
 
 [lib]
 # The modules below are the production sources of src-tauri; this crate adds
@@ -11,6 +11,7 @@ description = "Cloud test boundary: compiles the Tauri host's platform-independe
 path = "src/lib.rs"
 
 [dependencies]
+html5ever = "0.38"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

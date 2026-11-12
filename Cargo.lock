@@ -318,6 +318,7 @@ name = "ccresdoc-host-domain"
 version = "0.0.0"
 dependencies = [
  "filetime",
+ "html5ever",
  "serde",
  "serde_json",
  "sha2",

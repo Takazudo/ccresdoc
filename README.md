@@ -327,7 +327,9 @@ installs the pinned Playwright Chromium, then runs a separate best-effort
 itself still fails if Chromium cannot launch. Rust runs
 `cargo fmt --check`, `cargo clippy --workspace --exclude ccresdoc`, and
 `cargo test --workspace --exclude ccresdoc`. The `ccresdoc` (src-tauri) crate is
-excluded because webkit2gtk is not available on ubuntu-latest.
+excluded because webkit2gtk is not available on ubuntu-latest; its Tauri-free
+`settings.rs`, `appearance.rs` and `runtime.rs` modules and their unit tests are
+still compiled and run there through the `ccresdoc-host-domain` crate.
 
 ## Before pushing
 
@@ -343,7 +345,9 @@ the independent compatibility fixture, and actual-key Chromium browser
 navigation. Install the browser once with
 `pnpm --dir app exec playwright install chromium`. b4push excludes the
 `ccresdoc` Tauri crate from clippy/test on every host, mirroring Linux CI where
-webkit2gtk/gtk3 is unavailable, so a passing b4push does not cover that crate. A release
+webkit2gtk/gtk3 is unavailable, so a passing b4push does not cover that crate
+beyond the settings, appearance and runtime-policy tests run through
+`ccresdoc-host-domain`. A release
 still requires the separate `scripts/test-macos-package.sh` macOS-arm64
 packaged app/WebView gate and the real-WebView visual checks listed in the
 verification matrix. A Linux run may validate staged static inputs and the

@@ -1,7 +1,7 @@
 # crates/ — CCResDoc Rust Workspace
 
 One library crate implements the node-free live-update engine; a second,
-test-only crate exercises the host settings/appearance domain on any host. Both
+test-only crate exercises the host settings/appearance/runtime-policy domain on any host. Both
 are members of the workspace defined in the root `Cargo.toml` (`members = ["crates/*", "src-tauri"]`).
 
 ## Workspace layout
@@ -9,7 +9,7 @@ are members of the workspace defined in the root `Cargo.toml` (`members = ["crat
 ```
 crates/
   ccresdoc-claude-md/   Selected Claude/Codex generators + watchers → zudo-doc MDX
-  ccresdoc-host-domain/ Tauri-free build of src-tauri/src/{settings,appearance}.rs
+  ccresdoc-host-domain/ Tauri-free build of src-tauri/src/{settings,appearance,runtime}.rs
 ```
 
 `src-tauri/` is also a workspace member (the Tauri binary). It depends on
@@ -70,20 +70,28 @@ Key invariants:
 
 ### ccresdoc-host-domain
 
-Compiles the real `src-tauri/src/settings.rs` and `src-tauri/src/appearance.rs`
-through `#[path]` modules, without Tauri or WebKitGTK, so their unit tests (the
-schema-v2 store, recognized-v1 retirement, appearance resolution and the
-`src-tauri/fixtures/appearance-transitions.json` parity table) run with plain
-`cargo test -p ccresdoc-host-domain` on any Linux host. Those two modules must
-stay free of Tauri imports. Nothing depends on this crate; it is never
-packaged.
+Compiles the real `src-tauri/src/settings.rs`, `src-tauri/src/appearance.rs`
+and `src-tauri/src/runtime.rs` through `#[path]` modules, without Tauri or
+WebKitGTK, so their unit tests (the schema-v2 store, recognized-v1 retirement,
+appearance resolution, the `src-tauri/fixtures/appearance-transitions.json`
+parity table, and the runtime policy: loopback port choice, origin/navigation
+checks, semantic readiness, generation supersession and serialized apply) run
+with plain `cargo test -p ccresdoc-host-domain` on any Linux host, and therefore
+in CI's `cargo test --workspace --exclude ccresdoc` and b4push. Those three
+modules must stay free of Tauri imports; `runtime.rs` additionally depends only
+on `crate::settings` and `html5ever` (kept at the same version as `src-tauri`).
+This is runtime-policy coverage only: it does not build the Tauri app and does
+not establish WKWebView, FSEvents, native command delivery or packaged process
+behavior, which stay with the macOS acceptance gates. `search_index_publication.rs`
+is not included because its test reads `crate::WORKSPACE_READY_FILE` from
+`main.rs`. Nothing depends on this crate; it is never packaged.
 
 ## Dependency graph
 
 ```
 ccresdoc-claude-md  (no internal deps; external: notify, walkdir, serde_yaml, ...)
 src-tauri           → ccresdoc-claude-md
-ccresdoc-host-domain  (compiles src-tauri/src/{settings,appearance}.rs; tests only)
+ccresdoc-host-domain  (compiles src-tauri/src/{settings,appearance,runtime}.rs; tests only)
 ```
 
 ## Adding a new crate

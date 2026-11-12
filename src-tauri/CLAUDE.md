@@ -257,8 +257,10 @@ active `/docs/` loopback origin, and the main window receives only its
 explicitly listed commands. `src/settings_window.rs` owns singleton
 create/show/focus and close-to-hide lifecycle; `src/appearance.rs` owns
 document-start appearance authority, docs-origin authorization, previews and
-authoritative events. It and `settings.rs` stay Tauri-free so that
-`crates/ccresdoc-host-domain` can test them on any host. The docs gear lives in the scanner-visible
+authoritative events. It, `settings.rs` and `runtime.rs` stay Tauri-free so
+that `crates/ccresdoc-host-domain` compiles and tests them on any host,
+including Linux CI and b4push; that covers runtime policy only, not the Tauri
+app, WKWebView or packaged-process behavior. The docs gear lives in the scanner-visible
 `app/pages/lib/_settings-button.tsx` client module so its server-rendered markup
 hydrates, while Cancel uses only the Settings window's narrow
 `core:window:allow-hide` grant.

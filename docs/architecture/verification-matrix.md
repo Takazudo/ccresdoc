@@ -186,7 +186,11 @@ failed-pack rollback, font-bearing replacement, independent storage/events,
 and package-owned sidebar resizer DOM behavior. Rust tests cover formatting,
 generation/watch/live smoke, no-home scoping, readiness classification,
 boot-lazy neutralization, refresh/retry generations, workspace refresh tokens,
-native binary resolution, and process-group teardown.
+native binary resolution, and process-group teardown. The host's Tauri-free
+`settings.rs`, `appearance.rs` and `runtime.rs` (port choice, origin/navigation
+policy, semantic readiness, supersession and serialized apply) run through
+`crates/ccresdoc-host-domain` in the Linux workspace gate; that is runtime-policy
+coverage, not a Tauri app build or native WebView/FSEvents/packaged acceptance.
 
 `pnpm b4push` is the repository's real ten-step sequence: zfb pin check; frozen
 app install and installed-tree validation; app typecheck/zfb check/Vitest and
