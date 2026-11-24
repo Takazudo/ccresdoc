@@ -312,15 +312,24 @@ pub(crate) fn open_settings_window(
 }
 
 #[tauri::command]
-pub(crate) fn get_settings_snapshot(
+pub(crate) async fn get_settings_snapshot(
     window: WebviewWindow,
     app: AppHandle,
-    state: State<'_, AppState>,
 ) -> Result<CompleteSettingsSnapshot, CommandError> {
     authorize_settings(&window)?;
-    let snapshot = state
-        .runtime
-        .with_serialized_apply(|| complete_snapshot(&state));
+    // Startup and source apply can hold the serialized lease while waiting
+    // for WebView work on the main thread. A synchronous IPC handler spinning
+    // for that lease deadlocks the window, including Command-comma recovery.
+    let task_app = app.clone();
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        let state = task_app.state::<AppState>();
+        state
+            .runtime
+            .with_serialized_apply(|| complete_snapshot(&state))
+    })
+    .await
+    .map_err(|error| CommandError::new("task", format!("settings snapshot failed: {error}")))?;
+    let state = app.state::<AppState>();
     let _ = app.emit(
         APPEARANCE_EVENT,
         state.appearance.envelope(&snapshot.settings),
