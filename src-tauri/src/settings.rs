@@ -927,9 +927,11 @@ impl SettingsStore {
         self.ensure_writable_status(&before)?;
         if before.validation.iter().any(|diagnostic| {
             diagnostic.blocking
-                && diagnostic.kind == DiagnosticKind::InvalidType
                 && diagnostic.field.as_deref().is_some_and(|field| {
-                    field.starts_with("document_sources") || field.starts_with("user_presets")
+                    field == "document_source_catalog.format_version"
+                        || (diagnostic.kind == DiagnosticKind::InvalidType
+                            && (field.starts_with("document_sources")
+                                || field.starts_with("user_presets")))
                 })
         }) {
             return Err(SaveError::LatestNotValid);
@@ -1154,9 +1156,11 @@ impl SettingsStore {
         self.ensure_writable_status(&before)?;
         if before.validation.iter().any(|diagnostic| {
             diagnostic.blocking
-                && diagnostic.kind == DiagnosticKind::InvalidType
                 && diagnostic.field.as_deref().is_some_and(|field| {
-                    field.starts_with("document_sources") || field.starts_with("user_presets")
+                    field == "document_source_catalog.format_version"
+                        || (diagnostic.kind == DiagnosticKind::InvalidType
+                            && (field.starts_with("document_sources")
+                                || field.starts_with("user_presets")))
                 })
         }) {
             return Err(SaveError::LatestNotValid);
@@ -1183,17 +1187,21 @@ impl SettingsStore {
                 if source_id == repaired_source_id || !matches!(member, "root" | "scan_root") {
                     return true;
                 }
-                let previously_missing = before
-                    .validation
-                    .iter()
-                    .any(|old| !old.blocking && old.field.as_deref() == Some(field));
+                let previously_invalid_path = before.validation.iter().any(|old| {
+                    old.field.as_deref() == Some(field)
+                        && matches!(
+                            old.kind,
+                            DiagnosticKind::InvalidSourcePath
+                                | DiagnosticKind::UnreadableSourcePath
+                        )
+                });
                 let unchanged = before
                     .source_catalog
                     .sources
                     .iter()
                     .find(|source| source.id == source_id)
                     == catalog.sources.iter().find(|source| source.id == source_id);
-                !previously_missing || !unchanged
+                !previously_invalid_path || !unchanged
             })
             .collect::<Vec<_>>();
         if !blocking.is_empty() {
@@ -2558,14 +2566,21 @@ fn read_source_catalog(
     doc: &DocumentMut,
     diagnostics: &mut Vec<SettingsDiagnostic>,
 ) -> SourceCatalog {
+    let catalog_marker = doc
+        .get("document_source_catalog")
+        .and_then(Item::as_table)
+        .and_then(|table| table.get("format_version"));
+    if catalog_marker.is_some_and(|marker| marker.as_integer() != Some(1)) {
+        diagnostics.push(diagnostic(
+            DiagnosticKind::UnsupportedSchemaVersion,
+            Some("document_source_catalog.format_version"),
+            "unsupported document source catalog format version".into(),
+            true,
+        ));
+        return SourceCatalog::default();
+    }
     let Some(source_item) = doc.get("document_sources") else {
-        let authored_catalog = doc
-            .get("document_source_catalog")
-            .and_then(Item::as_table)
-            .and_then(|table| table.get("format_version"))
-            .and_then(Item::as_integer)
-            == Some(1);
-        if !authored_catalog {
+        if catalog_marker.is_none() {
             return SourceCatalog::defaults();
         }
         // TOML has no representation for an empty array of tables. The format
@@ -3382,6 +3397,27 @@ mod tests {
             .save_source_catalog(&empty, loaded.revision.as_ref())
             .unwrap();
         assert_eq!(store.load().source_catalog, empty);
+    }
+
+    #[test]
+    fn future_source_catalog_marker_blocks_editor_replacement() {
+        let (_root, store) = fixture();
+        store
+            .save_source_catalog(&SourceCatalog::default(), None)
+            .unwrap();
+        let authored = fs::read_to_string(store.path())
+            .unwrap()
+            .replace("format_version = 1", "format_version = 2");
+        fs::write(store.path(), &authored).unwrap();
+        let snapshot = store.load();
+        assert!(snapshot.validation.iter().any(|diagnostic| {
+            diagnostic.blocking
+                && diagnostic.field.as_deref() == Some("document_source_catalog.format_version")
+        }));
+        assert!(store
+            .save_source_catalog(&snapshot.source_catalog, snapshot.revision.as_ref())
+            .is_err());
+        assert_eq!(fs::read_to_string(store.path()).unwrap(), authored);
     }
 
     #[test]
@@ -4527,6 +4563,68 @@ mod tests {
         assert_eq!(recovered.status, LoadStatus::Valid);
         assert!(recovered.validation.iter().all(|item| !item.blocking));
         assert_eq!(recovered.effective.sources.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_saves_one_unreadable_source_while_another_remains_unreadable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (root, store) = fixture();
+        let first = root.path().join("home/first-unreadable");
+        let second = root.path().join("home/second-unreadable");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        let mut catalog = SourceCatalog::defaults();
+        catalog.sources[0].root = first.to_string_lossy().into_owned();
+        catalog.sources[1].enabled = true;
+        catalog.sources[1].root = second.to_string_lossy().into_owned();
+        store.save_source_catalog(&catalog, None).unwrap();
+        fs::set_permissions(&first, fs::Permissions::from_mode(0o000)).unwrap();
+        fs::set_permissions(&second, fs::Permissions::from_mode(0o000)).unwrap();
+        let before = store.load();
+        assert!(
+            before
+                .validation
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.blocking && diagnostic.kind == DiagnosticKind::UnreadableSourcePath
+                })
+                .count()
+                >= 2
+        );
+
+        let mut first_repair = before.source_catalog;
+        first_repair.sources[0].enabled = false;
+        let saved = store
+            .save_source_catalog_for_recovery(
+                &first_repair,
+                before.revision.as_ref(),
+                "legacy-claude",
+            )
+            .unwrap()
+            .snapshot;
+        assert!(!saved.source_catalog.sources[0].enabled);
+        assert!(saved.source_catalog.sources[1].enabled);
+        assert!(store
+            .save_source_catalog(&saved.source_catalog, saved.revision.as_ref())
+            .is_err());
+
+        fs::set_permissions(&second, fs::Permissions::from_mode(0o700)).unwrap();
+        let recovered = store
+            .save_source_catalog_for_recovery(
+                &saved.source_catalog,
+                saved.revision.as_ref(),
+                "legacy-codex",
+            )
+            .unwrap()
+            .snapshot;
+        assert!(recovered
+            .validation
+            .iter()
+            .all(|diagnostic| !diagnostic.blocking));
+        assert_eq!(recovered.effective.sources.len(), 1);
+        fs::set_permissions(&first, fs::Permissions::from_mode(0o700)).unwrap();
     }
 
     #[test]
