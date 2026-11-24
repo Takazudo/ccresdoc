@@ -367,11 +367,12 @@ pub(crate) async fn recover_document_source(
             let source_id = match &action {
                 RecoveryAction::Disable { source_id }
                 | RecoveryAction::ReplaceRoot { source_id, .. } => source_id,
-            };
+            }
+            .clone();
             let source = catalog
                 .sources
                 .iter_mut()
-                .find(|source| source.id == *source_id)
+                .find(|source| source.id == source_id)
                 .ok_or_else(|| {
                     CommandError::new("unknown_source", "that source no longer exists")
                 })?;
@@ -381,7 +382,7 @@ pub(crate) async fn recover_document_source(
             }
             let saved = state
                 .settings_store
-                .save_source_catalog(&catalog, expected_revision.as_ref())
+                .save_source_catalog_for_recovery(&catalog, expected_revision.as_ref(), &source_id)
                 .map_err(CommandError::from)?;
             Ok(crate::settings_commands::apply_saved(&task_app, &state, saved, true).0)
         })

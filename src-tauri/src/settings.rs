@@ -1128,6 +1128,27 @@ impl SettingsStore {
         catalog: &SourceCatalog,
         expected_revision: Option<&ContentRevision>,
     ) -> Result<SaveResult, SaveError> {
+        self.save_source_catalog_inner(catalog, expected_revision, None)
+    }
+
+    /// Settings recovery may repair one source while another previously saved
+    /// source is still unavailable. Only unchanged, already diagnosed missing
+    /// paths receive this narrow exception; the selected repair stays strict.
+    pub fn save_source_catalog_for_recovery(
+        &self,
+        catalog: &SourceCatalog,
+        expected_revision: Option<&ContentRevision>,
+        repaired_source_id: &str,
+    ) -> Result<SaveResult, SaveError> {
+        self.save_source_catalog_inner(catalog, expected_revision, Some(repaired_source_id))
+    }
+
+    fn save_source_catalog_inner(
+        &self,
+        catalog: &SourceCatalog,
+        expected_revision: Option<&ContentRevision>,
+        repaired_source_id: Option<&str>,
+    ) -> Result<SaveResult, SaveError> {
         let before = self.load();
         self.ensure_revision(expected_revision, before.revision.as_ref())?;
         self.ensure_writable_status(&before)?;
@@ -1143,7 +1164,37 @@ impl SettingsStore {
         let diagnostics = self.validate_source_catalog(catalog);
         let blocking = diagnostics
             .into_iter()
-            .filter(|d| d.blocking)
+            .filter(|diagnostic| {
+                if !diagnostic.blocking {
+                    return false;
+                }
+                let Some(repaired_source_id) = repaired_source_id else {
+                    return true;
+                };
+                let Some(field) = diagnostic.field.as_deref() else {
+                    return true;
+                };
+                let Some((source_id, member)) = field
+                    .strip_prefix("sources.")
+                    .and_then(|rest| rest.split_once('.'))
+                else {
+                    return true;
+                };
+                if source_id == repaired_source_id || !matches!(member, "root" | "scan_root") {
+                    return true;
+                }
+                let previously_missing = before
+                    .validation
+                    .iter()
+                    .any(|old| !old.blocking && old.field.as_deref() == Some(field));
+                let unchanged = before
+                    .source_catalog
+                    .sources
+                    .iter()
+                    .find(|source| source.id == source_id)
+                    == catalog.sources.iter().find(|source| source.id == source_id);
+                !previously_missing || !unchanged
+            })
             .collect::<Vec<_>>();
         if !blocking.is_empty() {
             return Err(SaveError::Validation(blocking));
@@ -4343,6 +4394,64 @@ mod tests {
             .validate_source_catalog(&catalog)
             .iter()
             .any(|diagnostic| diagnostic.blocking));
+    }
+
+    #[test]
+    fn recovery_saves_one_missing_source_while_another_remains_missing() {
+        let (root, store) = fixture();
+        let first = root.path().join("home/first-source");
+        let second = root.path().join("home/second-source");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        let mut catalog = SourceCatalog::defaults();
+        catalog.sources[0].root = first.to_string_lossy().into_owned();
+        catalog.sources[1].enabled = true;
+        catalog.sources[1].root = second.to_string_lossy().into_owned();
+        store.save_source_catalog(&catalog, None).unwrap();
+        fs::remove_dir(&first).unwrap();
+        fs::remove_dir(&second).unwrap();
+        let missing = store.load();
+        assert_eq!(missing.status, LoadStatus::Valid);
+        assert!(
+            missing
+                .validation
+                .iter()
+                .filter(|item| !item.blocking)
+                .count()
+                >= 2
+        );
+
+        let mut first_repair = missing.source_catalog.clone();
+        first_repair.sources[0].enabled = false;
+        let saved = store
+            .save_source_catalog_for_recovery(
+                &first_repair,
+                missing.revision.as_ref(),
+                "legacy-claude",
+            )
+            .unwrap()
+            .snapshot;
+        assert!(!saved.source_catalog.sources[0].enabled);
+        assert!(saved.source_catalog.sources[1].enabled);
+        assert!(store
+            .save_source_catalog(&saved.source_catalog, saved.revision.as_ref())
+            .is_err());
+
+        let restored = root.path().join("home/restored-source");
+        fs::create_dir_all(&restored).unwrap();
+        let mut second_repair = saved.source_catalog;
+        second_repair.sources[1].root = restored.to_string_lossy().into_owned();
+        let recovered = store
+            .save_source_catalog_for_recovery(
+                &second_repair,
+                saved.revision.as_ref(),
+                "legacy-codex",
+            )
+            .unwrap()
+            .snapshot;
+        assert_eq!(recovered.status, LoadStatus::Valid);
+        assert!(recovered.validation.iter().all(|item| !item.blocking));
+        assert_eq!(recovered.effective.sources.len(), 1);
     }
 
     #[test]
