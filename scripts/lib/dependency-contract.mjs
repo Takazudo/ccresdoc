@@ -215,9 +215,9 @@ export function checkInstalled(scopeKey, root, { platform = process.platform, ar
   const find = read("find-in-page", "index.js");
   const search = read("search-widget-script", "index.js");
   const zdtp = read("zdtp-loader.js");
-  const patched = find.includes("openFindInPage") && search.includes("refreshSearch") && zdtp.startsWith("throw new Error(");
-  if (scope.patches.length > 0 && !patched) errors.push(`${scopeKey} installed zudo-doc is missing the controlled Find/Search/zdtp patch`);
-  if (scope.patches.length === 0 && (find.includes("openFindInPage") || search.includes("refreshSearch"))) {
+  const patched = !find && search.includes("refreshSearch") && zdtp.startsWith("throw new Error(");
+  if (scope.patches.length > 0 && !patched) errors.push(`${scopeKey} installed zudo-doc is missing the controlled Search/zdtp patch or still carries retired Find`);
+  if (scope.patches.length === 0 && (find || search.includes("refreshSearch"))) {
     errors.push(`${scopeKey} installed zudo-doc must be the unpatched upstream package`);
   }
   return errors;

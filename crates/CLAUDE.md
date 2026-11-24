@@ -8,12 +8,18 @@ are members of the workspace defined in the root `Cargo.toml` (`members = ["crat
 
 ```
 crates/
-  ccresdoc-claude-md/   Selected Claude/Codex generators + watchers → zudo-doc MDX
+  ccresdoc-claude-md/   Built-in and custom source generators + watchers → zudo-doc MDX
   ccresdoc-host-domain/ Tauri-free build of src-tauri/src/{settings,appearance,runtime}.rs
 ```
 
 `src-tauri/` is also a workspace member (the Tauri binary). It depends on
 `ccresdoc-claude-md` for in-process generation + watching.
+
+The current source API includes `source.rs` for mounted built-in and custom
+markdown/code/skill generation. Source IDs and a private manifest in the host
+scope owned output and search publication. The specialized Claude and Codex
+generators remain available behind built-in snapshots. Older fixed-two-source
+descriptions below document historical behavior and must not guide new code.
 
 > History: Waves 1-2 replaced the old three-crate pipeline
 > (`ccresdoc-resources` walker, `ccresdoc-renderer`, `ccresdoc-server`) with the

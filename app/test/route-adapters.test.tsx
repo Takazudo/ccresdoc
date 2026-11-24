@@ -280,11 +280,8 @@ describe("host-owned package route adapters", () => {
     }
   });
 
-  it("renders ordered desktop tabs and an ordered mobile root menu", () => {
-    expect(routeContext.settings.headerNav).toEqual([
-      { label: "Claude", path: "/docs/claude", categoryMatch: "claude", versioned: false },
-      { label: "Codex", path: "/docs/codex", categoryMatch: "codex", versioned: false },
-    ]);
+  it("renders the package chrome without fixed source tabs", () => {
+    expect(routeContext.settings.headerNav).toEqual([]);
 
     const docsRoot = routeItems.find((item) => item.params.slug.length === 0);
     expect(docsRoot).toBeDefined();
@@ -293,9 +290,8 @@ describe("host-owned package route adapters", () => {
     );
 
     expect(html).toMatch(/<a href="\/docs\/"[^>]*data-header-logo="true"/);
-    expect(html).toContain('href="/docs/claude/"');
-    expect(html).toContain('href="/docs/codex/"');
-    expect(html.indexOf(">Claude</a>")).toBeLessThan(html.indexOf(">Codex</a>"));
+    expect(html).not.toContain('categoryMatch="claude"');
+    expect(html).not.toContain('categoryMatch="codex"');
 
     const shell = document.createElement("div");
     shell.innerHTML = html;
@@ -335,10 +331,7 @@ describe("host-owned package route adapters", () => {
       mobileToggle!.getAttribute("data-props") ?? "null",
     );
     expect(mobileProps.nodes).toEqual([]);
-    expect(mobileProps.rootMenuItems).toEqual([
-      { label: "Claude", href: "/docs/claude/" },
-      { label: "Codex", href: "/docs/codex/" },
-    ]);
+    expect(mobileProps.rootMenuItems).toEqual([]);
     expect(mobileProps.backToMenuLabel).toBeDefined();
   });
 
@@ -407,7 +400,7 @@ describe("host-owned package route adapters", () => {
     expect(liveHeader!.parentElement).toBe(region);
   });
 
-  it("marks the current tab and scopes each landing sidebar by category prefix", () => {
+  it("keeps the generic sidebar available on source landings", () => {
     const claude = routeItems.find(
       (candidate) => candidate.params.slug.join("/") === "claude",
     );
@@ -415,8 +408,7 @@ describe("host-owned package route adapters", () => {
     const claudeHtml = render(
       <DocsPage params={claude!.params} {...claude!.props} />,
     );
-    expect(claudeHtml).toContain('href="/docs/claude/" aria-current="page"');
-    expect(claudeHtml).not.toContain('href="/docs/codex/" aria-current="page"');
+    expect(claudeHtml).toContain('href="/docs/claude/"');
 
     const shell = document.createElement("div");
     shell.innerHTML = claudeHtml;
@@ -427,16 +419,7 @@ describe("host-owned package route adapters", () => {
     const mobileProps = JSON.parse(
       mobileToggle!.getAttribute("data-props") ?? "null",
     );
-    expect(mobileProps.nodes).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ slug: "claude-md" }),
-      ]),
-    );
-    expect(mobileProps.nodes).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ slug: "codex-agents-md" }),
-      ]),
-    );
+    expect(Array.isArray(mobileProps.nodes)).toBe(true);
   });
 
   it("SSR-bootstraps every catalog theme pack and serializes switcher order", () => {

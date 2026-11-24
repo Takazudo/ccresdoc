@@ -27,18 +27,20 @@ pub const DOCS_URL_PREFIX: &str = "/docs";
 /// namespace is included in every id (`claude:<route-slug>` or
 /// `codex:<route-slug>`) so equal slugs from Claude and Codex can never
 /// collide.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SearchIndexNamespace {
     Claude,
     Codex,
+    Source(String),
 }
 
 impl SearchIndexNamespace {
     /// Stable textual namespace used in ids.
-    pub const fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Source(id) => id,
         }
     }
 }
@@ -669,6 +671,19 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["claude:same", "claude:z", "codex:same"]
         );
+    }
+
+    #[test]
+    fn generic_source_ids_are_stable_and_path_free() {
+        let entries = build_search_index([SearchIndexPage::new(
+            SearchIndexNamespace::Source("source-b".into()),
+            "notes/guide",
+            "Guide",
+            "Synthetic body",
+            "",
+        )]);
+        assert_eq!(entries[0].id, "source-b:notes/guide");
+        assert_eq!(entries[0].url, "/docs/notes/guide/");
     }
 
     #[test]

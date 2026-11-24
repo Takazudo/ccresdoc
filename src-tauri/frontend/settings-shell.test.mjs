@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { applyDirectorySelection, cloneDraft, DEFAULT_DRAFT, displayShortcutBinding, FIELDS, portableBindingFromKeyEvent, resourcePathDisabled } from "./settings-shell.mjs";
+import { cloneDraft, DEFAULT_DRAFT, displayShortcutBinding, FIELDS, portableBindingFromKeyEvent } from "./settings-shell.mjs";
 
-test("resource defaults and dirty fields match the additive schema-v1 contract", () => {
+test("app-setting defaults match schema v3 while source catalog is managed separately", () => {
   assert.deepEqual(DEFAULT_DRAFT, {
-    schemaVersion: 2,
+    schemaVersion: 3,
     claudeResources: true,
     codexResources: false,
     claudeDir: "~/.claude",
@@ -16,7 +16,7 @@ test("resource defaults and dirty fields match the additive schema-v1 contract",
     fallbackToFreePort: true,
     shortcuts: [],
   });
-  assert.deepEqual(FIELDS.slice(0, 4), ["claudeResources", "codexResources", "claudeDir", "codexDir"]);
+  assert.deepEqual(FIELDS.slice(0, 4), ["appearanceMode", "themePack", "preferredPort", "fallbackToFreePort"]);
   assert.equal(FIELDS.at(-1), "shortcuts");
 });
 
@@ -35,34 +35,14 @@ test("shortcut drafts deep-clone binding arrays and key events use neutral Mod s
   assert.equal(displayShortcutBinding("Mod+Shift+K"), "Control+Shift+K");
 });
 
-test("directory picker updates only its selected source and preserves cancellation", () => {
-  const claude = { value: "~/.claude" };
-  const codex = { value: "~/.codex" };
-  assert.equal(applyDirectorySelection(codex, "/picked/codex"), true);
-  assert.equal(codex.value, "/picked/codex");
-  assert.equal(claude.value, "~/.claude");
-  assert.equal(applyDirectorySelection(claude, null), false);
-  assert.equal(claude.value, "~/.claude");
-});
-
-test("resource paths disable independently and all controls lock while applying or read-only", () => {
-  assert.equal(resourcePathDisabled({ busy: false, readOnly: false, enabled: true }), false);
-  assert.equal(resourcePathDisabled({ busy: false, readOnly: false, enabled: false }), true);
-  assert.equal(resourcePathDisabled({ busy: true, readOnly: false, enabled: true }), true);
-  assert.equal(resourcePathDisabled({ busy: false, readOnly: true, enabled: true }), true);
-});
-
-test("resource controls remain native, labelled, and independently addressable", async () => {
+test("Settings links to the article and keeps bounded native recovery", async () => {
   const html = await readFile(new URL("./settings.html", import.meta.url), "utf8");
-  for (const id of ["claude-resources", "codex-resources"]) {
-    assert.match(html, new RegExp(`<input id="${id}" type="checkbox"`));
-  }
-  for (const id of ["claude-dir", "codex-dir"]) {
-    assert.match(html, new RegExp(`<label for="${id}">`));
-    assert.match(html, new RegExp(`<input id="${id}" type="text"`));
-  }
-  assert.match(html, /id="pick-claude-source"/);
-  assert.match(html, /id="pick-codex-source"/);
+  assert.match(html, /id="source-summary"/);
+  assert.match(html, /id="open-document-sources"/);
+  assert.match(html, /id="source-recovery"/);
+  assert.match(html, /id="recovery-disable"/);
+  assert.match(html, /id="recovery-replace"/);
+  assert.doesNotMatch(html, /id="claude-resources"|id="codex-resources"|id="claude-dir"|id="codex-dir"/);
   assert.match(html, /id="shortcut-groups"/);
   assert.match(html, /id="shortcut-live"[^>]+aria-live="polite"/);
 });

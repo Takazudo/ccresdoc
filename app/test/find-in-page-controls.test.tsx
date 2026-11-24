@@ -6,7 +6,7 @@ import {
   closeFindInPage,
   createFindInPage,
   openFindInPage,
-} from "@takazudo/zudo-doc/find-in-page";
+} from "../src/browser-chrome/find-in-page/index.js";
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 const islands: IslandTest[] = [];

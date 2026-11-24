@@ -22,9 +22,9 @@ export const settings = {
   base: "/",
   trailingSlash: true,
   docsDir: "src/content/docs",
-  // The package generators stay off: the native host writes these resources.
-  claudeResources: false,
-  codexResources: false,
+  // The package's Node generator stays off: the native host publishes source
+  // snapshots. Keep the source configuration out of this serializable payload.
+  docSources: [],
   // Every generated top-level category belongs in the site tree.
   siteTreeNavIgnore: [],
   defaultLocale: "en" as const,
@@ -61,19 +61,14 @@ export const settings = {
   sidebarToggle: true,
   tocToggle: true,
   dynamicPageTransition: true,
-  findInPage: true,
   // Simple footer (no link columns, just copyright)
   footer: {
     links: [] as Array<{ title: string; items: Array<{ label: string; href: string }> }>,
     copyright: `Copyright © ${new Date().getFullYear()} CCResDoc`,
   },
-  // Keep the two native resource families as stable top-level sections. The
-  // prefix match deliberately groups satellite categories (claude-* and
-  // codex-*) under their corresponding header tab.
-  headerNav: [
-    { label: "Claude", path: "/docs/claude", categoryMatch: "claude", versioned: false },
-    { label: "Codex", path: "/docs/codex", categoryMatch: "codex", versioned: false },
-  ],
+  // Source categories are runtime-owned and variable; the package's site tree
+  // derives their navigation from generated content.
+  headerNav: [],
   headerRightItems: [
     { type: "component", component: "search" },
     { type: "component", component: "ccresdoc-settings" },

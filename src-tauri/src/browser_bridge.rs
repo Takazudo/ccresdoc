@@ -175,10 +175,7 @@ impl BrowserBridge {
             origin: BrowserCommandOrigin::NativeMenu,
             invocation_id: self.invocation_sequence.fetch_add(1, Ordering::SeqCst) + 1,
             runtime_generation: generation,
-            host_handled: matches!(
-                command_id,
-                "reload-documentation" | "open-in-default-browser"
-            ),
+            host_handled: command_id == "open-in-default-browser",
         })
     }
 }
@@ -583,7 +580,7 @@ mod tests {
         assert!(!first.host_handled);
         assert_ne!(first.invocation_id, second.invocation_id);
         assert!(
-            bridge
+            !bridge
                 .native_envelope("reload-documentation")
                 .unwrap()
                 .host_handled

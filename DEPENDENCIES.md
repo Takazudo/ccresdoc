@@ -4,7 +4,7 @@ The standing record of what CCResDoc depends on, why each one stays, and what an
 audit already settled. Read it before proposing a removal or replacement, so that
 settled questions are not reopened without new evidence.
 
-The published toolchain (`@takazudo/zfb*` 6.0.1, `@takazudo/zudo-doc` 10.0.2, and
+The published toolchain (`@takazudo/zfb*` 7.2.0, `@takazudo/zudo-doc` 14.0.0, and
 their runtime peers) is fixed in `scripts/lib/toolchain-contract.mjs` and is not
 repeated here. Change it there; the validators read nothing back from manifests.
 

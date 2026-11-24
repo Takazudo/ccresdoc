@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-document-source-editor"
+description = "Enables the open_document_source_editor command without any pre-configured scope."
+commands.allow = ["open_document_source_editor"]
+
+[[permission]]
+identifier = "deny-open-document-source-editor"
+description = "Denies the open_document_source_editor command without any pre-configured scope."
+commands.deny = ["open_document_source_editor"]

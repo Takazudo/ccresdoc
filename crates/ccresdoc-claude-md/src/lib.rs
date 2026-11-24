@@ -83,6 +83,7 @@ mod error;
 mod escape;
 mod generate;
 mod search_index;
+mod source;
 mod walk;
 mod watch;
 
@@ -98,6 +99,10 @@ pub use search_index::{
     build_search_index, build_search_index_json, search_index_json, serialize_search_index,
     strip_markdown, GeneratedPage, SearchIndexEntry, SearchIndexNamespace, SearchIndexPage,
     DOCS_URL_PREFIX, MAX_BODY_LENGTH,
+};
+pub use source::{
+    generate_source, watch_source, SourceFormat, SourceReport, SourceRule, SourceSpec,
+    SourceWatchEvent, SourceWatchHandle,
 };
 pub use watch::{watch, WatchEvent, WatchHandle, DEFAULT_DEBOUNCE};
 

@@ -35,7 +35,7 @@ CARGO_TARGET_DIR="$PROBE_DIR/cargo-target"
 FIXTURE_LABEL="Package Readiness Probe $(basename "$PROBE_DIR")"
 FIXTURE_BODY="Generated package route $(basename "$PROBE_DIR")"
 FIXTURE_AUTOLINK="https://example.com/package-readiness-probe"
-FIXTURE_ROUTE="http://127.0.0.1:4892/docs/claude-skills/package-readiness-probe/"
+FIXTURE_ROUTE="http://127.0.0.1:4892/docs/claude/skills/package-readiness-probe/"
 APP_PID=""
 OWNED_SIDECAR_PID=""
 OWNED_SIDECAR_PGID=""
@@ -207,7 +207,9 @@ else
 fi
 
 acquire_port_lock
-test -z "$(lsof -ti :4892 2>/dev/null || true)"
+# A browser may retain a CLOSE_WAIT client socket after a prior run. Only a
+# listener would conflict with the app-owned loopback server.
+test -z "$(lsof -nP -tiTCP:4892 -sTCP:LISTEN 2>/dev/null || true)"
 
 RUNTIME_ROOT="$APP_PATH/Contents/Resources/runtime-workspace/app"
 ZFB_BIN="$RUNTIME_ROOT/$DARWIN_RELATIVE_PATH"
@@ -231,7 +233,7 @@ printf '%s\n' \
   '' \
   "$FIXTURE_BODY" \
   '' \
-  "Source: <$FIXTURE_AUTOLINK>" \
+  "[Source]($FIXTURE_AUTOLINK)" \
   '' \
   '| Result |' \
   '| --- |' \
@@ -276,20 +278,22 @@ for RUN in 1 2; do
       && grep -Fq "$FIXTURE_LABEL" "$PROBE_DIR/root.html" \
       && ! grep -Fq "data-home-page" "$PROBE_DIR/root.html" \
       && grep -Fq "Claude" "$PROBE_DIR/root.html" \
-      && grep -Fq "Codex" "$PROBE_DIR/root.html" \
+      && grep -Fq "Document sources" "$PROBE_DIR/root.html" \
       && grep -Fq "data-header-logo" "$PROBE_DIR/root.html" \
       && grep -Eq 'href="?/docs/' "$PROBE_DIR/root.html" \
       && [[ "$(curl -s -o "$PROBE_DIR/docs.html" -w '%{http_code}' http://127.0.0.1:4892/docs/ || true)" = "200" ]] \
       && grep -Fq "CCResDoc Resources" "$PROBE_DIR/docs.html" \
       && grep -Fq "$FIXTURE_LABEL" "$PROBE_DIR/docs.html" \
       && grep -Fq "Claude" "$PROBE_DIR/docs.html" \
-      && grep -Fq "Codex" "$PROBE_DIR/docs.html" \
+      && grep -Fq "Document sources" "$PROBE_DIR/docs.html" \
+      && [[ "$(curl -s -o "$PROBE_DIR/manager.html" -w '%{http_code}' http://127.0.0.1:4892/docs/ccresdoc/document-sources/ || true)" = "200" ]] \
+      && grep -Fq "data-ccresdoc-source-manager" "$PROBE_DIR/manager.html" \
       && [[ "$(curl -s -o "$PROBE_DIR/fixture.html" -w '%{http_code}' "$FIXTURE_ROUTE" || true)" = "200" ]] \
       && grep -Fq "$FIXTURE_LABEL" "$PROBE_DIR/fixture.html" \
       && grep -Fq "$FIXTURE_BODY" "$PROBE_DIR/fixture.html" \
       && grep -Fq "href=\"$FIXTURE_AUTOLINK\"" "$PROBE_DIR/fixture.html" \
-      && grep -Fq 'before<br' "$PROBE_DIR/fixture.html" \
-      && grep -Fq '>after<' "$PROBE_DIR/fixture.html"; then
+      && grep -Fq 'before&lt;br' "$PROBE_DIR/fixture.html" \
+      && grep -Fq 'after' "$PROBE_DIR/fixture.html"; then
         READY=1
         break
     fi
@@ -325,7 +329,7 @@ for RUN in 1 2; do
   fi
   OWNED_SIDECAR_PID=""
   OWNED_SIDECAR_PGID=""
-  test -z "$(lsof -ti :4892 2>/dev/null || true)"
+  test -z "$(lsof -nP -tiTCP:4892 -sTCP:LISTEN 2>/dev/null || true)"
 done
 
 echo "PASS host gate macos-arm64-packaged-app-webview: packaged workspace, WebView launch, node sentinel, relaunch, and process-group shutdown"

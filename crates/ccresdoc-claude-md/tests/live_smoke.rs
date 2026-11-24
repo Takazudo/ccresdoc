@@ -1,40 +1,35 @@
-//! Live smoke test: generate MDX against the real `$HOME/.claude`, writing into
-//! a TEMP output dir. Skips gracefully when `$HOME/.claude` is absent (CI).
-//!
-//! This is the acceptance smoke check: generating against the real `~/.claude`
-//! produces browsable MDX for the resources actually present, with category
-//! index pages only for populated families. The representative fixture in
-//! `generate.rs` requires and checks all four families independently of HOME.
+//! Synthetic smoke test for representative Claude source discovery.
+//! Never reads the developer's live agent folders.
 
 use std::path::{Path, PathBuf};
 
 use ccresdoc_claude_md::{generate, Config};
 
 #[test]
-fn live_generate_against_real_claude_dir() {
-    let home = match std::env::var_os("HOME") {
-        Some(h) => PathBuf::from(h),
-        None => {
-            eprintln!("SKIP: HOME not set");
-            return;
-        }
-    };
-    let claude = home.join(".claude");
-    if !claude.exists() {
-        eprintln!("SKIP: $HOME/.claude does not exist");
-        return;
-    }
-
+fn synthetic_claude_source_smoke() {
     let out = tempfile::TempDir::new().unwrap();
+    let claude = out.path().join("source");
+    let docs = out.path().join("docs");
+    std::fs::create_dir_all(claude.join("commands")).unwrap();
+    std::fs::create_dir_all(claude.join("agents")).unwrap();
+    std::fs::create_dir_all(claude.join("skills/example")).unwrap();
+    std::fs::write(claude.join("CLAUDE.md"), "# Synthetic root\n").unwrap();
+    std::fs::write(claude.join("commands/check.md"), "# Check\n").unwrap();
+    std::fs::write(claude.join("agents/helper.md"), "# Helper\n").unwrap();
+    std::fs::write(
+        claude.join("skills/example/SKILL.md"),
+        "---\nname: example\ndescription: Example\n---\n\n# Example\n",
+    )
+    .unwrap();
     let config = Config {
         claude_dir: claude.clone(),
         project_root: claude.clone(),
-        docs_dir: out.path().to_path_buf(),
+        docs_dir: docs.clone(),
     };
 
-    let report = generate(&config).expect("live generate failed");
+    let report = generate(&config).expect("synthetic generate failed");
     eprintln!(
-        "live generate counts: claude_md={}, commands={}, skills={}, agents={}",
+        "synthetic generate counts: claude_md={}, commands={}, skills={}, agents={}",
         report.claude_md, report.commands, report.skills, report.agents
     );
 
@@ -47,8 +42,7 @@ fn live_generate_against_real_claude_dir() {
         let sources = markdown_sources(&claude.join(source));
         assert_eq!(count, sources.len(), "{source}: source/report mismatch");
         for source in sources {
-            let page = out
-                .path()
+            let page = docs
                 .join(category)
                 .join(source.file_name().unwrap())
                 .with_extension("mdx");
@@ -58,14 +52,14 @@ fn live_generate_against_real_claude_dir() {
 
     // Detail category index pages exist with the right positions. The routed
     // `claude/` landing is coordinator-owned and is intentionally not emitted.
-    assert!(!out.path().join("claude/index.mdx").exists());
+    assert!(!docs.join("claude/index.mdx").exists());
     for (sub, pos, count) in [
         ("claude-md", "900", report.claude_md),
         ("claude-commands", "901", report.commands),
         ("claude-skills", "902", report.skills),
         ("claude-agents", "903", report.agents),
     ] {
-        let idx = out.path().join(sub).join("index.mdx");
+        let idx = docs.join(sub).join("index.mdx");
         if count == 0 {
             assert!(!idx.exists(), "empty {sub} must not have an index");
             continue;
@@ -81,7 +75,7 @@ fn live_generate_against_real_claude_dir() {
 
     // A global page exists exactly when the developer has a root CLAUDE.md.
     assert_eq!(
-        out.path().join("claude-md/global.mdx").exists(),
+        docs.join("claude-md/global.mdx").exists(),
         claude.join("CLAUDE.md").is_file(),
         "global page must match ~/.claude/CLAUDE.md availability"
     );

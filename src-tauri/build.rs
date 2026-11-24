@@ -18,6 +18,14 @@ fn main() {
         "pick_source_directory",
         "open_config_file",
         "reveal_config_file",
+        "get_source_editor_snapshot",
+        "validate_source_editor_draft",
+        "save_source_editor_draft",
+        "rebase_source_editor_draft",
+        "apply_saved_sources",
+        "pick_document_source_directory",
+        "recover_document_source",
+        "open_document_source_editor",
     ];
     let attributes = tauri_build::Attributes::new()
         .app_manifest(tauri_build::AppManifest::new().commands(COMMANDS));

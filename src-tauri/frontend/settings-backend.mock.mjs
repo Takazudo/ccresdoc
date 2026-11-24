@@ -5,13 +5,14 @@ export function createMockBackend(overrides = {}) {
   const snapshot = overrides.snapshot ?? {
     settings: {
       status: "missing", revision: null, configPath: "/mock/config.toml", fileExists: false,
-      authored: { schemaVersion: 2, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "classic", preferredPort: 4892, fallbackToFreePort: true, shortcuts: [] },
+      authored: { schemaVersion: 3, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "classic", preferredPort: 4892, fallbackToFreePort: true, shortcuts: [] },
+      sourceCatalog: { sources: [{ id: "legacy-claude", label: "Claude Code", enabled: true, root: "~/.claude", mount: "claude" }], presets: [] },
       effective: { claudeResources: true, codexResources: false, claudeDir: "/mock/.claude", codexDir: null, appearanceMode: "system", themePack: "classic", preferredPort: 4892, effectivePort: 4892, fallbackToFreePort: true, shortcuts: [] },
       validation: [],
     },
     runtime: { phase: "idle", active: null },
     actions: { canSave: true, canRebase: false, canReplaceMalformed: false },
-    defaults: { schemaVersion: 2, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "classic", preferredPort: 4892, fallbackToFreePort: true, shortcuts: [] },
+    defaults: { schemaVersion: 3, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "classic", preferredPort: 4892, fallbackToFreePort: true, shortcuts: [] },
     themePacks: ["classic"],
     shortcutCatalog: { version: 1, commands: [] },
   };
@@ -31,6 +32,8 @@ export function createMockBackend(overrides = {}) {
     rebaseStale: result("rebaseStale", { status: "saved_no_restart" }),
     replaceMalformed: result("replaceMalformed", { status: "saved_not_active" }),
     pickSourceDirectory: result("pickSourceDirectory", overrides.selection ?? null),
+    openDocumentSources: result("openDocumentSources"),
+    recoverDocumentSource: result("recoverDocumentSource", { status: "active" }),
     openConfigFile: result("openConfigFile"),
     revealConfigFile: result("revealConfigFile"),
     setShortcutCaptureActive: result("setShortcutCaptureActive"),

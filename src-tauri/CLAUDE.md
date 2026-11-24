@@ -2,8 +2,18 @@
 
 Tauri v2 macOS app that opens the CCResDoc doc viewer in a native window. The
 runtime is **node-free**: the host spawns the **native `zfb` binary** (`zfb dev`)
-as a sidecar and runs the selected Claude/Codex Rust generators/watchers
+as a sidecar and runs configured document-source Rust generators/watchers
 **in-process**. No Node.js is required at the user's launch time.
+
+Current source/preset contract: `settings.rs` stores schema v3 and migrates v2
+atomically. `settings/source_model.rs` owns stable IDs, built-in/custom rule
+snapshots and mount validation. `source_commands.rs` authorizes the app-owned
+editor article against the main window, active loopback origin and runtime
+generation; Settings keeps its separate app-only commands. `main.rs` uses a
+private ownership manifest for variable source publication, rollback,
+watchers, readiness and search. The manager route remains available when no
+source is enabled or first-launch generation fails. Older fixed-two-resource
+descriptions below are historical and should not guide new changes.
 
 ## Quick start
 
@@ -66,7 +76,7 @@ Rust.)
 The build hook runs `scripts/stage-runtime-workspace.mjs`. Tauri stages its
 output at `Contents/Resources/runtime-workspace/app/`. The generated tree is
 lockfile-faithful and contains an explicit allowlist of app routes, config,
-permanent generic Claude/Codex landing shells, theme assets, plus the
+the app-owned source-management article, theme assets, plus the
 dependency closure reached by native `zfb dev`. It omits build `dist` and every
 generated detail/status namespace; the runtime sidecar rebuilds `dist` from
 the clean source tree. It also excludes test/build tools, `.bin` wrappers,

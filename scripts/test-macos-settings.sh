@@ -263,8 +263,19 @@ wait_ready() {
   for _ in $(seq 1 300); do
     if curl -fsS --max-time 2 -o "$docs_snapshot" "http://127.0.0.1:$port/docs/" 2>/dev/null &&
       grep -Fq 'CCResDoc Resources' "$docs_snapshot" &&
-      curl -fsS --max-time 2 -o "$fixture_snapshot" "http://127.0.0.1:$port/docs/claude-skills/$slug/" 2>/dev/null &&
+      curl -fsS --max-time 2 -o "$fixture_snapshot" "http://127.0.0.1:$port/docs/claude/skills/$slug/" 2>/dev/null &&
       grep -Fq "$marker" "$fixture_snapshot"; then return 0; fi
+    if [[ -n "$APP_OPEN_PID" ]] && ! kill -0 "$APP_OPEN_PID" 2>/dev/null; then return 1; fi
+    sleep 1
+  done
+  log_since >&2 || true
+  return 1
+}
+wait_manager_ready() {
+  local port="$1" snapshot="$PROBE_DIR/wait-ready-manager.html"
+  for _ in $(seq 1 300); do
+    if curl -fsS --max-time 2 -o "$snapshot" "http://127.0.0.1:$port/docs/ccresdoc/document-sources/" 2>/dev/null &&
+      grep -Fq 'data-ccresdoc-source-manager' "$snapshot"; then return 0; fi
     if [[ -n "$APP_OPEN_PID" ]] && ! kill -0 "$APP_OPEN_PID" 2>/dev/null; then return 1; fi
     sleep 1
   done
@@ -326,25 +337,27 @@ quit_released "$SECOND_EFFECTIVE"
 foreign_alive
 
 write_config "$AUTHORED_SOURCE" "$FOREIGN_PORT" false
-strict_hash="$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')"
 launch_app
 wait_reason preferred_port_occupied
-test "$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')" = "$strict_hash"
+grep -Fq 'schema_version = 3' "$CONFIG_PATH"
+assert_config "$AUTHORED_SOURCE" "$FOREIGN_PORT" false
 foreign_alive
 quit_app
 
 write_config "$PROBE_DIR/missing-source" "$FOREIGN_PORT" true
-bad_hash="$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')"
 launch_app
-wait_ready 4892 "$default_slug" "Default settings source fixture."
-test "$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')" = "$bad_hash"
+missing_effective="$(for _ in $(seq 1 300); do p="$(new_port || true)"; [[ "$p" =~ ^[0-9]+$ ]] && printf '%s' "$p" && break; sleep 1; done)"
+test "$missing_effective" -ge 1
+wait_manager_ready "$missing_effective"
+grep -Fq 'schema_version = 3' "$CONFIG_PATH"
+assert_config "$PROBE_DIR/missing-source" "$FOREIGN_PORT" true
 foreign_alive
-quit_released 4892
+quit_released "$missing_effective"
 
 printf 'schema_version = 1\n[server\npreferred_port = 4892\n' > "$CONFIG_PATH"
 malformed_hash="$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')"
 launch_app
-wait_ready 4892 "$default_slug" "Default settings source fixture."
+wait_manager_ready 4892
 test "$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')" = "$malformed_hash"
 quit_released 4892
 foreign_alive
@@ -353,14 +366,14 @@ foreign_alive
 # until Save; a future-version file is protected byte for byte.
 printf 'schema_version = 1\n\n[appearance]\nmode = "dark"\ntheme_pack = "default"\n' > "$CONFIG_PATH"
 launch_app
-wait_ready 4892 "$default_slug" "Default settings source fixture."
+wait_manager_ready 4892
 test ! -e "$CONFIG_PATH"
 quit_released 4892
 
-printf 'schema_version = 3\n\n[server]\npreferred_port = 4892\n' > "$CONFIG_PATH"
+printf 'schema_version = 4\n\n[server]\npreferred_port = 4892\n' > "$CONFIG_PATH"
 future_hash="$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')"
 launch_app
-wait_ready 4892 "$default_slug" "Default settings source fixture."
+wait_manager_ready 4892
 test "$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')" = "$future_hash"
 quit_released 4892
 foreign_alive

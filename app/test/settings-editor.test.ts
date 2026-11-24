@@ -16,6 +16,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
   const base = {
     settings: {
       configPath: "/Users/test/.config/ccresdoc/config.toml", fileExists: true, status: "valid", revision: "sha256:one",
+      sourceCatalog: { sources: [{ id: "legacy-claude", label: "Claude Code", enabled: true, root: "~/.claude", mount: "claude" }, { id: "legacy-codex", label: "Codex", enabled: false, root: "~/.codex", mount: "codex" }], presets: [] },
       authored: { ...DEFAULT_DRAFT, shortcuts: defaultShortcuts() }, effective: { ...DEFAULT_DRAFT, shortcuts: defaultShortcuts(), claudeDir: "/Users/test/.claude", effectivePort: 4892 },
       active: { usesAuthoredSettings: true, sourceIsAuthored: true, preferredPort: 4892, effectivePort: 4892 }, validation: [],
     },
@@ -38,7 +39,7 @@ function setup(initial = snapshot(), withNativeHide = false) {
     saveAndApply: vi.fn(async (draft, revision) => { calls.push(["save", draft, revision]); current = snapshot({ settings: { ...current.settings, authored: { ...draft }, revision: "sha256:two" } }); return { status: "active" }; }),
     rebaseStale: vi.fn(async (...args) => { calls.push(["rebase", ...args]); return { status: "active" }; }),
     replaceMalformed: vi.fn(async (...args) => { calls.push(["replace", ...args]); current = snapshot(); return { status: "saved_not_active" }; }),
-    pickSourceDirectory: vi.fn(async (): Promise<string | null> => null), openConfigFile: vi.fn(async () => {}), revealConfigFile: vi.fn(async () => {}),
+    pickSourceDirectory: vi.fn(async (): Promise<string | null> => null), openDocumentSources: vi.fn(async () => {}), recoverDocumentSource: vi.fn(async () => ({ status: "active" })), openConfigFile: vi.fn(async () => {}), revealConfigFile: vi.fn(async () => {}),
     setShortcutCaptureActive: vi.fn(async () => {}),
   };
   const close = vi.fn();
@@ -51,13 +52,13 @@ function setup(initial = snapshot(), withNativeHide = false) {
 describe("bundled Settings editor", () => {
   beforeEach(() => { vi.restoreAllMocks(); });
 
-  it("loads the complete draft, exposes semantic labels/descriptions, and focuses the first choice", async () => {
+  it("loads app settings and source summary while focusing the first choice", async () => {
     const { editor } = setup(); await editor.load({ focus: true }); await flush();
     expect((document.querySelector('[name="appearance-mode"]:checked') as HTMLInputElement).value).toBe("system");
     expect(document.activeElement).toBe(document.querySelector('[name="appearance-mode"]:checked'));
-    expect(document.querySelector('label[for="claude-dir"]')).not.toBeNull();
-    expect(document.querySelector("#claude-dir")?.getAttribute("aria-describedby")).toContain("claude-dir-description");
-    expect(document.querySelector("#claude-source-status")?.textContent).toBe("~/.claude / /Users/test/.claude / /Users/test/.claude");
+    expect(document.querySelector("#source-summary")?.textContent).toContain("1 enabled of 2 configured");
+    expect(document.querySelector("#open-document-sources")?.textContent).toContain("Edit document sources");
+    expect(document.querySelector("#claude-dir")).toBeNull();
     expect(document.querySelector("#port-status")?.textContent).toBe("4892 / 4892");
     expect((document.querySelector("#save-settings") as HTMLButtonElement).disabled).toBe(true);
     expect([...document.querySelectorAll(".shortcut-group h3")].map((node) => node.textContent)).toEqual(["Navigation", "Discovery", "Page"]);
@@ -166,32 +167,31 @@ describe("bundled Settings editor", () => {
 
   it("keeps the editor visible and disables mutation throughout an async apply", async () => {
     const { editor, backend, setSnapshot } = setup(); await editor.load();
-    const source = document.querySelector("#claude-dir") as HTMLInputElement; source.value = "/pending"; source.dispatchEvent(new Event("input", { bubbles: true })); await flush();
+    const port = document.querySelector("#preferred-port") as HTMLInputElement; port.value = "5001"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush();
     let finish!: (value: { status: string }) => void;
     backend.saveAndApply.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const applying = editor.submit(); await flush();
-    expect(document.querySelector("#settings-form")?.hasAttribute("hidden")).toBe(false); expect(source.disabled).toBe(true); expect(document.querySelector("#operation-status")?.textContent).toBe("Applying…");
-    setSnapshot(snapshot({ settings: { ...snapshot().settings, authored: { ...DEFAULT_DRAFT, claudeDir: "/pending" }, revision: "sha256:two" } })); finish({ status: "active" }); await applying;
-    expect(source.disabled).toBe(false); expect(document.querySelector("#operation-status")?.textContent).toBe("Saved and active");
+    expect(document.querySelector("#settings-form")?.hasAttribute("hidden")).toBe(false); expect(port.disabled).toBe(true); expect(document.querySelector("#operation-status")?.textContent).toBe("Applying…");
+    setSnapshot(snapshot({ settings: { ...snapshot().settings, authored: { ...DEFAULT_DRAFT, preferredPort: 5001 }, revision: "sha256:two" } })); finish({ status: "active" }); await applying;
+    expect(port.disabled).toBe(false); expect(document.querySelector("#operation-status")?.textContent).toBe("Saved and active");
   });
 
-  it("treats picker cancellation as a no-op, selected paths as drafts, Reset as unsaved, and Escape as Cancel", async () => {
+  it("opens the document article and keeps Reset and Escape scoped to app settings", async () => {
     const { editor, backend, close } = setup(); await editor.load(); await flush();
-    const source = document.querySelector("#claude-dir") as HTMLInputElement;
-    (document.querySelector("#pick-claude-source") as HTMLButtonElement).click(); await flush(); expect(source.value).toBe("~/.claude");
-    backend.pickSourceDirectory.mockResolvedValueOnce("/safe/resources"); (document.querySelector("#pick-claude-source") as HTMLButtonElement).click(); await flush(); expect(source.value).toBe("/safe/resources"); expect(backend.saveAndApply).not.toHaveBeenCalled();
-    (document.querySelector("#reset-defaults") as HTMLButtonElement).click(); await flush(); expect(source.value).toBe("~/.claude"); expect(backend.saveAndApply).not.toHaveBeenCalled();
+    (document.querySelector("#open-document-sources") as HTMLButtonElement).click(); await flush(); expect(backend.openDocumentSources).toHaveBeenCalledOnce();
+    const port = document.querySelector("#preferred-port") as HTMLInputElement; port.value = "5002"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush();
+    (document.querySelector("#reset-defaults") as HTMLButtonElement).click(); await flush(); expect(port.value).toBe("4892"); expect(backend.saveAndApply).not.toHaveBeenCalled();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await flush(); expect(close).toHaveBeenCalledOnce();
   });
 
   it("keeps failed saves open and distinguishes saved-not-active", async () => {
     const failed = setup(); await failed.editor.load(); await flush();
     failed.backend.saveAndApply.mockRejectedValueOnce({ code: "io", message: "disk full" });
-    const source = document.querySelector("#claude-dir") as HTMLInputElement; source.value = "/changed"; source.dispatchEvent(new Event("input", { bubbles: true })); await flush(); await failed.editor.submit();
-    expect(document.querySelector("#global-message")?.textContent).toContain("disk full"); expect(document.querySelector("#global-message")?.textContent).toContain("rolled back"); expect(failed.backend.clearAppearancePreview).toHaveBeenCalled(); expect(failed.close).not.toHaveBeenCalled(); expect(source.value).toBe("/changed");
+    const port = document.querySelector("#preferred-port") as HTMLInputElement; port.value = "5003"; port.dispatchEvent(new Event("input", { bubbles: true })); await flush(); await failed.editor.submit();
+    expect(document.querySelector("#global-message")?.textContent).toContain("disk full"); expect(document.querySelector("#global-message")?.textContent).toContain("rolled back"); expect(failed.backend.clearAppearancePreview).toHaveBeenCalled(); expect(failed.close).not.toHaveBeenCalled(); expect(port.value).toBe("5003");
 
     const saved = setup(); await saved.editor.load(); await flush(); saved.backend.saveAndApply.mockImplementationOnce(async (draft) => { saved.setSnapshot(snapshot({ runtime: { phase: "saved_not_active", active: null, fallbackUsed: false, diagnostic: { kind: "spawn_failed", message: "could not restart" } }, settings: { ...snapshot().settings, authored: draft } })); return { status: "saved_not_active" }; });
-    const changed = document.querySelector("#claude-dir") as HTMLInputElement; changed.value = "/new"; changed.dispatchEvent(new Event("input", { bubbles: true })); await flush(); await saved.editor.submit();
+    const changed = document.querySelector("#preferred-port") as HTMLInputElement; changed.value = "5004"; changed.dispatchEvent(new Event("input", { bubbles: true })); await flush(); await saved.editor.submit();
     expect(document.querySelector("#operation-status")?.textContent).toBe("Saved, not active"); expect(document.querySelector("#global-message")?.textContent).toContain("could not activate");
   });
 
@@ -214,7 +214,7 @@ describe("bundled Settings editor", () => {
     const malformed = snapshot({ settings: { ...snapshot().settings, status: "malformed", validation: [{ kind: "malformed_syntax", field: null, message: "expected value", blocking: true, location: { line: 4, column: 2 } }] }, actions: { canSave: false, canRebase: false, canReplaceMalformed: true } });
     const recovery = setup(malformed); await recovery.editor.load(); await flush(); expect((document.querySelector("#save-settings") as HTMLButtonElement).disabled).toBe(true); expect(document.querySelector("#diagnostics")?.textContent).toContain("line 4, column 2"); await recovery.editor.replaceMalformed(); expect(recovery.backend.replaceMalformed).toHaveBeenCalledWith(snapshot().defaults, "sha256:one");
 
-    const future = setup(snapshot({ settings: { ...snapshot().settings, status: "unsupported_version" }, actions: { canSave: false, canRebase: false, canReplaceMalformed: false } })); await future.editor.load(); await flush(); expect((document.querySelector("#claude-dir") as HTMLInputElement).disabled).toBe(true); expect((document.querySelector("#replace-malformed") as HTMLButtonElement).disabled).toBe(true);
+    const future = setup(snapshot({ settings: { ...snapshot().settings, status: "unsupported_version" }, actions: { canSave: false, canRebase: false, canReplaceMalformed: false } })); await future.editor.load(); await flush(); expect((document.querySelector("#preferred-port") as HTMLInputElement).disabled).toBe(true); expect((document.querySelector("#replace-malformed") as HTMLButtonElement).disabled).toBe(true);
 
     const unavailable = setup(snapshot({ settings: { ...snapshot().settings, authored: { ...DEFAULT_DRAFT, themePack: "gone" }, effective: { ...snapshot().settings.effective, themePack: "classic" }, validation: [{ kind: "theme_pack_unavailable", field: "appearance.theme_pack", message: "gone unavailable", blocking: false }] } })); await unavailable.editor.load(); await flush(); expect((document.querySelector("#theme-pack") as HTMLSelectElement).value).toBe("gone"); expect(document.querySelector("#theme-status")?.textContent).toContain("gone / classic"); const dark = document.querySelector('[name="appearance-mode"][value="dark"]') as HTMLInputElement; dark.checked = true; dark.dispatchEvent(new Event("change", { bubbles: true })); await flush(); expect(unavailable.backend.previewAppearance).toHaveBeenCalledWith("dark", "classic");
 

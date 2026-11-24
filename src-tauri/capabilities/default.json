@@ -14,6 +14,12 @@
     "allow-reload-documentation",
     "allow-retry-launch",
     "allow-open-settings-window",
-    "allow-update-appearance"
+    "allow-update-appearance",
+    "allow-get-source-editor-snapshot",
+    "allow-validate-source-editor-draft",
+    "allow-save-source-editor-draft",
+    "allow-rebase-source-editor-draft",
+    "allow-apply-saved-sources",
+    "allow-pick-document-source-directory"
   ]
 }

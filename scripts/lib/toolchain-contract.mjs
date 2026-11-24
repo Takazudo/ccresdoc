@@ -3,8 +3,8 @@
 // manifests, lockfiles and installed trees against them, never against
 // values read back from the manifests themselves.
 
-export const ZFB_VERSION = "6.0.1";
-export const ZUDO_DOC_VERSION = "10.0.2";
+export const ZFB_VERSION = "7.2.0";
+export const ZUDO_DOC_VERSION = "14.0.0";
 export const PACKAGE_MANAGER = "pnpm@10.30.3";
 export const NODE_ENGINE = ">=24.0.0";
 export const PNPM_ENGINE = ">=10.0.0";
@@ -43,15 +43,26 @@ export const PROBE_DEV_DEPENDENCIES = Object.freeze({
   typescript: "5.9.2",
 });
 
-// zudo-doc 10.0.2 was younger than the 1440-minute release-age window when
-// this tuple was frozen; the ZFB family was not.
-export const RELEASE_AGE_EXCLUDES = Object.freeze([`@takazudo/zudo-doc@${ZUDO_DOC_VERSION}`]);
+// The audited 7.2.0/14.0.0 tuple was younger than the 1440-minute release-age
+// window when frozen. Exempt only these exact versions, retaining the age gate
+// for all other dependencies.
+export const RELEASE_AGE_EXCLUDES = Object.freeze([
+  ...Object.keys(RUNTIME_DEPENDENCIES)
+    .filter((name) => name.startsWith("@takazudo/zfb"))
+    .map((name) => `${name}@${ZFB_VERSION}`),
+  ...Object.values(NATIVE_CARRIERS).map((name) => `${name}@${ZFB_VERSION}`),
+  `@takazudo/zfb-slugify@${ZFB_VERSION}`,
+  `@takazudo/zudo-doc@${ZUDO_DOC_VERSION}`,
+]);
 
+// The target package removed desktop Find entirely. The host owns Find in
+// app/src/browser-chrome/find-in-page; this narrow package patch keeps native
+// Search shortcut ownership, refresh and the disabled ZDTP runtime boundary.
 export const ZUDO_DOC_PATCH = Object.freeze({
   name: "@takazudo/zudo-doc",
   version: ZUDO_DOC_VERSION,
   path: `patches/@takazudo__zudo-doc@${ZUDO_DOC_VERSION}.patch`,
-  hash: "d6f52919667c2478934b2e35714e18220341dfd939c9b4f8f9a6317e0de2e5c9",
+  hash: "c708c28fa1b0822a1a538e887e13d62ec8ba11008bd6df503ceff0f44a0a0098",
 });
 
 // zudo-doc dependencies reachable from the package exports the app imports

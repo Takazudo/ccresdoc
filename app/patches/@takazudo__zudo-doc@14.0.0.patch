@@ -1,0 +1,293 @@
+diff --git a/dist/search-widget/index.d.ts b/dist/search-widget/index.d.ts
+index 896f9a0e9569e683b15c4ea59ba03276720dfc7c..5d854b96dd52f5b88906223d7de2c4071193fbac 100644
+--- a/dist/search-widget/index.d.ts
++++ b/dist/search-widget/index.d.ts
+@@ -1,6 +1,8 @@
+ /** @jsxRuntime automatic */
+ import type { JSX } from "@takazudo/zfb/zudo-react/jsx-runtime";
+ export interface SearchWidgetProps {
++    /** Disable the package-owned Cmd/Ctrl+K listener when the host dispatches commands. */
++    disableBuiltInShortcut?: boolean;
+     /** Locale-aware placeholder: "Type to search..." / 「検索したい単語を入力」 */
+     placeholderText: string;
+     /** Locale-aware shortcut hint: "to open search from anywhere" / 「いつでも検索バーを開ける」 */
+diff --git a/dist/search-widget/index.js b/dist/search-widget/index.js
+index fc6b6d3adf4218b75505d2e21d7e8c268a1240cc..735b260b949b8a4eec952d9acc0f6c5ea98cd963 100644
+--- a/dist/search-widget/index.js
++++ b/dist/search-widget/index.js
+@@ -9,7 +9,8 @@ function SearchWidget(props) {
+     searchUnavailableText,
+     loadingIndexText,
+     noResultsText,
+-    base
++    base,
++    disableBuiltInShortcut = false
+   } = props;
+   return /* @__PURE__ */ jsxs(Fragment, { children: [
+     /* @__PURE__ */ jsxs(
+@@ -20,6 +21,7 @@ function SearchWidget(props) {
+         "data-search-unavailable": searchUnavailableText,
+         "data-loading-index": loadingIndexText,
+         "data-no-results": noResultsText,
++        "data-disable-built-in-shortcut": disableBuiltInShortcut ? "true" : void 0,
+         children: [
+           /* @__PURE__ */ jsx(
+             "button",
+@@ -79,10 +81,11 @@ function SearchWidget(props) {
+                     "input",
+                     {
+                       "data-search-input": true,
+-                      type: "text",
++                      type: "search",
+                       placeholder: placeholderText,
+                       class: "w-full bg-transparent text-body text-fg outline-none placeholder:text-muted",
+                       autocomplete: "off",
++                      autocapitalize: "off",
+                       spellcheck: "false"
+                     }
+                   ),
+diff --git a/dist/search-widget-script/generated-script.js b/dist/search-widget-script/generated-script.js
+index f133345ff19d3d61c924f4dd759f9b8bd1c01f94..68ba3e6671297aa78c5b14a8abcf77c23ececdd2 100644
+--- a/dist/search-widget-script/generated-script.js
++++ b/dist/search-widget-script/generated-script.js
+@@ -3,6 +3,7 @@ function buildSearchWidgetScript() {
+   if (customElements.get("site-search")) return; // guard double-registration
+ 
+   var PAGE_SIZE = 10;
++  var SEARCH_COMMAND_EVENT = "zudo-doc:search-command";
+ 
+   // Allowlist-based href sanitizer: only relative paths and http(s) URLs are
+   // permitted. Anything else (e.g. javascript:, data:) falls back to "#" so a
+@@ -107,6 +108,7 @@ function buildSearchWidgetScript() {
+       this._countNarrow = null;
+       this._entries = null;
+       this._loading = false;
++      this._loadGeneration = 0;
+       this._indexUnavailable = false;
+       this._debounce = null;
+       this._currentQuery = "";
+@@ -139,6 +141,10 @@ function buildSearchWidgetScript() {
+       // SPA navigation a non-persisted <site-search> element would leak
+       // one document listener per nav without this hook.
+       this._afterNavHandler = null;
++      this._commandHandler = null;
++      // Child-element listeners travel with the subtree, so a disconnected
++      // and reconnected element must not wire them a second time.
++      this._childrenWired = false;
+     }
+ 
+     connectedCallback() {
+@@ -146,6 +152,8 @@ function buildSearchWidgetScript() {
+       this._openBtn = this.querySelector("[data-open-search]");
+       this._closeBtn = this.querySelector("[data-close-search]");
+       this._input = this.querySelector("[data-search-input]");
++      // WebKit-only attribute outside the zudo-react JSX vocabulary.
++      if (this._input) this._input.setAttribute("autocorrect", "off");
+       this._results = this.querySelector("[data-search-results]");
+       this._countWide = this.querySelector("[data-search-count]");
+       this._countNarrow = this.querySelector("[data-search-count-narrow]");
+@@ -173,13 +181,18 @@ function buildSearchWidgetScript() {
+ 
+       // Wire open/close handlers
+       var self = this;
+-      if (this._openBtn) {
+-        this._openBtn.addEventListener("click", function() { self.openDialog(); });
++      var wireChildren = !this._childrenWired;
++      this._childrenWired = true;
++      if (this._openBtn && wireChildren) {
++        this._openBtn.addEventListener("click", function() {
++          self.refreshIndex();
++          self.openDialog();
++        });
+       }
+-      if (this._closeBtn) {
++      if (this._closeBtn && wireChildren) {
+         this._closeBtn.addEventListener("click", function() { self.closeDialog(); });
+       }
+-      if (this._dialog) {
++      if (this._dialog && wireChildren) {
+         this._dialog.addEventListener("close", function() {
+           document.documentElement.style.overflow = "";
+         });
+@@ -187,7 +200,7 @@ function buildSearchWidgetScript() {
+           if (e.target === self._dialog) self.closeDialog();
+         });
+       }
+-      if (this._input) {
++      if (this._input && wireChildren) {
+         this._input.addEventListener("input", function() { self.handleInput(); });
+       }
+ 
+@@ -210,13 +223,27 @@ function buildSearchWidgetScript() {
+       }
+ 
+       // Global keyboard shortcut (\u2318K / Ctrl+K to open)
+-      this._keydownHandler = function(e) {
+-        if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+-          e.preventDefault();
+-          self.openDialog();
+-        }
+-      };
+-      document.addEventListener("keydown", this._keydownHandler);
++      if (this.dataset.disableBuiltInShortcut !== "true" && !this._keydownHandler) {
++        this._keydownHandler = function(e) {
++          if ((e.metaKey || e.ctrlKey) && e.key === "k") {
++            e.preventDefault();
++            self.openDialog();
++          }
++        };
++        document.addEventListener("keydown", this._keydownHandler);
++      }
++
++      // Host-controlled commands (open / close / refresh) from the public
++      // search-widget-script helpers.
++      if (!this._commandHandler) {
++        this._commandHandler = function(e) {
++          var detail = e.detail || {};
++          if (detail.refresh) self.refreshIndex();
++          if (detail.action === "open") self.openDialog();
++          else if (detail.action === "close") self.closeDialog();
++        };
++        document.addEventListener(SEARCH_COMMAND_EVENT, this._commandHandler);
++      }
+ 
+       // View-Transitions compat: re-run on the v2 after-navigate event.
+       // Stored on the instance so disconnectedCallback can detach it on
+@@ -235,6 +262,19 @@ function buildSearchWidgetScript() {
+     }
+ 
+     disconnectedCallback() {
++      // Invalidate in-flight index loads and pending debounced searches.
++      this._loadGeneration++;
++      this._loading = false;
++      if (this._debounce) {
++        clearTimeout(this._debounce);
++        this._debounce = null;
++      }
++      if (this._dialog && this._dialog.open) this.closeDialog();
++      else document.documentElement.style.overflow = "";
++      if (this._commandHandler) {
++        document.removeEventListener(SEARCH_COMMAND_EVENT, this._commandHandler);
++        this._commandHandler = null;
++      }
+       if (this._keydownHandler) {
+         document.removeEventListener("keydown", this._keydownHandler);
+         this._keydownHandler = null;
+@@ -253,7 +293,7 @@ function buildSearchWidgetScript() {
+     openDialog() {
+       if (!this._dialog) return;
+       document.documentElement.style.overflow = "hidden";
+-      this._dialog.showModal();
++      if (!this._dialog.open) this._dialog.showModal();
+       if (this._input) {
+         this._input.focus();
+         this._input.select();
+@@ -265,10 +305,26 @@ function buildSearchWidgetScript() {
+ 
+     closeDialog() {
+       if (!this._dialog) return;
+-      this._dialog.close();
++      if (this._dialog.open) this._dialog.close();
+       document.documentElement.style.overflow = "";
+     }
+ 
++    refreshIndex() {
++      if (this._debounce) {
++        clearTimeout(this._debounce);
++        this._debounce = null;
++      }
++      this.teardownSentinel();
++      this._loadGeneration++;
++      this._entries = null;
++      this._indexUnavailable = false;
++      this._loading = false;
++      this._allResults = [];
++      this._shownCount = 0;
++      this.updateCount();
++      this.loadIndex();
++    }
++
+     handleInput() {
+       var self = this;
+       if (this._debounce) clearTimeout(this._debounce);
+@@ -279,6 +335,7 @@ function buildSearchWidgetScript() {
+       if (this._loading) return;
+       this._loading = true;
+       var self = this;
++      var generation = ++this._loadGeneration;
+       var base = this.dataset.base || "/";
+       fetch(base + "search-index.json")
+         .then(function(r) {
+@@ -286,6 +343,7 @@ function buildSearchWidgetScript() {
+           return r.json();
+         })
+         .then(function(data) {
++          if (generation !== self._loadGeneration) return;
+           self._entries = Array.isArray(data) ? data : (data.entries || []);
+           prepareLc(self._entries);
+           self._loading = false;
+@@ -298,6 +356,7 @@ function buildSearchWidgetScript() {
+           }
+         })
+         .catch(function() {
++          if (generation !== self._loadGeneration) return;
+           self._loading = false;
+           self._indexUnavailable = true;
+           if (self._results) {
+diff --git a/dist/search-widget-script/index.d.ts b/dist/search-widget-script/index.d.ts
+index 063ba1f9112babc8bf4c0746bb6920b20a0702f0..8d79d4846cd23a2c40fe7d24b72750ae961225cc 100644
+--- a/dist/search-widget-script/index.d.ts
++++ b/dist/search-widget-script/index.d.ts
+@@ -1 +1,9 @@
+ export { SEARCH_WIDGET_SCRIPT } from "./generated-script.js";
++export declare const SEARCH_COMMAND_EVENT = "zudo-doc:search-command";
++export interface OpenSearchOptions {
++    /** Refresh the package-owned index before opening. Defaults to true. */
++    refresh?: boolean;
++}
++export declare function openSearch(options?: OpenSearchOptions): void;
++export declare function closeSearch(): void;
++export declare function refreshSearch(): void;
+diff --git a/dist/search-widget-script/index.js b/dist/search-widget-script/index.js
+index 25532b98ee684a75066db9873b9aaf87993b4b79..be588834a674bf73e0d1d49de5ca573c4fb0ebf6 100644
+--- a/dist/search-widget-script/index.js
++++ b/dist/search-widget-script/index.js
+@@ -1,4 +1,21 @@
+ import { SEARCH_WIDGET_SCRIPT } from "./generated-script.js";
++const SEARCH_COMMAND_EVENT = "zudo-doc:search-command";
++function dispatchSearchCommand(action, refresh = false) {
++  document.dispatchEvent(new CustomEvent(SEARCH_COMMAND_EVENT, { detail: { action, refresh } }));
++}
++function openSearch(options = {}) {
++  dispatchSearchCommand("open", options.refresh !== false);
++}
++function closeSearch() {
++  dispatchSearchCommand("close");
++}
++function refreshSearch() {
++  dispatchSearchCommand("refresh", true);
++}
+ export {
+-  SEARCH_WIDGET_SCRIPT
++  SEARCH_COMMAND_EVENT,
++  SEARCH_WIDGET_SCRIPT,
++  closeSearch,
++  openSearch,
++  refreshSearch
+ };
+diff --git a/dist/zdtp-loader.js b/dist/zdtp-loader.js
+index d6df90f395a28c3151f4e6cc79896afc431490cf..755a9d2089e907976cb6eac640cf7fac4abbd524 100644
+--- a/dist/zdtp-loader.js
++++ b/dist/zdtp-loader.js
+@@ -1,9 +1,2 @@
+-import { configurePanel } from "@takazudo/zdtp";
+-export * from "@takazudo/zdtp";
+-function configurePanelIfActive(signal, config) {
+-  if (signal?.aborted) return null;
+-  return configurePanel(config);
+-}
+-export {
+-  configurePanelIfActive
+-};
++throw new Error("@takazudo/zdtp is not bundled: designTokenPanel is false and bundleZdtp is not set, so this build shadows @takazudo/zudo-doc/zdtp-loader. If you reached this through @takazudo/zudo-doc/design-token-panel-bootstrap to mount your own panel, set bundleZdtp: true and install @takazudo/zdtp.");
++export {};

@@ -471,7 +471,7 @@ mod tests {
                     fs::write(&path, "schema_version = 2\n[source\nnope").unwrap();
                 }
                 LoadStatus::UnsupportedVersion => {
-                    fs::write(&path, "schema_version = 3\nfuture = true\n").unwrap();
+                    fs::write(&path, "schema_version = 4\nfuture = true\n").unwrap();
                 }
                 LoadStatus::Unreadable => {
                     use std::os::unix::fs::PermissionsExt;

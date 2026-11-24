@@ -8,6 +8,7 @@ description = "Generates zudo-doc-compatible MDX from ~/.claude/ and watches for
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 walkdir = "2"
+globset = "0.4"
 log = "0.4"
 thiserror = "1"
 notify = "6"

@@ -7,7 +7,7 @@
  * carrier on a freshly selected loopback port, waits for semantic `/docs/`
  * readiness, drives Chromium with real Playwright keyboard input, and tears
  * down the exact process group in every exit path.  It intentionally uses the
- * checked-in root, Claude, Codex, and 404 routes.  No selected local resource
+ * checked-in root, app-owned source-management, and 404 routes. No selected local resource
  * directory or test fixture is copied into the app workspace.
  *
  * Run from the repository root after the app's frozen install:
@@ -46,8 +46,8 @@ let activeBrowser;
 let activeCleanupPromise;
 const appRoutes = {
   root: "/docs/",
-  claude: "/docs/claude/",
-  codex: "/docs/codex/",
+  category: "/docs/ccresdoc/",
+  manager: "/docs/ccresdoc/document-sources/",
   missing: "/docs/browser-navigation-missing/",
 };
 
@@ -196,7 +196,7 @@ function assertRepositoryContracts() {
   assert.equal(
     createHash("sha256").update(readFileSync(join(appRoot, ZUDO_DOC_PATCH.path))).digest("hex"),
     ZUDO_DOC_PATCH.hash,
-    "the controlled Find/Search patch bytes drifted",
+    "the controlled Search/ZDTP patch bytes drifted",
   );
   assert.deepEqual(readdirSync(join(appRoot, "patches")), [ZUDO_DOC_PATCH.path.slice("patches/".length)], "only the zudo-doc patch may exist");
 }
@@ -318,8 +318,8 @@ function modulePaths(html, origin) {
 function semanticShellReady(body) {
   return body.includes("CCResDoc")
     && body.includes('data-ccresdoc-browser-toolbar-shell')
-    && body.includes("/docs/claude/")
-    && body.includes("/docs/codex/")
+    && body.includes("/docs/ccresdoc/")
+    && body.includes("/docs/ccresdoc/document-sources/")
     && body.includes("data-zfb-island");
 }
 
@@ -770,7 +770,7 @@ async function assertClipboard(page, expected, message) {
 }
 
 async function routeViaHeader(page, path) {
-  const link = page.locator(`header a[href$="${path}"]`).first();
+  const link = page.locator(`a[href$="${path}"]:visible`).first();
   await link.waitFor({ state: "visible", timeout: browserTimeoutMs });
   await link.click();
   await waitForPath(page, path);
@@ -908,7 +908,7 @@ async function assertFindSurface(page) {
   const routeFind = await openPatchedFind(page);
   await routeFind.fill("CCResDoc");
   await page.waitForFunction(() => document.querySelectorAll("[data-find-match]").length >= 2, undefined, { timeout: browserTimeoutMs });
-  await routeViaHeader(page, appRoutes.claude);
+  await routeViaHeader(page, appRoutes.category);
   await page.waitForFunction(() => document.querySelector("[data-find-in-page-bar]") === null, undefined, { timeout: browserTimeoutMs });
   assert.equal(await page.locator("[data-find-match]").count(), 0, "route swap clears Find marks");
 }
@@ -1051,8 +1051,8 @@ async function assertHistorySurfaceGuarded(page, origin, guard, diagnostics) {
     await waitForPath(page, appRoutes.root);
     assert(navigations.every((url) => url.startsWith(origin)), `Back exposed a foreign/loading navigation: ${navigations}`);
 
-    await routeViaHeader(page, appRoutes.claude);
-    await routeViaHeader(page, appRoutes.codex);
+    await routeViaHeader(page, appRoutes.category);
+    await routeViaHeader(page, appRoutes.manager);
     const routedHistory = await managedHistory(page);
     const planted = await readPlantedState(page, "__ccresdocHistoryTrace", { diagnostics });
     if (!planted.present) {
@@ -1067,7 +1067,7 @@ async function assertHistorySurfaceGuarded(page, origin, guard, diagnostics) {
       `Back must enable after two pushes: ${JSON.stringify({ routedHistory, historyTrace })}`,
     );
     await pressShortcut(page, "Mod+[");
-    await waitForPath(page, appRoutes.claude);
+    await waitForPath(page, appRoutes.category);
     await guard.assertNoReloadSince("history checks");
     // popstate updates the URL/path before zfb:page-load settles the managed
     // traversal. Wait for the exposed Forward affordance instead of racing
@@ -1093,8 +1093,8 @@ async function assertHistorySurfaceGuarded(page, origin, guard, diagnostics) {
     });
     await pressShortcut(page, "Mod+]");
     try {
-      await page.waitForFunction((expected) => location.pathname === expected, appRoutes.codex, { timeout: 3_000 });
-      await waitForPath(page, appRoutes.codex);
+      await page.waitForFunction((expected) => location.pathname === expected, appRoutes.manager, { timeout: 3_000 });
+      await waitForPath(page, appRoutes.manager);
       await waitForCommandEnabled(page, "back");
     } catch (error) {
       const diagnostic = await page.evaluate(() => ({
@@ -1111,7 +1111,7 @@ async function assertHistorySurfaceGuarded(page, origin, guard, diagnostics) {
     // C → Back to B → D (Home) creates a new branch. Forward must remain
     // disabled, and the old C entry must not become reachable again.
     await pressShortcut(page, "Mod+[");
-    await waitForPath(page, appRoutes.claude);
+    await waitForPath(page, appRoutes.category);
     await waitForCommandEnabled(page, "forward");
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
@@ -1152,14 +1152,14 @@ async function assertHistorySurfaceGuarded(page, origin, guard, diagnostics) {
 }
 
 async function assertReloadAndPageshow(page, origin) {
-  await openPage(page, origin, appRoutes.codex);
-  await routeViaHeader(page, appRoutes.claude);
+  await openPage(page, origin, appRoutes.manager);
+  await routeViaHeader(page, appRoutes.category);
   const before = await managedHistory(page);
   assert(before.stored, "deep route must retain a managed history record before reload");
   const boundary = before.stored?.boundary;
   await page.reload({ waitUntil: "domcontentloaded", timeout: browserTimeoutMs });
   await waitForToolbar(page);
-  await waitForPath(page, appRoutes.claude);
+  await waitForPath(page, appRoutes.category);
   const afterReload = await managedHistory(page);
   assert.equal(afterReload.stored?.boundary, boundary, "hard reload preserves the managed boundary");
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
@@ -1436,7 +1436,7 @@ async function assertChromeNodeIdentity(page, origin) {
       footer: document.querySelector("footer[data-zfb-transition-persist]"),
     };
   });
-  await routeViaHeader(page, appRoutes.claude);
+  await routeViaHeader(page, appRoutes.category);
   const identity = await page.evaluate(() => ({
     wrapperReplaced: window.__ccresdocChromeIdentity.wrapper !== document.querySelector("[data-ccresdoc-chrome-region]"),
     toolbarPersisted: window.__ccresdocChromeIdentity.toolbarShell === document.querySelector("[data-ccresdoc-browser-toolbar-shell]"),
@@ -1682,14 +1682,14 @@ async function assertBrowserOnly(browser, origin) {
         return transition;
       };
     });
-    await routeViaHeader(page, appRoutes.claude);
+    await routeViaHeader(page, appRoutes.category);
     await waitForCommandEnabled(page, "back");
     assert.equal(await page.evaluate(() => window.__ccresdocSkippedTransitions), 1, "cancelled view transition still completes navigation");
     await pressShortcut(page, "Mod+[");
     await waitForPath(page, appRoutes.root);
     await waitForCommandEnabled(page, "forward");
     await pressShortcut(page, "Mod+]");
-    await waitForPath(page, appRoutes.claude);
+    await waitForPath(page, appRoutes.category);
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
 
@@ -1708,7 +1708,7 @@ async function assertBrowserOnly(browser, origin) {
         };
       }, { once: true });
     });
-    await page.locator(`header a[href$="${appRoutes.claude}"]`).first().click();
+    await page.locator(`a[href$="${appRoutes.category}"]:visible`).first().click();
     const deadline = Date.now() + browserTimeoutMs;
     while (!routerLogs.some((text) => text.includes("ccresdoc-dom-update-probe")) && Date.now() < deadline) await delay(50);
     page.off("console", onConsole);
@@ -1718,7 +1718,7 @@ async function assertBrowserOnly(browser, origin) {
     );
     assert(!pageErrors.some((message) => message.includes("ccresdoc-dom-update-probe")), "the reported DOM-update failure must not escape as an unhandled error");
     await openPage(page, origin, appRoutes.root);
-    await routeViaHeader(page, appRoutes.claude);
+    await routeViaHeader(page, appRoutes.category);
     await command(page, "home").click();
     await waitForPath(page, appRoutes.root);
     const missing = await fetchText(`${origin}${appRoutes.missing}`);

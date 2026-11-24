@@ -1,7 +1,7 @@
 "use client";
 
 import { navigate } from "@takazudo/zfb-runtime";
-import { openFindInPage } from "@takazudo/zudo-doc/find-in-page";
+import { openFindInPage } from "./find-in-page/index.js";
 import { openSearch } from "@takazudo/zudo-doc/search-widget-script";
 import catalog from "./command-catalog.json";
 import { ManagedHistoryController } from "./history";
@@ -16,6 +16,7 @@ import type {
 
 const COMMAND_EVENT = "ccresdoc://browser-command";
 const BOOTSTRAP_EVENT = "ccresdoc://browser-bootstrap";
+const BEFORE_DOCUMENT_NAVIGATION_EVENT = "ccresdoc:before-document-navigation";
 const BROWSER_SCOPE_KEY = "ccresdoc:browser-history-scope:v1";
 const EDITING_SELECTOR = [
   "input",
@@ -190,6 +191,12 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
       this.refresh();
     }) as EventListener);
     on(this.root, "popstate", ((event: PopStateEvent) => {
+      // WebKit emits popstate for a zfb push to a cross-page fragment before
+      // page-load settles the new index. It is still a push, not a traversal.
+      if (this.pendingNavigationType === "push" && this.root.location.hash) {
+        this.refresh(false);
+        return;
+      }
       this.pendingNavigationType = "traverse";
       this.historyController?.onPopState(event.state);
       this.refresh(false);
@@ -223,6 +230,10 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
     if (envelope.runtimeGeneration !== undefined
       && this.runtimeGeneration !== undefined
       && envelope.runtimeGeneration !== this.runtimeGeneration) return false;
+    if (["back", "forward", "home", "reload-documentation"].includes(command)
+      && !this.root.document.dispatchEvent(new Event(BEFORE_DOCUMENT_NAVIGATION_EVENT, { cancelable: true }))) {
+      return false;
+    }
     if (envelope.hostHandled) return true;
 
     switch (command) {

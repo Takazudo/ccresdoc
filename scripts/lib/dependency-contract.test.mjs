@@ -97,9 +97,9 @@ test("an unregistered or extra patch fails", () => {
 test("a widened release-age exclusion list fails", () => {
   const workspace = app.workspace.replace(
     "minimumReleaseAgeExclude:\n",
-    `minimumReleaseAgeExclude:\n  - '@takazudo/zfb@${ZFB_VERSION}'\n`,
+    `minimumReleaseAgeExclude:\n  - '@takazudo/unreviewed@${ZFB_VERSION}'\n`,
   );
-  assert.deepEqual(parseWorkspace(workspace).exclude.length, 2);
+  assert.deepEqual(parseWorkspace(workspace).exclude.length, 11);
   expectError(checkScope("app", appInputs({ workspace })), /minimumReleaseAgeExclude/);
 });
 

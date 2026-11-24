@@ -162,7 +162,7 @@ async function fetchUntil(path, marker, attempts = 240) {
     if (activeChild?.exitCode !== null) throw new Error(`zfb exited before ${path} became ready\n${activeChild.output}`);
     await delay(250);
   }
-  throw new Error(`timed out waiting for ${path} to contain ${JSON.stringify(marker)}`);
+  throw new Error(`timed out waiting for ${path} to contain ${JSON.stringify(marker)}; zfb output tail:\n${activeChild?.output?.slice(-6000) ?? "<none>"}`);
 }
 
 async function fetchOk(path) {
@@ -299,15 +299,12 @@ async function runOnce({ hmr }) {
       assert.match(docs, pattern, `root and /docs/ must share ${signal}`);
     }
     assert.match(docs, /data-zfb-island=/, "docs route must preserve hydration markers");
-    assert.match(docs, /Choose a resource category below\./, "first accepted docs response must contain the populated landing content");
+    assert.match(docs, /Edit document sources/, "first accepted docs response must link the app-owned source editor");
     assert.match(docs, /<a[^>]*(?:href=(?:\/docs\/|\"\/docs\/\")[^>]*data-header-logo|data-header-logo(?:=true|=\"true\")[^>]*href=(?:\/docs\/|\"\/docs\/\"))/, "docs logo must link to /docs/");
     assert.match(docs, /data-header-nav(?:=true|=\"true\")/, "docs shell must expose its header nav seam");
-    assert.match(docs, /Claude/, "header nav must keep the permanent Claude category");
-    assert.match(docs, /Codex/, "header nav must keep the permanent Codex category");
     const headerNav = docs.match(/<nav[^>]*data-header-nav[^>]*>([\s\S]*?)<\/nav>/);
     assert.ok(headerNav, "docs shell must include a header nav element");
-    assert.match(headerNav[1], /Claude/);
-    assert.match(headerNav[1], /Codex/);
+    assert.match(await fetchOk("/docs/ccresdoc/document-sources/"), /data-ccresdoc-source-manager/, "management article must render without a generated source");
     assert.match(docs, /data-theme-pack(?:=classic|=\"classic\")/, "docs shell must bootstrap the classic theme pack");
     assert.match(docs, /data-zfb-island(?:=ThemePackSwitcher|=\"ThemePackSwitcher\")/, "docs shell must hydrate the theme-pack switcher");
     assert.match(docs, /data-zd-theme-pack-loading|zudo-doc-theme-pack/, "docs shell must include no-flash theme bootstrap");
@@ -346,7 +343,7 @@ async function runOnce({ hmr }) {
       const content = join(workspace, "src", "content", "docs", "index.mdx");
       const marker = `Packaged HMR probe ${Date.now()}`;
       const original = readFileSync(content, "utf8");
-      assert.match(original, /Choose a resource category below\./);
+      assert.match(original, /Edit document sources/);
       writeFileSync(content, `${original}\n\n${marker}\n`);
       const hmrBody = await fetchUntil("/docs/", marker);
       assertRenderedPrivacy("/docs/ (HMR)", hmrBody);

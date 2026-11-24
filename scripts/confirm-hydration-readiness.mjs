@@ -90,13 +90,13 @@ function assertApplyReadinessContract() {
   const settingsSource = readFileSync(join(repoRoot, "app", "src", "config", "settings.ts"), "utf8");
   assert.match(
     mainSource,
-    /fn relaunch_previous_runtime[\s\S]*?probe_resource_readiness\(/,
-    "ApplyCoordinator relaunch must use the widened module-aware readiness probe",
+    /fn relaunch_previous_runtime[\s\S]*?probe_source_readiness\(/,
+    "ApplyCoordinator relaunch must use the source-aware module readiness probe",
   );
   assert.match(
     mainSource,
-    /fn launch\([\s\S]*?probe_resource_readiness\(/,
-    "main.rs::launch must use the widened module-aware readiness probe",
+    /fn launch\([\s\S]*?probe_source_readiness\(/,
+    "main.rs::launch must use the source-aware module readiness probe",
   );
   assert.match(
     mainSource,
@@ -115,8 +115,8 @@ function assertApplyReadinessContract() {
   );
   assert.match(
     runtimeSource,
-    /fn apply_coordinator_launch_boundary_publishes_ready_only_after_module_probe[\s\S]*?probe_resource_readiness\(/,
-    "the executable coordinator/readiness integration sample must remain present",
+    /pub fn probe_source_readiness\([\s\S]*?scan_module_scripts[\s\S]*?\/docs\/ccresdoc\/document-sources\//,
+    "source-aware readiness must verify module scripts and the manager article",
   );
   assert.match(settingsSource, /dynamicPageTransition:\s*true/, "the router-swap confirmation must run with dynamicPageTransition enabled");
 }
@@ -359,7 +359,7 @@ async function waitForHostReady(oraclePage, child, samples, workspace) {
     if (sample.ready) return sample;
     await delay(pollIntervalMs);
   }
-  throw new Error(`timed out waiting for independent host readiness after ${readyTimeoutMs}ms`);
+  throw new Error(`timed out waiting for independent host readiness after ${readyTimeoutMs}ms; last sample=${JSON.stringify(samples.at(-1))}; zfb output tail:\n${child.output.slice(-6000)}`);
 }
 
 // zudo-doc 5.28 renders ThemeToggle as an Appearance menu (aria-haspopup),
