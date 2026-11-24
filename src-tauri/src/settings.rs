@@ -2559,7 +2559,20 @@ fn read_source_catalog(
     diagnostics: &mut Vec<SettingsDiagnostic>,
 ) -> SourceCatalog {
     let Some(source_item) = doc.get("document_sources") else {
-        return SourceCatalog::defaults();
+        let authored_catalog = doc
+            .get("document_source_catalog")
+            .and_then(Item::as_table)
+            .and_then(|table| table.get("format_version"))
+            .and_then(Item::as_integer)
+            == Some(1);
+        if !authored_catalog {
+            return SourceCatalog::defaults();
+        }
+        // TOML has no representation for an empty array of tables. The format
+        // marker distinguishes a saved empty list from a legacy default.
+        let mut catalog = SourceCatalog::default();
+        read_user_presets(doc, diagnostics, &mut catalog);
+        return catalog;
     };
     let Some(source_tables) = source_item.as_array_of_tables() else {
         diagnostics.push(invalid_type("document_sources", "an array of tables"));
@@ -2575,6 +2588,15 @@ fn read_source_catalog(
             )),
         }
     }
+    read_user_presets(doc, diagnostics, &mut catalog);
+    catalog
+}
+
+fn read_user_presets(
+    doc: &DocumentMut,
+    diagnostics: &mut Vec<SettingsDiagnostic>,
+    catalog: &mut SourceCatalog,
+) {
     if let Some(preset_item) = doc.get("user_presets") {
         if let Some(preset_tables) = preset_item.as_array_of_tables() {
             for (index, table) in preset_tables.iter().enumerate() {
@@ -2590,7 +2612,6 @@ fn read_source_catalog(
             diagnostics.push(invalid_type("user_presets", "an array of tables"));
         }
     }
-    catalog
 }
 
 fn table_string(table: &Table, key: &str) -> Option<String> {
@@ -3330,6 +3351,37 @@ mod tests {
         assert!(store.validate_source_catalog(&catalog).iter().any(|item| {
             item.blocking && item.field.as_deref() == Some("sources.legacy-claude.scan_root")
         }));
+    }
+
+    #[test]
+    fn empty_saved_source_catalog_and_presets_survive_reload() {
+        let (_root, store) = fixture();
+        let mut catalog = SourceCatalog::default();
+        catalog.presets.push(UserPreset {
+            id: "my-reading-rules".into(),
+            name: "My reading rules".into(),
+            description: "Synthetic rules".into(),
+            version: 1,
+            rules: RuleSnapshot::Custom {
+                definition_version: 1,
+                format: PublicFormat::Markdown,
+                include: vec!["**/*.md".into()],
+                exclude: vec![],
+            },
+        });
+        store.save_source_catalog(&catalog, None).unwrap();
+        let raw = fs::read_to_string(store.path()).unwrap();
+        assert!(raw.contains("[document_source_catalog]"));
+        assert!(!raw.contains("[[document_sources]]"));
+        let loaded = store.load();
+        assert_eq!(loaded.status, LoadStatus::Valid);
+        assert_eq!(loaded.source_catalog, catalog);
+
+        let empty = SourceCatalog::default();
+        store
+            .save_source_catalog(&empty, loaded.revision.as_ref())
+            .unwrap();
+        assert_eq!(store.load().source_catalog, empty);
     }
 
     #[test]
