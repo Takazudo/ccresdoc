@@ -2406,43 +2406,97 @@ fn rule_table(rules: &RuleSnapshot) -> Table {
     table
 }
 
+fn catalog_tables_by_id(doc: &DocumentMut, key: &str) -> BTreeMap<String, Table> {
+    doc.get(key)
+        .and_then(Item::as_array_of_tables)
+        .into_iter()
+        .flat_map(ArrayOfTables::iter)
+        .filter_map(|table| table_string(table, "id").map(|id| (id, table.clone())))
+        .collect()
+}
+
+fn set_catalog_value(table: &mut Table, key: &str, item: Item) {
+    let decor = table
+        .get(key)
+        .and_then(Item::as_value)
+        .map(|value| value.decor().clone());
+    table[key] = item;
+    if let (Some(decor), Some(value)) = (decor, table.get_mut(key).and_then(Item::as_value_mut)) {
+        *value.decor_mut() = decor;
+    }
+}
+
+fn merge_rule_table(existing: Option<&Table>, rules: &RuleSnapshot) -> Table {
+    let mut table = existing.cloned().unwrap_or_else(Table::new);
+    let desired = rule_table(rules);
+    for key in ["kind", "definition_version", "format", "include", "exclude"] {
+        if let Some(item) = desired.get(key) {
+            set_catalog_value(&mut table, key, item.clone());
+        } else {
+            table.remove(key);
+        }
+    }
+    table
+}
+
 fn merge_source_catalog(doc: &mut DocumentMut, catalog: &SourceCatalog) {
+    let mut old_sources = catalog_tables_by_id(doc, "document_sources");
     let mut sources = ArrayOfTables::new();
     for source in &catalog.sources {
-        let mut table = Table::new();
-        table["id"] = value(&source.id);
-        table["label"] = value(&source.label);
-        table["enabled"] = value(source.enabled);
-        table["root"] = value(&source.root);
-        table["mount"] = value(&source.mount);
-        let mut scan = Table::new();
+        let mut table = old_sources.remove(&source.id).unwrap_or_default();
+        set_catalog_value(&mut table, "id", value(&source.id));
+        set_catalog_value(&mut table, "label", value(&source.label));
+        set_catalog_value(&mut table, "enabled", value(source.enabled));
+        set_catalog_value(&mut table, "root", value(&source.root));
+        set_catalog_value(&mut table, "mount", value(&source.mount));
+        let mut scan = table
+            .get("scan_root")
+            .and_then(Item::as_table)
+            .cloned()
+            .unwrap_or_else(Table::new);
         match &source.scan_root {
-            ScanRootChoice::Same => scan["kind"] = value("same"),
+            ScanRootChoice::Same => {
+                set_catalog_value(&mut scan, "kind", value("same"));
+                scan.remove("path");
+            }
             ScanRootChoice::Separate { path } => {
-                scan["kind"] = value("separate");
-                scan["path"] = value(path);
+                set_catalog_value(&mut scan, "kind", value("separate"));
+                set_catalog_value(&mut scan, "path", value(path));
             }
         }
         table["scan_root"] = Item::Table(scan);
         if let Some(origin) = &source.origin_preset {
-            let mut preset = Table::new();
-            preset["id"] = value(&origin.id);
-            preset["name"] = value(&origin.name);
-            preset["version"] = value(i64::from(origin.version));
+            let mut preset = table
+                .get("origin_preset")
+                .and_then(Item::as_table)
+                .cloned()
+                .unwrap_or_else(Table::new);
+            set_catalog_value(&mut preset, "id", value(&origin.id));
+            set_catalog_value(&mut preset, "name", value(&origin.name));
+            set_catalog_value(&mut preset, "version", value(i64::from(origin.version)));
             table["origin_preset"] = Item::Table(preset);
+        } else {
+            table.remove("origin_preset");
         }
-        table["rules"] = Item::Table(rule_table(&source.rules));
+        table["rules"] = Item::Table(merge_rule_table(
+            table.get("rules").and_then(Item::as_table),
+            &source.rules,
+        ));
         sources.push(table);
     }
     doc["document_sources"] = Item::ArrayOfTables(sources);
+    let mut old_presets = catalog_tables_by_id(doc, "user_presets");
     let mut presets = ArrayOfTables::new();
     for preset in &catalog.presets {
-        let mut table = Table::new();
-        table["id"] = value(&preset.id);
-        table["name"] = value(&preset.name);
-        table["description"] = value(&preset.description);
-        table["version"] = value(i64::from(preset.version));
-        table["rules"] = Item::Table(rule_table(&preset.rules));
+        let mut table = old_presets.remove(&preset.id).unwrap_or_default();
+        set_catalog_value(&mut table, "id", value(&preset.id));
+        set_catalog_value(&mut table, "name", value(&preset.name));
+        set_catalog_value(&mut table, "description", value(&preset.description));
+        set_catalog_value(&mut table, "version", value(i64::from(preset.version)));
+        table["rules"] = Item::Table(merge_rule_table(
+            table.get("rules").and_then(Item::as_table),
+            &preset.rules,
+        ));
         presets.push(table);
     }
     doc["user_presets"] = Item::ArrayOfTables(presets);
@@ -4185,6 +4239,84 @@ mod tests {
         ));
         assert!(root.path().join("home/.claude").exists());
         assert_eq!(current.source_catalog.sources[1].label, "Work Codex");
+    }
+
+    #[test]
+    fn source_editor_save_preserves_comments_and_unknown_table_fields() {
+        let (_root, store) = fixture();
+        let mut catalog = SourceCatalog::defaults();
+        catalog.presets.push(UserPreset {
+            id: "user-markdown".into(),
+            name: "My preset".into(),
+            description: "Fixture".into(),
+            version: 1,
+            rules: RuleSnapshot::Custom {
+                definition_version: 1,
+                format: PublicFormat::Markdown,
+                include: vec!["**/*.md".into()],
+                exclude: vec![],
+            },
+        });
+        store.save_source_catalog(&catalog, None).unwrap();
+        let raw = fs::read_to_string(store.path()).unwrap();
+        let raw = raw
+            .replacen(
+                "[[document_sources]]",
+                "# source table note\n[[document_sources]]",
+                1,
+            )
+            .replacen(
+                "label = \"Claude Code\"",
+                "label = \"Claude Code\" # source label note\nowner_note = \"keep-source\"",
+                1,
+            )
+            .replacen(
+                "[document_sources.scan_root]\nkind = \"same\"",
+                "[document_sources.scan_root]\nkind = \"same\"\nscan_note = \"keep-scan\"",
+                1,
+            )
+            .replacen(
+                "[[user_presets]]",
+                "# preset table note\n[[user_presets]]",
+                1,
+            )
+            .replacen(
+                "name = \"My preset\"",
+                "name = \"My preset\" # preset name note\nowner_note = \"keep-preset\"",
+                1,
+            )
+            .replacen(
+                "[user_presets.rules]\nkind = \"custom\"",
+                "[user_presets.rules]\nkind = \"custom\"\nrule_note = \"keep-rule\"",
+                1,
+            );
+        for marker in ["keep-source", "keep-scan", "keep-preset", "keep-rule"] {
+            assert!(raw.contains(marker));
+        }
+        fs::write(store.path(), raw).unwrap();
+        let before = store.load();
+        assert_eq!(before.status, LoadStatus::Valid);
+        let mut edited = before.source_catalog;
+        edited.sources[0].label = "Edited Claude".into();
+        edited.presets[0].name = "Edited preset".into();
+        store
+            .save_source_catalog(&edited, before.revision.as_ref())
+            .unwrap();
+        let after = fs::read_to_string(store.path()).unwrap();
+        for marker in [
+            "# source table note",
+            "# source label note",
+            "keep-source",
+            "keep-scan",
+            "# preset table note",
+            "# preset name note",
+            "keep-preset",
+            "keep-rule",
+            "Edited Claude",
+            "Edited preset",
+        ] {
+            assert!(after.contains(marker), "lost {marker} after source save");
+        }
     }
 
     #[test]
