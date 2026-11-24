@@ -20,19 +20,19 @@
     "probe:runtime": "node scripts/probe-native-runtime.mjs"
   },
   "dependencies": {
-    "@takazudo/zfb": "6.0.1",
-    "@takazudo/zfb-md-wasm": "6.0.1",
-    "@takazudo/zfb-runtime": "6.0.1",
-    "@takazudo/zudo-doc": "10.0.2",
+    "@takazudo/zfb": "7.2.0",
+    "@takazudo/zfb-md-wasm": "7.2.0",
+    "@takazudo/zfb-runtime": "7.2.0",
+    "@takazudo/zudo-doc": "14.0.0",
     "katex": "0.19.1",
     "zod": "4.6.7"
   },
   "optionalDependencies": {
-    "@takazudo/zfb-darwin-arm64": "6.0.1",
-    "@takazudo/zfb-darwin-x64": "6.0.1",
-    "@takazudo/zfb-linux-arm64-gnu": "6.0.1",
-    "@takazudo/zfb-linux-x64-gnu": "6.0.1",
-    "@takazudo/zfb-win32-x64-msvc": "6.0.1"
+    "@takazudo/zfb-darwin-arm64": "7.2.0",
+    "@takazudo/zfb-darwin-x64": "7.2.0",
+    "@takazudo/zfb-linux-arm64-gnu": "7.2.0",
+    "@takazudo/zfb-linux-x64-gnu": "7.2.0",
+    "@takazudo/zfb-win32-x64-msvc": "7.2.0"
   },
   "devDependencies": {
     "typescript": "5.9.2"

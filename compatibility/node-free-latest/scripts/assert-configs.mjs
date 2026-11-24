@@ -6,7 +6,7 @@ import wholesale from "../configs/wholesale.mjs";
 
 const names = (config) => (config.plugins ?? []).map((plugin) => plugin.name);
 
-// zudo-doc 10.0.2's preset adds `img-src-check` plus three disabled-feature
+// zudo-doc 14.0.0's preset adds `doc-sources`, `img-src-check` and three disabled-feature
 // loader shields (`zdtp-loader`, `katex-loader`, `diff-loader`) for features
 // the probe settings leave off. The shields keep package-owned configs
 // building without those optional peers; the `plugins: []` configs below drop
@@ -15,6 +15,7 @@ const names = (config) => (config.plugins ?? []).map((plugin) => plugin.name);
 // server-side dynamic import with a null fallback, so neither needs a stub.
 assert.deepEqual(names(wholesale), [
   "@takazudo/zudo-doc/plugins/routes",
+  "@takazudo/zudo-doc/plugins/doc-sources",
   "@takazudo/zudo-doc/plugins/search-index",
   "@takazudo/zudo-doc/plugins/theme-packs",
   "@takazudo/zudo-doc/plugins/img-src-check",
@@ -23,6 +24,7 @@ assert.deepEqual(names(wholesale), [
   "@takazudo/zudo-doc/plugins/diff-loader",
 ]);
 assert.deepEqual(names(routesOff), [
+  "@takazudo/zudo-doc/plugins/doc-sources",
   "@takazudo/zudo-doc/plugins/search-index",
   "@takazudo/zudo-doc/plugins/theme-packs",
   "@takazudo/zudo-doc/plugins/img-src-check",

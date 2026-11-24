@@ -1,7 +1,7 @@
 "use client";
 
 import { navigate } from "@takazudo/zfb-runtime";
-import { openFindInPage } from "@takazudo/zudo-doc/find-in-page";
+import { openFindInPage } from "./find-in-page/index.js";
 import { openSearch } from "@takazudo/zudo-doc/search-widget-script";
 import catalog from "./command-catalog.json";
 import { ManagedHistoryController } from "./history";

@@ -196,7 +196,7 @@ function assertRepositoryContracts() {
   assert.equal(
     createHash("sha256").update(readFileSync(join(appRoot, ZUDO_DOC_PATCH.path))).digest("hex"),
     ZUDO_DOC_PATCH.hash,
-    "the controlled Find/Search patch bytes drifted",
+    "the controlled Search/ZDTP patch bytes drifted",
   );
   assert.deepEqual(readdirSync(join(appRoot, "patches")), [ZUDO_DOC_PATCH.path.slice("patches/".length)], "only the zudo-doc patch may exist");
 }

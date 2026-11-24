@@ -1,6 +1,6 @@
 export const probeSettings = {
   siteName: "CCResDoc compatibility probe",
-  siteDescription: "zfb 6.0.1 + zudo-doc 10.0.2 node-free architecture probe",
+  siteDescription: "zfb 7.2.0 + zudo-doc 14.0.0 node-free architecture probe",
   port: 4892,
   base: "/",
   trailingSlash: true,
@@ -13,9 +13,7 @@ export const probeSettings = {
   sidebarToggle: true,
   dynamicPageTransition: true,
   imageEnlarge: false,
-  findInPage: true,
-  claudeResources: false,
-  codexResources: false,
+  docSources: [],
   siteTreeNavIgnore: [],
   docHistory: false,
   designTokenPanel: false,

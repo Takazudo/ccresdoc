@@ -5,9 +5,9 @@ zudo-doc consumer project built by zfb. Output in `dist/` is served by `zfb dev`
 ## Architecture
 
 - **Framework**: zudo-react islands + zfb SSG (no Preact)
-- **Published toolchain**: `@takazudo/zfb@6.0.1` plus native carrier packages
+- **Published toolchain**: `@takazudo/zfb@7.2.0` plus native carrier packages
   (the host resolves the matching package-root `zfb` binary) and
-  `@takazudo/zudo-doc@10.0.2` (components)
+  `@takazudo/zudo-doc@14.0.0` (components)
 - **Port**: 4892 (pinned in `zfb.config.ts`)
 - **Node-free mode**: Zero `.mjs` plugins → no `plugin-host.mjs` spawned
 - **Collections**: single `"docs"` collection at `src/content/docs/`
@@ -54,8 +54,8 @@ single-source mechanism in JSON; `scripts/check-zfb-pin.sh` is the enforcement g
 The audited tuple is written by hand in `scripts/lib/toolchain-contract.mjs`;
 the validators compare manifests, lockfiles and installed trees against it, never
 against values read back from the manifests. The first-party zfb packages and
-all five native platform packages are pinned to `6.0.1`; zudo-doc is pinned to
-`10.0.2` and is the only `minimumReleaseAge` exclusion. Reachable runtime peers
+all five native platform packages are pinned to `7.2.0`; zudo-doc is pinned to
+`14.0.0`. The audited 7.2.0 family and 14.0.0 are exact-version `minimumReleaseAge` exclusions. Reachable runtime peers
 are pinned to `zod@4.6.7` and `katex@0.19.1`. Preact, `preact-render-to-string`,
 `@types/react` and the other packages in `FORBIDDEN_DIRECT_DEPENDENCIES` must not
 be declared. The single zudo-doc patch is described in
