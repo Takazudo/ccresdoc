@@ -205,10 +205,17 @@ export function startDocumentSourcesManager(root: HTMLElement): () => void {
   };
   const showDialog = (kind: "new" | "edit" | "save", source?: Source, preset?: Preset) => {
     const current = preset ?? { id: "", name: "", description: "", version: 1, rules: { kind: "custom" as const, definition_version: 1, format: "markdown" as const, include: ["**/*.md"], exclude: [] } };
-    dialog.innerHTML = `<form method="dialog"><h2>${kind === "save" ? "Save rules as preset" : kind === "edit" ? "Edit preset" : "New preset"}</h2><p>Presets have reading rules without source folders, names or URL paths.</p><label>Name<input name="name" required value="${escape(current.name)}"></label><label>Description<input name="description" value="${escape(current.description)}"></label>${kind === "save" ? "<p>The source will link to this preset; its current rules and folder stay the same.</p>" : current.rules.kind !== "custom" ? `<p>Rules: ${escape(rulesSummary(current.rules))}. Specialized renderer rules stay intact; edit the name and description here.</p>` : `<label>Format<select name="format"><option value="markdown">Markdown</option><option value="code">Code and text</option><option value="skill">Skill packages</option></select></label><label>Include patterns<textarea name="include" required>${escape(current.rules.include.join("\n"))}</textarea></label><label>Exclude patterns<textarea name="exclude">${escape(current.rules.exclude.join("\n"))}</textarea></label>`}<div class="ccresdoc-source-manager__dialog-actions"><button type="button" data-dialog-cancel>Cancel</button><button type="submit" data-primary>Save preset</button></div></form>`;
+    dialog.innerHTML = `<form method="dialog"><h2>${kind === "save" ? "Save rules as preset" : kind === "edit" ? "Edit preset" : "New preset"}</h2><p>Presets have reading rules without source folders, names or URL paths.</p><label>Name<input name="name" required value="${escape(current.name)}"></label><label>Description<input name="description" value="${escape(current.description)}"></label>${kind === "save" ? "<p>The source will link to this preset; its current rules and folder stay the same.</p>" : current.rules.kind !== "custom" ? `<p>Rules: ${escape(rulesSummary(current.rules))}. Specialized renderer rules stay intact; edit the name and description here.</p>` : `<label>Format<select name="format"><option value="markdown">Markdown</option><option value="code">Code and text</option><option value="skill">Skill packages</option></select></label><label>Include patterns<textarea name="include" required aria-describedby="preset-include-error">${escape(current.rules.include.join("\n"))}</textarea><small id="preset-include-error" role="alert" hidden></small></label><label>Exclude patterns<textarea name="exclude">${escape(current.rules.exclude.join("\n"))}</textarea></label>`}<div class="ccresdoc-source-manager__dialog-actions"><button type="button" data-dialog-cancel>Cancel</button><button type="submit" data-primary>Save preset</button></div></form>`;
     const form = dialog.querySelector("form")!;
     const format = form.elements.namedItem("format") as HTMLSelectElement | null;
     if (format && current.rules.kind === "custom") format.value = current.rules.format;
+    const include = form.elements.namedItem("include") as HTMLTextAreaElement | null;
+    const includeError = form.querySelector<HTMLElement>("#preset-include-error");
+    const clearIncludeError = () => {
+      if (includeError) { includeError.textContent = ""; includeError.hidden = true; }
+      include?.removeAttribute("aria-invalid");
+    };
+    include?.addEventListener("input", clearIncludeError);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = new FormData(form);
@@ -222,12 +229,17 @@ export function startDocumentSourcesManager(root: HTMLElement): () => void {
         const rules = current.rules.kind === "custom"
           ? { kind: "custom" as const, definition_version: current.rules.definition_version + (kind === "edit" ? 1 : 0), format: String(data.get("format")) as "markdown" | "code" | "skill", include: lines(String(data.get("include") ?? "")), exclude: lines(String(data.get("exclude") ?? "")) }
           : structuredClone(current.rules);
-        if (rules.kind === "custom" && !rules.include.length) return;
+        if (rules.kind === "custom" && !rules.include.length) {
+          if (includeError) { includeError.textContent = "Enter at least one include pattern."; includeError.hidden = false; }
+          include?.setAttribute("aria-invalid", "true");
+          include?.focus();
+          return;
+        }
         if (kind === "edit" && preset) { preset.name = name; preset.description = description; preset.version += 1; preset.rules = rules; }
         else draft.presets.push({ id: id(), name, description, version: 1, rules });
       }
       dialog.close(); updateDirty(); render(); void validate();
-    }, { once: true });
+    });
     dialog.querySelector("[data-dialog-cancel]")?.addEventListener("click", () => dialog.close(), { once: true });
     dialog.showModal();
     (form.elements.namedItem("name") as HTMLInputElement)?.focus();

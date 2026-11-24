@@ -197,62 +197,90 @@ fn require_same_revision(
 }
 
 #[tauri::command]
-pub(crate) fn get_source_editor_snapshot(
+pub(crate) async fn get_source_editor_snapshot(
     window: WebviewWindow,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<SourceEditorSnapshot, CommandError> {
-    authorize_editor(&window, &state, None)?;
-    Ok(state.runtime.with_serialized_apply(|| snapshot(&state)))
+    authorize_editor(&window, &app.state::<AppState>(), None)?;
+    let task_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = task_app.state::<AppState>();
+        state.runtime.with_serialized_apply(|| {
+            authorize_editor(&window, &state, None)?;
+            Ok(snapshot(&state))
+        })
+    })
+    .await
+    .map_err(|error| CommandError::new("task", format!("source snapshot failed: {error}")))?
 }
 
 #[tauri::command]
-pub(crate) fn validate_source_editor_draft(
+pub(crate) async fn validate_source_editor_draft(
     window: WebviewWindow,
-    state: State<'_, AppState>,
+    app: AppHandle,
     catalog: SourceCatalog,
     expected_generation: u64,
 ) -> Result<Vec<SettingsDiagnostic>, CommandError> {
-    authorize_editor(&window, &state, Some(expected_generation))?;
-    Ok(state.settings_store.validate_source_catalog(&catalog))
+    authorize_editor(&window, &app.state::<AppState>(), Some(expected_generation))?;
+    let task_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = task_app.state::<AppState>();
+        authorize_editor(&window, &state, Some(expected_generation))?;
+        Ok(state.settings_store.validate_source_catalog(&catalog))
+    })
+    .await
+    .map_err(|error| CommandError::new("task", format!("source validation failed: {error}")))?
 }
 
 #[tauri::command]
-pub(crate) fn save_source_editor_draft(
+pub(crate) async fn save_source_editor_draft(
     window: WebviewWindow,
-    state: State<'_, AppState>,
+    app: AppHandle,
     catalog: SourceCatalog,
     expected_revision: Option<ContentRevision>,
     expected_generation: u64,
 ) -> Result<SourceEditorSnapshot, CommandError> {
-    authorize_editor(&window, &state, Some(expected_generation))?;
-    state.runtime.with_serialized_apply(|| {
-        authorize_editor(&window, &state, Some(expected_generation))?;
-        state
-            .settings_store
-            .save_source_catalog(&catalog, expected_revision.as_ref())
-            .map_err(CommandError::from)?;
-        Ok(snapshot(&state))
+    authorize_editor(&window, &app.state::<AppState>(), Some(expected_generation))?;
+    let task_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = task_app.state::<AppState>();
+        state.runtime.with_serialized_apply(|| {
+            authorize_editor(&window, &state, Some(expected_generation))?;
+            state
+                .settings_store
+                .save_source_catalog(&catalog, expected_revision.as_ref())
+                .map_err(CommandError::from)?;
+            Ok(snapshot(&state))
+        })
     })
+    .await
+    .map_err(|error| CommandError::new("task", format!("source save failed: {error}")))?
 }
 
 #[tauri::command]
-pub(crate) fn rebase_source_editor_draft(
+pub(crate) async fn rebase_source_editor_draft(
     window: WebviewWindow,
-    state: State<'_, AppState>,
+    app: AppHandle,
     catalog: SourceCatalog,
     base_catalog: SourceCatalog,
     stale_revision: ContentRevision,
     expected_generation: u64,
 ) -> Result<SourceEditorSnapshot, CommandError> {
-    authorize_editor(&window, &state, Some(expected_generation))?;
-    state.runtime.with_serialized_apply(|| {
-        authorize_editor(&window, &state, Some(expected_generation))?;
-        state
-            .settings_store
-            .rebase_source_catalog(&catalog, &base_catalog, &stale_revision)
-            .map_err(CommandError::from)?;
-        Ok(snapshot(&state))
+    authorize_editor(&window, &app.state::<AppState>(), Some(expected_generation))?;
+    let task_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = task_app.state::<AppState>();
+        state.runtime.with_serialized_apply(|| {
+            authorize_editor(&window, &state, Some(expected_generation))?;
+            state
+                .settings_store
+                .rebase_source_catalog(&catalog, &base_catalog, &stale_revision)
+                .map_err(CommandError::from)?;
+            Ok(snapshot(&state))
+        })
     })
+    .await
+    .map_err(|error| CommandError::new("task", format!("source rebase failed: {error}")))?
 }
 
 #[tauri::command]
