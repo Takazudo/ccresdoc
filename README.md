@@ -1,43 +1,22 @@
 # CCResDoc
 
-A macOS documentation viewer for selected local Claude and Codex resources — Claude is enabled by default and Codex is opt-in. It renders instruction files, skills, commands, agents, hooks, rules, and configuration as a browsable local web app inside a native Tauri window.
-
-The app is a thin Tauri host around a **node-free sidecar architecture**: at launch it spawns the native `zfb` binary on the settings-selected loopback port and Rust generators/watchers that emit MDX from enabled configured sources (`~/.claude/` on, `~/.codex/` off by default). No Node.js or external runtime dependencies are required once the `.app` is built.
+A macOS documentation viewer for configured local document sources. The initial catalog contains an enabled Claude Code source and a disabled Codex source; additional sources can use built-in or user-defined reading presets. The native Tauri host runs a node-free `zfb` sidecar and Rust generators/watchers after packaging.
 
 ## Architecture
 
 ```
-~/.claude/ + ~/.codex/  ← selected source roots (Claude and Codex formats)
+Configured source roots + optional instructions scan roots
      │
-     ▼  Rust coordinators/watchers (ccresdoc-claude-md crate, in-process)
-app/src/content/docs/claude/ + codex/      ← permanent generic landings (tracked)
-app/src/content/docs/claude-* + codex-*   ← selected detail MDX (gitignored)
+     ▼  Rust source catalog, generators, watchers and ownership manifest
+app/src/content/docs/<mount>/  ← generated MDX for enabled sources
      │
-     ▼  zfb dev (native binary, settings-selected loopback port, node-free at runtime)
-WebView → http://localhost:<effective-port>/docs/
+     ▼  native zfb dev on the selected loopback port
+WKWebView → /docs/ and /docs/ccresdoc/document-sources/
 ```
 
-Key facts:
+The app-owned source manager is a normal zudo-doc article. Settings remains a separate native window for appearance, shortcuts, server options, diagnostics and protected-config recovery. Its Resources section links to the article. Sources hold stable IDs, labels, enabled state, paths, unique mounts and independent rule snapshots. Presets contain reusable rules only. Changes are saved with revision checks, then applied to the runtime; generation and search publication use the same private ownership manifest. Disabled or removed sources retain their original files and lose only app-owned routes and search entries.
 
-- **Published toolchain**: the `@takazudo/zfb*` family and all five native
-  carrier packages are pinned to `6.0.1`; `@takazudo/zudo-doc` is pinned to
-  `10.0.2`. The app and compatibility fixture use independent frozen lockfiles,
-  both checked against the hand-written tuple in
-  `scripts/lib/toolchain-contract.mjs`.
-- **Node-free at runtime**: `zfb dev` with zero `.mjs` plugins spawns no Node host. The native `@takazudo/zfb-<platform>/zfb` binary is bundled in `node_modules` (populated at build/setup time via `pnpm install --frozen-lockfile`, Node at setup only).
-- **Host-owned routes**: `app/` owns the route adapters because the selected
-  zfb configuration ends with `plugins: []`; package route/plugin entrypoints
-  are not enabled.
-- **Port 4892**: the default preferred port in the authored settings schema; the active runtime may use a loopback fallback when that port is occupied.
-- **Semantic readiness**: the host polls `GET /docs/` until the response is
-  successful and contains the current `CCResDoc` shell plus matching Claude
-  and Codex selection markers; a generic `200` is not sufficient. `/` is the
-  exact server-rendered alias.
-- **Writable workspace**: a pruned, lockfile-faithful runtime tree is copied to `<app_data_dir>/app-workspace/` on first launch. Staging admits only explicit routes/config/landing inputs and generated theme assets; it omits build `dist` and all runtime-generated Claude/Codex detail/status content. A SHA-256 tree digest covers the staged app, theme assets, and staging/digest implementation; its refresh token gates the `.ccresdoc-workspace-ready` sentinel. Dev mode uses the repo `app/` directly.
-- **Rust selected-resource engine** (`crates/ccresdoc-claude-md`): enabled
-  Claude and Codex sources generate into disjoint MDX namespaces. The
-  coordinator owns overview/status pages and transactional rollback; each
-  enabled source owns one watcher, and `zfb dev` content-watch HMRs the result.
+The app and compatibility fixture have independent frozen lockfiles. The `@takazudo/zfb*` family is pinned to `7.2.0`, `@takazudo/zudo-doc` to `14.0.0`, and the app carries a reviewed zudo-doc patch for native Find. The native runtime uses no Node host or package-owned routes. A staged, digest-checked writable workspace admits only release-owned routes and assets, not generated documents or source paths. The preferred port defaults to 4892; a free loopback fallback may be selected when occupied. The host waits for the app-owned manager and every enabled source to become semantically ready before showing the document WebView. First-launch content failures retain the manager route and Settings recovery.
 
 ## Open in an ordinary browser
 
@@ -62,37 +41,9 @@ Settings are a human-editable TOML document. The path is resolved in this order:
 2. `$XDG_CONFIG_HOME/ccresdoc/config.toml` when `XDG_CONFIG_HOME` is non-empty;
 3. `$HOME/.config/ccresdoc/config.toml`.
 
-Reading a missing file never creates it. The complete schema and defaults are:
+Reading a missing file never creates it. The current schema is version 3. A fresh catalog starts with Claude Code enabled at `~/.claude` and Codex disabled at `~/.codex`. Each `[[document_sources]]` entry stores its ID, label, root, optional separate instructions scan root, mount, enabled state, preset origin and versioned rule snapshot. `[[user_presets]]` entries store rule definitions without paths or source identity. `[appearance]`, `[server]` and `[shortcuts]` remain app settings. Schema-v2 files migrate atomically and idempotently, preserving authored paths, enabled states and other settings; recognized schema-v1 retirement remains separate. Built-in Claude/Codex rules keep their specialized renderers, while custom markdown, code and skill rules use public include/exclude mappings.
 
-```toml
-schema_version = 2
-
-[resources]
-claude = true
-codex = false
-
-[source]
-claude_dir = "~/.claude"
-codex_dir = "~/.codex"
-
-[appearance]
-mode = "system"       # system | light | dark
-theme_pack = "classic"
-
-[server]
-preferred_port = 4892
-fallback_to_free_port = true
-```
-
-The resource defaults are Claude on and Codex off. Any of the four
-selection states (Claude only, Codex only, both, or both off) is valid: the
-header keeps permanent Claude/Codex categories, while disabled detail
-namespaces are pruned and their overview reports a disabled marker. Claude
-detail positions are 900–903; Codex detail positions are 905–910, with the
-top-level headers at 899 and 904. Codex reads only `AGENTS.md`, `config.toml`,
-agent TOML, `hooks.json`, rules, and skill packages. Its only symlink exception
-is a direct link under the configured `skills/` directory; generated output
-and managed namespaces remain real paths under the docs root.
+Use **Edit document sources…** in native Settings or the link on the docs home page to manage sources and presets. Save persists a draft; **Apply saved** generates and activates it. Invalid or missing roots, duplicate mounts and output collisions are validated before publication. A failed apply reports saved-but-not-active while the previous valid output remains available. If a source fails on first launch, the app-owned manager remains reachable for repair.
 
 The editor reports authored values separately from the effective/active runtime.
 The authored source and preferred port remain exactly what is in TOML; the
@@ -113,43 +64,9 @@ as authored data while the effective theme falls back to `classic`. Existing
 comments, unknown keys, newline style, and file permissions are preserved on a
 successful atomic save.
 
-Settings can be opened from the docs header gear, the native `CCResDoc → Settings…`
-menu, `Cmd+,`, or the loading/error page's Settings action. All of these focus
-one native Settings window; closing it hides the window and leaves the docs
-runtime alive. Draft edits are validated by Rust, Reset restores the defaults in
-the draft, Cancel discards the draft and clears the appearance preview, and
-then hides Settings; Save persists then applies the draft without closing the
-window.
-Appearance-only changes update the active page without restarting the server;
-source, preferred-port, and fallback changes restart the runtime once. A
-restart failure is reported as saved-but-not-active and leaves recovery open.
+Settings opens from the docs gear, native menu, Command-comma and loading/error recovery. It contains app settings and a Resources summary with a link to the source-management article. Appearance changes can update the page without restarting the sidecar. Source, port and fallback changes require runtime apply. The source article maintains its own draft, supports conflict reload/rebase and preserves unsaved changes when navigation is attempted. Native Settings and the article save their respective scopes with a SHA-256 revision check, so a stale window cannot overwrite the other scope.
 
-External edits are guarded by a SHA-256 content revision. Save refuses a stale
-revision. Reload discards the local draft; Reapply copies only the explicitly
-dirty fields onto the latest valid document, checks that latest revision again
-immediately before replacement, and refuses a second racing edit rather than
-blindly overwriting it. Quick appearance
-controls on the docs page use the same TOML authority. Old zudo-doc browser
-preferences are never imported. Appearance is initialized at document start
-before the ready marker and is scoped to the current loopback origin.
-
-Schema v2 is a clean break. At startup CCResDoc retires a config file at the
-active path only when it positively recognizes it as a schema-v1 CCResDoc
-document (valid TOML, `schema_version = 1`, and only the known v1 tables): it
-re-checks the bytes immediately before removing it, and it then runs on v2
-defaults without writing a new file until you Save. It scans no other
-directory. A malformed, unreadable, unrecognized or future-version file is
-never deleted or overwritten. The document-start bootstrap clears the old
-`zudo-doc-theme`/`zudo-doc-theme-pack` browser keys once, when it retires the
-previous appearance cache, and never touches other storage. Your Claude and
-Codex resource directories are only ever read.
-
-The main docs WebView has only the narrow commands it needs. Privileged source,
-server, config-file, and Settings mutations require the `settings` window; docs
-appearance mutation is accepted only from the active `/docs/` loopback origin.
-Navigation and CSP are loopback-only, and app quit tears down the Rust watcher
-and the exact app-owned zfb process group while leaving unrelated listeners
-alive.
+Malformed TOML and unsupported future schema versions remain protected and require explicit recovery. Unknown keys, comments, newline style and file permissions survive valid atomic saves. Schema-v2 migration preserves its Claude/Codex paths and selections; the older recognized-v1 retirement policy is unchanged. Source directories are read only. The main document WebView receives only narrow, active-origin source-editor commands on the app-owned article. Other pages and stale runtime generations do not receive Settings or source-management authority.
 
 ### Settings verification
 
@@ -245,7 +162,7 @@ cargo tauri build --bundles app
 `beforeBuildCommand` performs a frozen install/build and stages only the
 lockfile-reachable runtime workspace automatically. The staged workspace keeps
 the direct package-root native carrier and the selected zero-plugin config,
-explicit generic Claude/Codex landing shells, and generated theme assets. It
+the app-owned source-management article, and generated theme assets. It
 omits build `dist`, generated resource detail/status pages, frontend test/build
 tooling, non-host zfb binaries, and disabled Node-plugin dependencies. Validate
 it with `pnpm run probe:runtime-package`; on macOS arm64,

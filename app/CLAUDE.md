@@ -2,6 +2,16 @@
 
 zudo-doc consumer project built by zfb. Output in `dist/` is served by `zfb dev` (sidecar, port 4892, node-free at runtime).
 
+The current source manager is the app-owned ordinary article at
+`src/content/docs/ccresdoc/document-sources.mdx`. Its client island is
+`src/document-sources/manager.tsx`; native Settings links to it and retains
+app options and protected recovery. The checked-in docs home and manager are
+the release-owned content. Rust generates every enabled source under its
+validated unique mount, including the initial Claude and Codex mounts.
+Source paths and the catalog stay in trusted native/editor state, not SSR
+documents, frontmatter or search payloads. Any older fixed Claude/Codex
+landing-shell description below is historical and must not guide new changes.
+
 ## Architecture
 
 - **Framework**: zudo-react islands + zfb SSG (no Preact)
