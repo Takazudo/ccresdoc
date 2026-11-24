@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recover-document-source"
+description = "Enables the recover_document_source command without any pre-configured scope."
+commands.allow = ["recover_document_source"]
+
+[[permission]]
+identifier = "deny-recover-document-source"
+description = "Denies the recover_document_source command without any pre-configured scope."
+commands.deny = ["recover_document_source"]

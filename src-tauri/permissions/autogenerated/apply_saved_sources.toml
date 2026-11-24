@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-saved-sources"
+description = "Enables the apply_saved_sources command without any pre-configured scope."
+commands.allow = ["apply_saved_sources"]
+
+[[permission]]
+identifier = "deny-apply-saved-sources"
+description = "Denies the apply_saved_sources command without any pre-configured scope."
+commands.deny = ["apply_saved_sources"]

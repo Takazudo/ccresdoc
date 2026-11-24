@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rebase-source-editor-draft"
+description = "Enables the rebase_source_editor_draft command without any pre-configured scope."
+commands.allow = ["rebase_source_editor_draft"]
+
+[[permission]]
+identifier = "deny-rebase-source-editor-draft"
+description = "Denies the rebase_source_editor_draft command without any pre-configured scope."
+commands.deny = ["rebase_source_editor_draft"]

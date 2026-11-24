@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CCResDocBrowserAdapter, keyboardEventBinding } from "../src/browser-chrome/adapter";
 import type { BrowserBootstrap, BrowserCommandEnvelope } from "../src/browser-chrome/types";
+import { installUnsavedNavigationGuard } from "../src/document-sources/navigation-guard";
 
 type TestWindow = Window & {
   __TAURI__?: {
@@ -171,5 +172,22 @@ describe("CCResDoc browser adapter", () => {
     expect(await adapter.execute({ commandId: "reload-documentation", origin: "toolbar", invocationId: 1 })).toBe(false);
     expect(consoleError).toHaveBeenCalled();
     stop();
+  });
+
+  it("keeps an unsaved source draft when native Reload is requested", async () => {
+    const bootstrap: BrowserBootstrap = {
+      shortcutEntries: [], nativeOwnedBindings: [],
+      hostCapabilities: { reloadDocumentation: true, openInDefaultBrowser: true },
+      runtimeGeneration: 91,
+    };
+    const invoke = vi.fn(async (name: string) => name === "get_browser_bootstrap" ? bootstrap : undefined);
+    testWindow.__TAURI__ = { core: { invoke: invoke as any }, event: { listen: async () => () => undefined } };
+    const stopGuard = installUnsavedNavigationGuard({ win: window, doc: document, isDirty: () => true, confirmLeave: () => false });
+    const adapter = new CCResDocBrowserAdapter(testWindow);
+    const stop = adapter.start();
+    await flush();
+    expect(await adapter.execute({ commandId: "reload-documentation", origin: "native_menu", invocationId: 1, runtimeGeneration: 91, hostHandled: false })).toBe(false);
+    expect(invoke).not.toHaveBeenCalledWith("reload_documentation");
+    stop(); stopGuard();
   });
 });

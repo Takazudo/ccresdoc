@@ -1,9 +1,9 @@
 import { actionPolicy, createTauriBackend, decodeBackendError } from "./settings-backend.mjs";
 
-export const DEFAULT_DRAFT = Object.freeze({ schemaVersion: 2, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "classic", preferredPort: 4892, fallbackToFreePort: true, shortcuts: Object.freeze([]) });
-export const FIELDS = Object.freeze(["claudeResources", "codexResources", "claudeDir", "codexDir", "appearanceMode", "themePack", "preferredPort", "fallbackToFreePort", "shortcuts"]);
-const FIELD_IDS = { claudeResources: "claude-resources", codexResources: "codex-resources", claudeDir: "claude-dir", codexDir: "codex-dir", appearanceMode: "appearance-mode-group", themePack: "theme-pack", preferredPort: "preferred-port", fallbackToFreePort: "fallback-port" };
-const DIAGNOSTIC_FIELDS = { "resources.claude": "claudeResources", "resources.codex": "codexResources", "source.claude_dir": "claudeDir", "source.codex_dir": "codexDir", "appearance.mode": "appearanceMode", "appearance.theme_pack": "themePack", "server.preferred_port": "preferredPort", "server.fallback_to_free_port": "fallbackToFreePort" };
+export const DEFAULT_DRAFT = Object.freeze({ schemaVersion: 3, claudeResources: true, codexResources: false, claudeDir: "~/.claude", codexDir: "~/.codex", appearanceMode: "system", themePack: "classic", preferredPort: 4892, fallbackToFreePort: true, shortcuts: Object.freeze([]) });
+export const FIELDS = Object.freeze(["appearanceMode", "themePack", "preferredPort", "fallbackToFreePort", "shortcuts"]);
+const FIELD_IDS = { appearanceMode: "appearance-mode-group", themePack: "theme-pack", preferredPort: "preferred-port", fallbackToFreePort: "fallback-port" };
+const DIAGNOSTIC_FIELDS = { "appearance.mode": "appearanceMode", "appearance.theme_pack": "themePack", "server.preferred_port": "preferredPort", "server.fallback_to_free_port": "fallbackToFreePort" };
 export const cloneDraft = (draft) => ({ ...DEFAULT_DRAFT, ...(draft ?? {}), shortcuts: (draft?.shortcuts ?? DEFAULT_DRAFT.shortcuts).map((entry) => ({ commandId: entry.commandId, bindings: [...entry.bindings] })) });
 const titleCase = (value) => String(value ?? "unknown").replaceAll("_", " ");
 const groupLabel = (value) => titleCase(value).replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -36,16 +36,6 @@ export function displayShortcutBinding(binding, { macos = false } = {}) {
   return macos ? parts.map((part) => labels[part] ?? part).join("") : parts.map((part) => labels[part] ?? part).join("+");
 }
 
-export function applyDirectorySelection(input, selected) {
-  if (selected === null) return false;
-  input.value = selected;
-  return true;
-}
-
-export function resourcePathDisabled({ busy, readOnly, enabled }) {
-  return busy || readOnly || !enabled;
-}
-
 export function applyBundledAppearance(root, appearance) {
   if (!appearance || !["system", "light", "dark"].includes(appearance.mode)) return;
   const effective = appearance.mode === "system" ? (root.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : appearance.mode;
@@ -59,16 +49,16 @@ export function createSettingsEditor({ document, window, backend }) {
   const macos = /Mac|iPhone|iPad|iPod/i.test(window.navigator?.userAgentData?.platform ?? window.navigator?.platform ?? "");
   const appearanceRoot = { document, matchMedia: window.matchMedia?.bind(window) ?? globalThis.matchMedia.bind(globalThis) };
   const state = { snapshot: null, baseline: null, draft: cloneDraft(DEFAULT_DRAFT), displayAppearance: { mode: "system", themePack: "classic" }, dirty: new Set(), validation: null, validationToken: 0, previewKey: "", busy: false, conflict: false, conflictCanRebase: null, phase: "loading", capture: null, captureToken: 0, captureSuspended: false };
-  const draftControls = [...document.querySelectorAll('input[name="appearance-mode"], #theme-pack, #claude-resources, #codex-resources, #claude-dir, #codex-dir, #preferred-port, #fallback-port')];
-  const actionControls = [el("pick-claude-source"), el("pick-codex-source"), el("reset-defaults"), el("reset-all-shortcuts"), el("reload-draft"), el("open-config"), el("reveal-config")];
+  const draftControls = [...document.querySelectorAll('input[name="appearance-mode"], #theme-pack, #preferred-port, #fallback-port')];
+  const actionControls = [el("reset-defaults"), el("reset-all-shortcuts"), el("reload-draft"), el("open-config"), el("reveal-config")];
   function showAppearance(value) { state.displayAppearance = { ...value }; applyBundledAppearance(appearanceRoot, value); }
 
   function setVisible(target) { for (const section of [el("settings-loading"), el("settings-form"), el("settings-fatal")]) section.hidden = section !== target; }
   function announce(text, { error = false, focus = false } = {}) { const message = el("global-message"); message.textContent = text; message.hidden = !text; message.classList.toggle("error", error); if (focus && text) message.focus(); }
   function setPhase(phase) { state.phase = phase; el("operation-status").textContent = ({ loading: "Loading…", validating: "Validating…", saving: "Saving…", applying: "Applying…", active: "Saved and active", saved_not_active: "Saved, not active" })[phase] ?? ""; }
-  function readDraft() { const selectedMode = document.querySelector('input[name="appearance-mode"]:checked'); return { schemaVersion: state.baseline?.schemaVersion ?? 2, claudeResources: el("claude-resources").checked, codexResources: el("codex-resources").checked, claudeDir: el("claude-dir").value, codexDir: el("codex-dir").value, appearanceMode: selectedMode?.value ?? "", themePack: el("theme-pack").value, preferredPort: Number(el("preferred-port").value), fallbackToFreePort: el("fallback-port").checked, shortcuts: state.draft.shortcuts.map((entry) => ({ commandId: entry.commandId, bindings: [...entry.bindings] })) }; }
+  function readDraft() { const selectedMode = document.querySelector('input[name="appearance-mode"]:checked'); return { ...state.draft, schemaVersion: state.baseline?.schemaVersion ?? 3, appearanceMode: selectedMode?.value ?? "", themePack: el("theme-pack").value, preferredPort: Number(el("preferred-port").value), fallbackToFreePort: el("fallback-port").checked, shortcuts: state.draft.shortcuts.map((entry) => ({ commandId: entry.commandId, bindings: [...entry.bindings] })) }; }
   function renderThemeOptions() { const select = el("theme-pack"); const supported = state.snapshot?.themePacks ?? ["classic"]; const authored = state.draft.themePack; select.replaceChildren(); if (!supported.includes(authored)) { const unavailable = document.createElement("option"); unavailable.value = authored; unavailable.textContent = `${authored} (unavailable)`; select.append(unavailable); } for (const slug of supported) { const option = document.createElement("option"); option.value = slug; option.textContent = slug === "classic" ? "Classic" : slug; select.append(option); } select.value = authored; }
-  function writeDraft(draft) { state.draft = cloneDraft(draft); for (const radio of document.querySelectorAll('input[name="appearance-mode"]')) radio.checked = radio.value === state.draft.appearanceMode; el("claude-resources").checked = state.draft.claudeResources; el("codex-resources").checked = state.draft.codexResources; el("claude-dir").value = state.draft.claudeDir; el("codex-dir").value = state.draft.codexDir; el("preferred-port").value = String(state.draft.preferredPort); el("fallback-port").checked = state.draft.fallbackToFreePort; renderThemeOptions(); renderShortcuts(); }
+  function writeDraft(draft) { state.draft = cloneDraft(draft); for (const radio of document.querySelectorAll('input[name="appearance-mode"]')) radio.checked = radio.value === state.draft.appearanceMode; el("preferred-port").value = String(state.draft.preferredPort); el("fallback-port").checked = state.draft.fallbackToFreePort; renderThemeOptions(); renderShortcuts(); }
   function recomputeDirty() { state.draft = readDraft(); state.dirty = new Set(FIELDS.filter((field) => field === "shortcuts" ? !shortcutEntriesEqual(state.baseline?.shortcuts, state.draft.shortcuts) : state.baseline?.[field] !== state.draft[field])); }
   function diagnostics() { return state.validation?.diagnostics ?? state.snapshot?.settings?.validation ?? []; }
   function shortcutEntry(commandId) { return state.draft.shortcuts.find((entry) => entry.commandId === commandId); }
@@ -80,6 +70,7 @@ export function createSettingsEditor({ document, window, backend }) {
   function draftWithDefaultsPreservingUnknown() {
     const known = new Set((state.snapshot.shortcutCatalog?.commands ?? []).map((command) => command.commandId));
     const next = cloneDraft(state.snapshot.defaults);
+    for (const field of ["claudeResources", "codexResources", "claudeDir", "codexDir"]) next[field] = state.draft[field];
     next.shortcuts.push(...state.draft.shortcuts.filter((entry) => !known.has(entry.commandId)).map((entry) => ({ commandId: entry.commandId, bindings: [...entry.bindings] })));
     return next;
   }
@@ -173,9 +164,25 @@ export function createSettingsEditor({ document, window, backend }) {
     }
   }
   function renderErrors() { for (const [field, id] of Object.entries(FIELD_IDS)) { const control = el(id); const messages = diagnostics().filter((d) => DIAGNOSTIC_FIELDS[d.field] === field && d.blocking).map((d) => d.message); const error = el(`${field === "appearanceMode" ? "appearance-mode" : id}-error`); if (error) { error.textContent = messages.join(" "); error.hidden = messages.length === 0; } control?.setAttribute("aria-invalid", messages.length ? "true" : "false"); if (messages.length) control?.setAttribute("aria-errormessage", error?.id ?? ""); else control?.removeAttribute("aria-errormessage"); } }
-  function renderStatus() { const settings = state.snapshot.settings; const runtime = state.snapshot.runtime; const active = runtime.active; const selection = (value) => value ? "Enabled" : "Disabled"; const path = (value, enabled, empty = "—") => enabled ? String(value ?? empty) : "Disabled"; el("config-path").textContent = settings.configPath; el("config-status").textContent = `${titleCase(settings.status)} · ${settings.fileExists ? "exists" : "not created"}`; el("config-revision").textContent = settings.revision ?? "None"; el("claude-selection-status").textContent = `${selection(settings.authored.claudeResources)} / ${selection(settings.effective?.claudeResources)} / ${active ? selection(active.claudeResources) : "not active"}`; el("claude-source-status").textContent = `${settings.authored.claudeDir} / ${path(settings.effective?.claudeDir, settings.effective?.claudeResources)} / ${active ? path(active.claudeDir, active.claudeResources, "not active") : "not active"}`; el("codex-selection-status").textContent = `${selection(settings.authored.codexResources)} / ${selection(settings.effective?.codexResources)} / ${active ? selection(active.codexResources) : "not active"}`; el("codex-source-status").textContent = `${settings.authored.codexDir} / ${path(settings.effective?.codexDir, settings.effective?.codexResources)} / ${active ? path(active.codexDir, active.codexResources, "not active") : "not active"}`; el("mode-status").textContent = `${settings.authored.appearanceMode} / ${active?.appearanceMode ?? "not active"}`; el("theme-status").textContent = `${settings.authored.themePack} / ${active?.themePack ?? "not active"}`; el("port-status").textContent = `${settings.authored.preferredPort} / ${active?.effectivePort ?? "not active"}`; el("runtime-status").textContent = titleCase(runtime.phase); el("fallback-status").textContent = runtime.fallbackUsed ? "Yes" : "No"; const list = el("diagnostics"); list.replaceChildren(); const all = [...settings.validation, ...(runtime.diagnostic ? [runtime.diagnostic] : [])]; for (const diagnostic of all) { const item = document.createElement("li"); const location = diagnostic.location ? ` (line ${diagnostic.location.line}, column ${diagnostic.location.column})` : ""; item.textContent = `${diagnostic.message}${location}`; list.append(item); } }
-  function renderActions() { if (!state.snapshot) return; const policy = actionPolicy(state.snapshot); const readOnly = state.snapshot.settings.status === "unsupported_version"; for (const control of draftControls) control.disabled = state.busy || readOnly || Boolean(state.capture); for (const control of actionControls) control.disabled = state.busy || Boolean(state.capture); const claudePathDisabled = resourcePathDisabled({ busy: state.busy || Boolean(state.capture), readOnly, enabled: state.draft.claudeResources }); const codexPathDisabled = resourcePathDisabled({ busy: state.busy || Boolean(state.capture), readOnly, enabled: state.draft.codexResources }); el("claude-dir").disabled = claudePathDisabled; el("pick-claude-source").disabled = claudePathDisabled; el("codex-dir").disabled = codexPathDisabled; el("pick-codex-source").disabled = codexPathDisabled; el("reset-defaults").disabled ||= readOnly; el("reset-all-shortcuts").disabled ||= readOnly; el("save-settings").disabled = state.busy || Boolean(state.capture) || state.phase === "validating" || state.dirty.size === 0 || state.validation?.valid !== true || !policy.canSave || state.conflict; el("cancel-settings").disabled = state.busy; el("reapply").disabled = state.busy || Boolean(state.capture) || state.dirty.size === 0 || !policy.canRebase || state.conflictCanRebase === false; el("replace-malformed").disabled = state.busy || !policy.canReplaceMalformed; el("conflict-recovery").hidden = !state.conflict; el("malformed-recovery").hidden = state.snapshot.settings.status !== "malformed"; el("future-recovery").hidden = state.snapshot.settings.status !== "unsupported_version"; }
-  function render() { renderStatus(); renderErrors(); renderShortcuts(); renderActions(); }
+  function renderStatus() { const settings = state.snapshot.settings; const runtime = state.snapshot.runtime; const active = runtime.active; el("config-path").textContent = settings.configPath; el("config-status").textContent = `${titleCase(settings.status)} · ${settings.fileExists ? "exists" : "not created"}`; el("config-revision").textContent = settings.revision ?? "None"; el("mode-status").textContent = `${settings.authored.appearanceMode} / ${active?.appearanceMode ?? "not active"}`; el("theme-status").textContent = `${settings.authored.themePack} / ${active?.themePack ?? "not active"}`; el("port-status").textContent = `${settings.authored.preferredPort} / ${active?.effectivePort ?? "not active"}`; el("runtime-status").textContent = titleCase(runtime.phase); el("fallback-status").textContent = runtime.fallbackUsed ? "Yes" : "No"; const list = el("diagnostics"); list.replaceChildren(); const all = [...settings.validation, ...(runtime.diagnostic ? [runtime.diagnostic] : [])]; for (const diagnostic of all) { const item = document.createElement("li"); const location = diagnostic.location ? ` (line ${diagnostic.location.line}, column ${diagnostic.location.column})` : ""; item.textContent = `${diagnostic.message}${location}`; list.append(item); } }
+  function renderActions() { if (!state.snapshot) return; const policy = actionPolicy(state.snapshot); const readOnly = state.snapshot.settings.status === "unsupported_version"; for (const control of draftControls) control.disabled = state.busy || readOnly || Boolean(state.capture); for (const control of actionControls) control.disabled = state.busy || Boolean(state.capture); el("reset-defaults").disabled ||= readOnly; el("reset-all-shortcuts").disabled ||= readOnly; el("save-settings").disabled = state.busy || Boolean(state.capture) || state.phase === "validating" || state.dirty.size === 0 || state.validation?.valid !== true || !policy.canSave || state.conflict; el("cancel-settings").disabled = state.busy; el("reapply").disabled = state.busy || Boolean(state.capture) || state.dirty.size === 0 || !policy.canRebase || state.conflictCanRebase === false; el("replace-malformed").disabled = state.busy || !policy.canReplaceMalformed; el("conflict-recovery").hidden = !state.conflict; el("malformed-recovery").hidden = state.snapshot.settings.status !== "malformed"; el("future-recovery").hidden = state.snapshot.settings.status !== "unsupported_version"; }
+  function renderResources() {
+    const catalog = state.snapshot.settings.sourceCatalog;
+    const sources = catalog?.sources ?? [];
+    const enabled = sources.filter((source) => source.enabled).length;
+    const active = state.snapshot.runtime.active?.sources?.length ?? 0;
+    el("source-summary").textContent = `${enabled} enabled of ${sources.length} configured · ${active} active · ${titleCase(state.snapshot.runtime.phase)}`;
+    el("open-document-sources").disabled = state.busy || !["ready", "saved_not_active"].includes(state.snapshot.runtime.phase) || !state.snapshot.runtime.active;
+    const recovery = el("source-recovery");
+    recovery.hidden = state.snapshot.runtime.phase === "ready" || !sources.length;
+    const picker = el("recovery-source");
+    const previous = picker.value;
+    picker.replaceChildren(...sources.map((source) => { const option = document.createElement("option"); option.value = source.id; option.textContent = `${source.label} (${source.enabled ? "enabled" : "disabled"})`; return option; }));
+    if (sources.some((source) => source.id === previous)) picker.value = previous;
+    el("recovery-disable").disabled = state.busy || state.snapshot.settings.status === "unsupported_version" || !sources.length;
+    el("recovery-replace").disabled = state.busy || state.snapshot.settings.status === "unsupported_version" || !sources.length;
+  }
+  function render() { renderStatus(); renderResources(); renderErrors(); renderShortcuts(); renderActions(); }
 
   async function endCapture({ message = "", focus = true } = {}) {
     const capture = state.capture;
@@ -255,11 +262,11 @@ export function createSettingsEditor({ document, window, backend }) {
     else window.close();
   }
 
-  document.querySelectorAll('input[name="appearance-mode"], #theme-pack, #claude-resources, #codex-resources, #claude-dir, #codex-dir, #preferred-port, #fallback-port').forEach((control) => control.addEventListener("change", changed)); el("claude-dir").addEventListener("input", changed); el("codex-dir").addEventListener("input", changed); el("preferred-port").addEventListener("input", changed);
+  document.querySelectorAll('input[name="appearance-mode"], #theme-pack, #preferred-port, #fallback-port').forEach((control) => control.addEventListener("change", changed)); el("preferred-port").addEventListener("input", changed);
   void backend.listenAppearance?.((envelope) => showAppearance(envelope.appearance));
   appearanceRoot.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (state.displayAppearance.mode === "system") showAppearance(state.displayAppearance); });
   el("settings-form").addEventListener("submit", submit);
-  for (const [buttonId, inputId] of [["pick-claude-source", "claude-dir"], ["pick-codex-source", "codex-dir"]]) el(buttonId).addEventListener("click", async () => { try { const input = el(inputId); const selected = await backend.pickSourceDirectory(); if (!applyDirectorySelection(input, selected)) return; await changed(); input.focus(); } catch (error) { announce(decodeBackendError(error).message, { error: true, focus: true }); } });
+
   el("reset-defaults").addEventListener("click", async () => { writeDraft(draftWithDefaultsPreservingUnknown()); await changed(); });
   el("reset-all-shortcuts").addEventListener("click", async () => { for (const command of state.snapshot.shortcutCatalog?.commands ?? []) setShortcutBindings(command.commandId, command.defaultBindings); renderShortcuts(); await changed(); el("shortcut-live").textContent = "All shortcuts reset to defaults in the draft."; });
   el("reload-draft").addEventListener("click", reloadDraft);
@@ -268,6 +275,38 @@ export function createSettingsEditor({ document, window, backend }) {
   el("replace-malformed").addEventListener("click", replaceMalformed);
   el("open-config").addEventListener("click", () => backendAction(() => backend.openConfigFile()));
   el("reveal-config").addEventListener("click", () => backendAction(() => backend.revealConfigFile()));
+  el("open-document-sources").addEventListener("click", async () => {
+    if (state.dirty.size && !window.confirm("Open document sources and discard this unsaved Settings draft?")) return;
+    if (state.dirty.size) {
+      discardDraft();
+      try { const envelope = await backend.clearAppearancePreview(); showAppearance(envelope.appearance); } catch {}
+    }
+    await backendAction(() => backend.openDocumentSources());
+  });
+  async function recoverSource(kind) {
+    const sourceId = el("recovery-source").value;
+    if (!sourceId || state.busy) return;
+    const source = state.snapshot.settings.sourceCatalog?.sources?.find((item) => item.id === sourceId);
+    if (!source) return;
+    let action;
+    if (kind === "disable") {
+      if (!window.confirm(`Disable ${source.label} and retry documentation? Original files will stay in place.`)) return;
+      action = { kind: "disable", source_id: sourceId };
+    } else {
+      const selected = await backend.pickSourceDirectory();
+      if (!selected) return;
+      action = { kind: "replace_root", source_id: sourceId, root: selected };
+    }
+    state.busy = true; renderActions();
+    try {
+      const result = await backend.recoverDocumentSource(action, state.snapshot.settings.revision);
+      await load({ quiet: true });
+      announce(result.status === "active" ? "Document source recovery succeeded." : "The source change was saved, but documentation is still unavailable. Review diagnostics and retry.", { error: result.status !== "active", focus: true });
+    } catch (error) { announce(decodeBackendError(error).message, { error: true, focus: true }); }
+    finally { state.busy = false; render(); }
+  }
+  el("recovery-disable").addEventListener("click", () => { void recoverSource("disable"); });
+  el("recovery-replace").addEventListener("click", () => { void recoverSource("replace"); });
   el("cancel-settings").addEventListener("click", () => { void cancel(); });
   el("reload-settings").addEventListener("click", () => load({ focus: true }));
   document.addEventListener("keydown", (event) => { if (state.capture) { void captureKeydown(event); return; } if (event.key === "Escape" && !state.busy) { event.preventDefault(); void cancel(); } }, true); window.addEventListener("focus", () => { if (state.snapshot && !state.busy && !state.capture) load({ detectConflict: true }); }); window.addEventListener("blur", () => { void endCapture({ focus: false, message: "Shortcut capture cancelled when Settings lost focus." }); }); window.addEventListener("ccresdoc-settings-native-close", () => { void endCapture({ focus: false }); discardDraft(); void backend.clearAppearancePreview().catch(() => {}); }); window.addEventListener("pagehide", () => { void endCapture({ focus: false }); }); window.addEventListener("beforeunload", () => { void endCapture({ focus: false }); }); window.addEventListener("error", () => { void endCapture({ focus: false }); });

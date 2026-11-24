@@ -17,6 +17,8 @@
     "allow-replace-malformed-settings",
     "allow-pick-source-directory",
     "allow-open-config-file",
-    "allow-reveal-config-file"
+    "allow-reveal-config-file",
+    "allow-recover-document-source",
+    "allow-open-document-source-editor"
   ]
 }

@@ -5,13 +5,14 @@
 import { Island } from "@takazudo/zfb";
 import { createChrome } from "@takazudo/zudo-doc/chrome";
 import { createHeaderWithDefaults } from "@takazudo/zudo-doc/header-with-defaults";
-import { FindInPageInit } from "@takazudo/zudo-doc/find-in-page";
+import { FindInPageInit } from "@/browser-chrome/find-in-page/index.js";
 import { SearchWidget, type SearchWidgetProps } from "@takazudo/zudo-doc/search-widget";
 import { PageLoadingOverlay } from "@takazudo/zudo-doc/page-loading";
 import { routeContext } from "./_route-context";
 import { SettingsHeaderButton } from "./_settings-button";
 import { AppearanceBridge } from "@/appearance/bridge";
 import { CCResDocBrowserToolbar } from "@/browser-chrome/toolbar";
+import { DocumentSourcesManager } from "@/document-sources/manager";
 
 export { openSettingsFromDocs, SettingsHeaderButton } from "./_settings-button";
 
@@ -37,6 +38,19 @@ function BrowserToolbarIsland() {
     <Island when="load" persist={BROWSER_TOOLBAR_PERSIST_KEY}>
       <CCResDocBrowserToolbar />
     </Island>
+  );
+}
+
+// Only the app-owned checked-in article uses this MDX extra. Its server
+// boundary contains no source paths or settings; the client island asks the
+// scoped native bridge after activation in the trusted main WebView.
+function DocumentSourcesManagerIsland() {
+  return (
+    <>
+      <Island when="load">
+        <DocumentSourcesManager />
+      </Island>
+    </>
   );
 }
 
@@ -105,4 +119,5 @@ export const {
   Header: ChromeRegion,
   BodyEndIslands: AppearanceBodyEnd,
   headerRightComponents: { "ccresdoc-settings": SettingsHeaderButtonIsland },
+  mdxExtras: { DocumentSourcesManager: DocumentSourcesManagerIsland },
 });
