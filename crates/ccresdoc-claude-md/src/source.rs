@@ -635,6 +635,30 @@ fn generate_custom(
         route_map.insert(relative.clone(), route.clone());
         inputs.push((entry.path().to_path_buf(), relative, route));
     }
+    if matches!(format, SourceFormat::Skill) {
+        let packages: Vec<PathBuf> = inputs
+            .iter()
+            .filter(|(_, relative, _)| {
+                relative
+                    .rsplit('/')
+                    .next()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+            })
+            .filter_map(|(path, _, _)| path.parent().map(Path::to_path_buf))
+            .collect();
+        inputs.retain(|(path, relative, route)| {
+            let nested = !relative
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+                && packages.iter().any(|package| path.starts_with(package));
+            if nested {
+                selected.remove(route);
+                route_map.remove(relative);
+            }
+            !nested
+        });
+    }
     for (source_path, relative, route) in inputs {
         let destination = target.join(&route);
         let content =
@@ -647,7 +671,15 @@ fn generate_custom(
         };
         let skill_structure =
             if matches!(format, SourceFormat::Skill) && filename.eq_ignore_ascii_case("SKILL.md") {
-                render_skill_package(spec, target, &source_path, &relative, &route, &mut selected)?
+                render_skill_package(
+                    spec,
+                    target,
+                    &source_path,
+                    &relative,
+                    &route,
+                    &excludes,
+                    &mut selected,
+                )?
             } else {
                 String::new()
             };
@@ -747,6 +779,7 @@ fn render_skill_package(
     skill_file: &Path,
     skill_rel: &str,
     skill_route: &Path,
+    excludes: &GlobSet,
     selected: &mut BTreeSet<PathBuf>,
 ) -> Result<String> {
     let package = skill_file
@@ -772,6 +805,10 @@ fn render_skill_package(
             .strip_prefix(package)
             .expect("skill walk under package");
         let inner_text = inner.to_string_lossy().replace('\\', "/");
+        let rel = package_rel.join(inner).to_string_lossy().replace('\\', "/");
+        if excludes.is_match(&rel) {
+            continue;
+        }
         names.push(inner_text.clone());
         if !matches!(
             entry.path().extension().and_then(|ext| ext.to_str()),
@@ -794,7 +831,6 @@ fn render_skill_package(
                 route.display()
             )));
         }
-        let rel = package_rel.join(inner).to_string_lossy().replace('\\', "/");
         let content =
             std::fs::read_to_string(entry.path()).map_err(|error| io(entry.path(), error))?;
         let title = inner
@@ -803,68 +839,99 @@ fn render_skill_package(
             .unwrap_or(&inner_text);
         let page = format!("---\ntitle: \"{}\"\nunlisted: true\ngenerated: true\ndoc_source: \"{}\"\ndoc_source_mapping: \"files\"\ndoc_source_path: \"{}\"\n---\n\n{}\n", yaml_scalar(title), yaml_scalar(&spec.id), yaml_scalar(&rel), escape_untrusted_mdx(&content));
         write(&target.join(&route), &page)?;
-        links.push(format!("- [{inner_text}](./{slug}.mdx)"));
+        links.push(format!(
+            "- [{}](./{slug}.mdx)",
+            escape_markdown_link_label(&inner_text)
+        ));
     }
     names.sort();
     links.sort();
     let mut out = String::new();
     if !names.is_empty() {
-        out.push_str(&format!(
-            "## File Structure\n\n```\n{package_name}/\n├── SKILL.md\n"
-        ));
-        for (index, name) in names.iter().enumerate() {
-            out.push_str(&format!(
-                "{} {name}\n",
-                if index + 1 == names.len() {
-                    "└──"
-                } else {
-                    "├──"
-                }
-            ));
-        }
-        out.push_str("```\n\n");
+        let tree = format!(
+            "{package_name}/\n├── SKILL.md\n{}",
+            names
+                .iter()
+                .enumerate()
+                .map(|(index, name)| {
+                    format!(
+                        "{} {name}\n",
+                        if index + 1 == names.len() {
+                            "└──"
+                        } else {
+                            "├──"
+                        }
+                    )
+                })
+                .collect::<String>()
+        );
+        let fence = "`".repeat(max_backtick_run(&tree).max(2) + 1);
+        out.push_str(&format!("## File Structure\n\n{fence}\n{tree}"));
+        out.push_str(&format!("{fence}\n\n"));
         out.push_str(&links.join("\n"));
         out.push_str("\n\n");
     }
     let metadata = package.join("agents/openai.yaml");
-    if let Ok(yaml) = std::fs::read_to_string(metadata) {
-        if let Ok(data) = serde_yaml::from_str::<serde_yaml::Value>(&yaml) {
-            if let Some(name) = data
-                .get("interface")
-                .and_then(|v| v.get("display_name"))
-                .and_then(serde_yaml::Value::as_str)
-            {
-                out.push_str(&format!(
-                    "**Display name:** {}\n",
-                    escape_untrusted_mdx(name)
-                ));
-            }
-            if let Some(description) = data
-                .get("interface")
-                .and_then(|v| v.get("short_description"))
-                .and_then(serde_yaml::Value::as_str)
-            {
-                out.push_str(&format!(
-                    "**Short description:** {}\n",
-                    escape_untrusted_mdx(description)
-                ));
-            }
-            if data
-                .get("policy")
-                .and_then(|v| v.get("allow_implicit_invocation"))
-                .and_then(serde_yaml::Value::as_bool)
-                == Some(false)
-            {
-                out.push_str(&format!(
-                    "**Invocation:** explicit only (`${package_name}`)\n"
-                ));
-            }
-            if !out.is_empty() {
-                out.push('\n');
+    if !excludes.is_match(package_rel.join("agents/openai.yaml")) {
+        if let Ok(yaml) = std::fs::read_to_string(metadata) {
+            if let Ok(data) = serde_yaml::from_str::<serde_yaml::Value>(&yaml) {
+                if let Some(name) = data
+                    .get("interface")
+                    .and_then(|v| v.get("display_name"))
+                    .and_then(serde_yaml::Value::as_str)
+                {
+                    out.push_str(&format!(
+                        "**Display name:** {}\n",
+                        escape_untrusted_mdx(name)
+                    ));
+                }
+                if let Some(description) = data
+                    .get("interface")
+                    .and_then(|v| v.get("short_description"))
+                    .and_then(serde_yaml::Value::as_str)
+                {
+                    out.push_str(&format!(
+                        "**Short description:** {}\n",
+                        escape_untrusted_mdx(description)
+                    ));
+                }
+                if data
+                    .get("policy")
+                    .and_then(|v| v.get("allow_implicit_invocation"))
+                    .and_then(serde_yaml::Value::as_bool)
+                    == Some(false)
+                {
+                    out.push_str(&format!(
+                        "**Invocation:** explicit only (${})\n",
+                        escape_markdown_link_label(package_name)
+                    ));
+                }
+                if !out.is_empty() {
+                    out.push('\n');
+                }
             }
         }
     }
     Ok(out)
+}
+
+fn escape_markdown_link_label(label: &str) -> String {
+    let mut escaped = String::new();
+    for character in label.chars() {
+        match character {
+            '\\' | '[' | ']' | '`' | '*' | '_' | '!' => {
+                escaped.push('\\');
+                escaped.push(character);
+            }
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '{' => escaped.push_str("&#123;"),
+            '}' => escaped.push_str("&#125;"),
+            '\n' | '\r' => escaped.push(' '),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 fn route_for(relative: &str, format: &SourceFormat) -> Result<PathBuf> {

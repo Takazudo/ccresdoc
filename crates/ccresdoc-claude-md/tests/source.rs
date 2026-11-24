@@ -223,6 +223,124 @@ fn custom_skill_renders_package_structure_metadata_and_flat_unlisted_page() {
 }
 
 #[test]
+fn custom_skill_excludes_nested_files_and_escapes_attacker_filenames() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let docs = root.path().join("docs");
+    write(&source.join("helpers/SKILL.md"), "# Helpers\n");
+    write(&source.join("helpers/references/public.md"), "# Public\n");
+    write(
+        &source.join("helpers/references/visible.mdx"),
+        "# Visible\n",
+    );
+    write(
+        &source.join("helpers/references/private.md"),
+        "PRIVATE_MARKDOWN\n",
+    );
+    write(
+        &source.join("helpers/references/private.mdx"),
+        "PRIVATE_MDX\n",
+    );
+    write(
+        &source.join("helpers/assets/private.bin"),
+        "PRIVATE_BINARY\n",
+    );
+    write(
+        &source.join("helpers/agents/openai.yaml"),
+        "interface:\n  display_name: PRIVATE_DISPLAY\n",
+    );
+    let link_attack = "bad](javascript:alert(1))<Widget>{run}.md";
+    write(
+        &source.join("helpers/references").join(link_attack),
+        "# Safe\n",
+    );
+    let fence_attack = "break\n```\n<img src=x onerror=run()>.md";
+    write(
+        &source.join("helpers/references").join(fence_attack),
+        "# Still safe\n",
+    );
+
+    let spec = SourceSpec {
+        id: "skills-filtered".into(),
+        label: "Filtered skills".into(),
+        root: source.clone(),
+        scan_root: source,
+        mount: "filtered".into(),
+        rule: SourceRule::Custom {
+            format: SourceFormat::Skill,
+            include: vec!["*/SKILL.md".into()],
+            exclude: vec![
+                "helpers/references/private.*".into(),
+                "helpers/assets/private.bin".into(),
+                "helpers/agents/openai.yaml".into(),
+            ],
+        },
+    };
+    let report = generate_source(&spec, &docs, "marker").unwrap();
+    assert_eq!(report.pages, 5);
+    let package = fs::read_to_string(docs.join("filtered/helpers/index.mdx")).unwrap();
+    assert!(package.contains("[references/public.md](./references-public.mdx)"));
+    assert!(package.contains("[references/visible.mdx](./references-visible.mdx)"));
+    assert!(docs.join("filtered/helpers/references-public.mdx").exists());
+    assert!(docs
+        .join("filtered/helpers/references-visible.mdx")
+        .exists());
+    assert!(!docs
+        .join("filtered/helpers/references-private.mdx")
+        .exists());
+    for private in [
+        "private.md",
+        "private.mdx",
+        "private.bin",
+        "PRIVATE_DISPLAY",
+    ] {
+        assert!(
+            !package.contains(private),
+            "excluded name leaked: {private}"
+        );
+    }
+    assert!(!package.contains("PRIVATE_MARKDOWN"));
+    assert!(!package.contains("PRIVATE_MDX"));
+    assert!(package.contains("[references/bad\\](javascript:alert(1))&lt;Widget&gt;&#123;run&#125;.md](./references-bad-javascript-alert-1-widget-run.mdx)"));
+    assert!(!package.contains("[references/bad](javascript:"));
+    assert!(package.contains("## File Structure\n\n````\n"));
+    assert!(package.contains("\n````\n\n- ["));
+    assert!(!package.contains("\n```\n<img src=x onerror=run()>\n```"));
+}
+
+#[test]
+fn custom_skill_broad_include_selects_package_contents_once() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let docs = root.path().join("docs");
+    write(&source.join("helpers/SKILL.md"), "# Helpers\n");
+    write(&source.join("helpers/references/guide.md"), "# Guide\n");
+    write(
+        &source.join("helpers/references/private.md"),
+        "PRIVATE_CONTENT\n",
+    );
+    let spec = SourceSpec {
+        id: "skills-broad".into(),
+        label: "Broad skills".into(),
+        root: source.clone(),
+        scan_root: source,
+        mount: "broad".into(),
+        rule: SourceRule::Custom {
+            format: SourceFormat::Skill,
+            include: vec!["**/*.md".into()],
+            exclude: vec!["helpers/references/private.md".into()],
+        },
+    };
+    let report = generate_source(&spec, &docs, "marker").unwrap();
+    assert_eq!(report.pages, 2);
+    let package = fs::read_to_string(docs.join("broad/helpers/index.mdx")).unwrap();
+    assert!(package.contains("[references/guide.md](./references-guide.mdx)"));
+    assert!(!package.contains("private.md"));
+    assert!(docs.join("broad/helpers/references-guide.mdx").exists());
+    assert!(!docs.join("broad/helpers/references-private.mdx").exists());
+}
+
+#[test]
 fn codex_preset_keeps_specialized_pages_and_mapping_relative_provenance() {
     let output = tempfile::tempdir().unwrap();
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex-representative");
