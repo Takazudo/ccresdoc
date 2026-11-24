@@ -65,6 +65,134 @@ fn custom_source_is_mount_scoped_and_imported_mdx_cannot_run_native_calls() {
 }
 
 #[test]
+fn custom_markdown_chooses_one_directory_landing_and_rewrites_alternate_links() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let docs = root.path().join("docs");
+    write(
+        &source.join("index.md"),
+        "# Index Markdown\n\n[MDX](index.mdx?view=1#mdx) [README](README.md#readme) [README MDX](readme.mdx#mdx) [Nested](nested/README.md#nested)\n",
+    );
+    write(
+        &source.join("index.mdx"),
+        "# Index MDX\n\n[Landing](index.md#top)\n",
+    );
+    write(
+        &source.join("README.md"),
+        "# README Markdown\n\n[Landing](index.md#top)\n",
+    );
+    write(
+        &source.join("readme.mdx"),
+        "# README MDX\n\n[README](README.md#readme)\n",
+    );
+    write(
+        &source.join("nested/index.mdx"),
+        "# Nested Index\n\n[README](README.md#readme)\n",
+    );
+    write(
+        &source.join("nested/README.md"),
+        "# Nested README\n\n[Landing](index.mdx#top)\n",
+    );
+    let spec = SourceSpec {
+        id: "landing-pairs".into(),
+        label: "Landing pairs".into(),
+        root: source.clone(),
+        scan_root: source,
+        mount: "landing-pairs".into(),
+        rule: SourceRule::Custom {
+            format: SourceFormat::Markdown,
+            include: vec!["**/*.md".into(), "**/*.mdx".into()],
+            exclude: vec![],
+        },
+    };
+    let report = generate_source(&spec, &docs, "landing-marker").unwrap();
+    assert_eq!(report.pages, 6);
+    let mount = docs.join("landing-pairs");
+    let landing = fs::read_to_string(mount.join("index.mdx")).unwrap();
+    assert!(landing.contains("# Index Markdown"));
+    assert!(landing.contains("[MDX](./index-mdx/?view=1#mdx)"));
+    assert!(landing.contains("[README](./readme/#readme)"));
+    assert!(landing.contains("[README MDX](./readme-mdx/#mdx)"));
+    assert!(landing.contains("[Nested](./nested/readme/#nested)"));
+    let index_mdx = fs::read_to_string(mount.join("index-mdx.mdx")).unwrap();
+    assert!(index_mdx.contains("# Index MDX"));
+    assert!(index_mdx.contains("[Landing](./#top)"));
+    let readme = fs::read_to_string(mount.join("readme.mdx")).unwrap();
+    assert!(readme.contains("# README Markdown"));
+    assert!(readme.contains("[Landing](./#top)"));
+    let readme_mdx = fs::read_to_string(mount.join("readme-mdx.mdx")).unwrap();
+    assert!(readme_mdx.contains("# README MDX"));
+    assert!(readme_mdx.contains("[README](./readme/#readme)"));
+    let nested = fs::read_to_string(mount.join("nested/index.mdx")).unwrap();
+    assert!(nested.contains("# Nested Index"));
+    assert!(nested.contains("[README](./readme/#readme)"));
+    let nested_readme = fs::read_to_string(mount.join("nested/readme.mdx")).unwrap();
+    assert!(nested_readme.contains("# Nested README"));
+    assert!(nested_readme.contains("[Landing](./#top)"));
+}
+
+#[test]
+fn custom_markdown_still_rejects_unrelated_slug_collisions() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    write(&source.join("topic.md"), "# Markdown\n");
+    write(&source.join("topic.mdx"), "# MDX\n");
+    let spec = SourceSpec {
+        id: "collision".into(),
+        label: "Collision".into(),
+        root: source.clone(),
+        scan_root: source,
+        mount: "collision".into(),
+        rule: SourceRule::Custom {
+            format: SourceFormat::Markdown,
+            include: vec!["**/*.md".into(), "**/*.mdx".into()],
+            exclude: vec![],
+        },
+    };
+    let error = generate_source(&spec, &root.path().join("docs"), "marker").unwrap_err();
+    assert!(error.to_string().contains("collision"));
+    assert!(error.to_string().contains("topic.mdx"));
+}
+
+#[test]
+fn custom_markdown_case_variant_landing_gets_an_alternate_route_when_supported() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    write(
+        &source.join("INDEX.md"),
+        "# Upper Index\n\n[Other](index.md#other)\n",
+    );
+    write(
+        &source.join("index.md"),
+        "# Lower Index\n\n[Landing](INDEX.md#top)\n",
+    );
+    // The usual macOS volume is case-insensitive; Linux CI can exercise both.
+    if fs::read_dir(&source).unwrap().count() != 2 {
+        return;
+    }
+    let spec = SourceSpec {
+        id: "case-landing".into(),
+        label: "Case landing".into(),
+        root: source.clone(),
+        scan_root: source,
+        mount: "case-landing".into(),
+        rule: SourceRule::Custom {
+            format: SourceFormat::Markdown,
+            include: vec!["**/*.md".into()],
+            exclude: vec![],
+        },
+    };
+    generate_source(&spec, &root.path().join("docs"), "marker").unwrap();
+    let mount = root.path().join("docs/case-landing");
+    assert!(fs::read_to_string(mount.join("index.mdx"))
+        .unwrap()
+        .contains("[Other](./index-md/#other)"));
+    assert!(fs::read_to_string(mount.join("index-md.mdx"))
+        .unwrap()
+        .contains("[Landing](./#top)"));
+}
+
+#[test]
 fn builtin_claude_retains_specialized_generation_below_mount() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");
@@ -256,13 +384,29 @@ fn custom_skill_renders_package_structure_metadata_and_flat_unlisted_page() {
     let docs = root.path().join("docs");
     write(
         &source.join("helpers/SKILL.md"),
-        "---\nname: Helpers\ndescription: Example\n---\n\n# Helpers\n\n[Guide](references/guide.md?mode=1#part) [Private](references/private.md)\n",
+        "---\nname: Helpers\ndescription: Example\n---\n\n# Helpers\n\n[Guide](references/guide.md?mode=1#part) [Private](references/private.md) [Index](index.md#top) [Index MDX](index.mdx#top) [README](README.md#top) [README MDX](readme.mdx#top)\n",
     );
     write(
         &source.join("helpers/references/guide.md"),
         "---\nfoo: bar\n---\n# Guide\n\n[Back](../SKILL.md#top) [Other](other.mdx?x=1#frag) [Excluded](private.md)\n",
     );
     write(&source.join("helpers/references/other.mdx"), "# Other\n");
+    write(
+        &source.join("helpers/index.md"),
+        "# Index Markdown\n\n[Skill](SKILL.md#top)\n",
+    );
+    write(
+        &source.join("helpers/index.mdx"),
+        "# Index MDX\n\n[Index](index.md#top)\n",
+    );
+    write(
+        &source.join("helpers/README.md"),
+        "# README Markdown\n\n[Skill](SKILL.md#top)\n",
+    );
+    write(
+        &source.join("helpers/readme.mdx"),
+        "# README MDX\n\n[README](README.md#top)\n",
+    );
     write(
         &source.join("helpers/references/private.md"),
         "PRIVATE_SECRET\n",
@@ -282,7 +426,7 @@ fn custom_skill_renders_package_structure_metadata_and_flat_unlisted_page() {
         },
     };
     let report = generate_source(&spec, &docs, "skill-marker").unwrap();
-    assert_eq!(report.pages, 3);
+    assert_eq!(report.pages, 7);
     let skill = fs::read_to_string(docs.join("my-skills/helpers/index.mdx")).unwrap();
     assert!(skill.contains("## File Structure"));
     assert!(skill.contains("title: \"Helpers\""));
@@ -292,12 +436,36 @@ fn custom_skill_renders_package_structure_metadata_and_flat_unlisted_page() {
     assert!(skill.contains("**Invocation:** explicit only"));
     assert!(skill.contains("[references/guide.md](./references-guide/)"));
     assert!(skill.contains("[Guide](./references-guide/?mode=1#part)"));
+    assert!(skill.contains("[Index](./index-md/#top)"));
+    assert!(skill.contains("[Index MDX](./index-mdx/#top)"));
+    assert!(skill.contains("[README](./readme/#top)"));
+    assert!(skill.contains("[README MDX](./readme-mdx/#top)"));
     assert!(skill.contains("Private (`references/private.md`)"));
     let guide = fs::read_to_string(docs.join("my-skills/helpers/references-guide.mdx")).unwrap();
     assert!(guide.contains("unlisted: true"));
     assert!(guide.contains("doc_source_path: \"helpers/references/guide.md\""));
     assert!(guide.contains("\nfoo: bar\n"));
     assert!(guide.contains("[Back](./#top)"));
+    assert!(
+        fs::read_to_string(docs.join("my-skills/helpers/index-md.mdx"))
+            .unwrap()
+            .contains("[Skill](./#top)")
+    );
+    assert!(
+        fs::read_to_string(docs.join("my-skills/helpers/index-mdx.mdx"))
+            .unwrap()
+            .contains("[Index](./index-md/#top)")
+    );
+    assert!(
+        fs::read_to_string(docs.join("my-skills/helpers/readme.mdx"))
+            .unwrap()
+            .contains("[Skill](./#top)")
+    );
+    assert!(
+        fs::read_to_string(docs.join("my-skills/helpers/readme-mdx.mdx"))
+            .unwrap()
+            .contains("[README](./readme/#top)")
+    );
     assert!(guide.contains("[Other](./references-other/?x=1#frag)"));
     assert!(guide.contains("Excluded (`private.md`)"));
     assert!(!guide.contains("PRIVATE_SECRET"));

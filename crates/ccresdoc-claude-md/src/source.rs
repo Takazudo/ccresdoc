@@ -646,9 +646,85 @@ fn generate_custom(
             !nested
         });
     }
+    candidates.sort_by(|left, right| left.1.cmp(&right.1));
+    // A directory can contain both an index and a README. Pick its landing
+    // before assigning routes so WalkDir's enumeration order cannot decide it.
+    let mut landings: BTreeMap<PathBuf, (u8, String)> = BTreeMap::new();
+    for (_, relative) in &candidates {
+        let path = Path::new(relative);
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let Some(rank) = landing_rank(filename, format) else {
+            continue;
+        };
+        let directory = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+        let choice = (rank, relative.clone());
+        if landings
+            .get(&directory)
+            .is_none_or(|previous| choice < *previous)
+        {
+            landings.insert(directory, choice);
+        }
+    }
+    let alternate_readme_dirs = candidates
+        .iter()
+        .filter_map(|(_, relative)| {
+            let path = Path::new(relative);
+            let directory = path.parent().unwrap_or_else(|| Path::new(""));
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case("readme.md"))
+                .then_some((directory, relative))
+        })
+        .filter(|(directory, relative)| {
+            landings
+                .get(*directory)
+                .is_none_or(|(_, selected)| selected != *relative)
+        })
+        .map(|(directory, _)| directory.to_path_buf())
+        .collect::<BTreeSet<_>>();
     let mut inputs = Vec::new();
+    let mut alternate_counts = BTreeMap::<(PathBuf, String), usize>::new();
     for (path, relative) in candidates {
-        let route = route_for(&relative, format)?;
+        let source_path = Path::new(&relative);
+        let directory = source_path.parent().unwrap_or_else(|| Path::new(""));
+        let filename = source_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let lower = filename.to_ascii_lowercase();
+        let landing = landings
+            .get(directory)
+            .is_some_and(|(_, selected)| selected == &relative);
+        let mut route = route_for(&relative, format, landing)?;
+        if !landing {
+            let alternate = match lower.as_str() {
+                "skill.md" => Some("skill-md"),
+                "index.md" => Some("index-md"),
+                "index.mdx" => Some("index-mdx"),
+                "readme.md" => Some("readme"),
+                _ => None,
+            };
+            if let Some(alternate) = alternate {
+                let count = alternate_counts
+                    .entry((directory.to_path_buf(), lower.clone()))
+                    .or_default();
+                *count += 1;
+                let slug = if *count == 1 {
+                    alternate.to_owned()
+                } else {
+                    format!("{alternate}-{count}")
+                };
+                route.set_file_name(format!("{slug}.mdx"));
+            }
+        }
+        // When README is an alternate to an index, its .mdx companion needs
+        // a distinct page. Keep the ordinary readme/ route for README.md.
+        if !landing && lower == "readme.mdx" && alternate_readme_dirs.contains(directory) {
+            route.set_file_name("readme-mdx.mdx");
+        }
         if !selected.insert(route.clone()) {
             return Err(GenerateError::SlugCollision(format!(
                 "{}: {}",
@@ -823,6 +899,7 @@ fn prepare_skill_package(
     let mut names = Vec::new();
     let mut links = Vec::new();
     let mut pages = Vec::new();
+    let mut entries = Vec::new();
     for entry in WalkDir::new(package).follow_links(false) {
         let entry = entry.map_err(|error| GenerateError::InvalidConfig(error.to_string()))?;
         if !entry.file_type().is_file() || entry.path() == skill_file {
@@ -837,9 +914,24 @@ fn prepare_skill_package(
         if excludes.is_match(&rel) {
             continue;
         }
+        entries.push((entry.path().to_path_buf(), inner_text, rel));
+    }
+    entries.sort_by(|left, right| left.1.cmp(&right.1));
+    let readme_md_dirs = entries
+        .iter()
+        .filter_map(|(_, inner, _)| {
+            let path = Path::new(inner);
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case("readme.md"))
+                .then(|| path.parent().unwrap_or_else(|| Path::new("")).to_path_buf())
+        })
+        .collect::<BTreeSet<_>>();
+    let mut alias_counts = BTreeMap::<String, usize>::new();
+    for (source_path, inner_text, rel) in entries {
         names.push(inner_text.clone());
         if !matches!(
-            entry.path().extension().and_then(|ext| ext.to_str()),
+            source_path.extension().and_then(|ext| ext.to_str()),
             Some("md" | "mdx")
         ) {
             continue;
@@ -848,7 +940,37 @@ fn prepare_skill_package(
             .trim_end_matches(".mdx")
             .trim_end_matches(".md")
             .replace('/', "-");
-        let slug = route_segment(&stem);
+        let mut slug = route_segment(&stem);
+        let inner_path = Path::new(&inner_text);
+        let lower = inner_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !inner_text.contains('/') {
+            match lower.as_str() {
+                "index.md" => slug = "index-md".into(),
+                "index.mdx" => slug = "index-mdx".into(),
+                _ => {}
+            }
+        }
+        if lower == "readme.mdx"
+            && readme_md_dirs.contains(inner_path.parent().unwrap_or_else(|| Path::new("")))
+        {
+            slug.push_str("-mdx");
+        }
+        if matches!(
+            lower.as_str(),
+            "index.md" | "index.mdx" | "readme.md" | "readme.mdx"
+        ) {
+            let count = alias_counts
+                .entry(inner_text.to_ascii_lowercase())
+                .or_default();
+            *count += 1;
+            if *count > 1 {
+                slug.push_str(&format!("-{count}"));
+            }
+        }
         if slug.is_empty() {
             continue;
         }
@@ -859,13 +981,13 @@ fn prepare_skill_package(
                 route.display()
             )));
         }
-        let title = inner
+        let title = inner_path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or(&inner_text);
         route_map.insert(rel.clone(), route.clone());
         pages.push(SkillSubpage {
-            source_path: entry.path().to_path_buf(),
+            source_path,
             relative: rel,
             route: route.clone(),
             title: title.to_owned(),
@@ -966,7 +1088,18 @@ fn escape_markdown_link_label(label: &str) -> String {
     escaped
 }
 
-fn route_for(relative: &str, format: &SourceFormat) -> Result<PathBuf> {
+fn landing_rank(filename: &str, format: &SourceFormat) -> Option<u8> {
+    let lower = filename.to_ascii_lowercase();
+    match (format, lower.as_str()) {
+        (SourceFormat::Skill, "skill.md") => Some(0),
+        (SourceFormat::Markdown | SourceFormat::Skill, "index.md") => Some(1),
+        (SourceFormat::Markdown | SourceFormat::Skill, "index.mdx") => Some(2),
+        (SourceFormat::Markdown | SourceFormat::Skill, "readme.md") => Some(3),
+        _ => None,
+    }
+}
+
+fn route_for(relative: &str, format: &SourceFormat, landing: bool) -> Result<PathBuf> {
     let path = Path::new(relative);
     if path.components().any(|part| {
         matches!(
@@ -990,14 +1123,6 @@ fn route_for(relative: &str, format: &SourceFormat) -> Result<PathBuf> {
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| GenerateError::InvalidConfig("non-UTF-8 source filename".into()))?;
-    let lower = filename.to_ascii_lowercase();
-    let landing = match format {
-        SourceFormat::Code => false,
-        SourceFormat::Markdown => matches!(lower.as_str(), "index.md" | "index.mdx" | "readme.md"),
-        SourceFormat::Skill => {
-            lower == "skill.md" || matches!(lower.as_str(), "index.md" | "index.mdx" | "readme.md")
-        }
-    };
     if landing {
         route.push("index.mdx");
     } else {
