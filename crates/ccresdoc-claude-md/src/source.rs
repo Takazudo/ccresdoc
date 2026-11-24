@@ -1122,8 +1122,9 @@ fn rewrite_links_segment(
 }
 
 fn relative_output_link(from: &Path, to: &Path) -> String {
-    // The browser resolves links from `/docs/<mount>/<slug>/`, not from the
-    // MDX file's parent directory. `index.mdx` owns its directory route.
+    // zudo-doc resolves relative Markdown destinations from the output MDX
+    // file's parent. The target is a rendered route: `index.mdx` owns its
+    // directory, while another MDX file owns its extensionless slug.
     let route = |output: &Path| {
         let mut parts = output
             .components()
@@ -1141,7 +1142,12 @@ fn relative_output_link(from: &Path, to: &Path) -> String {
         }
         parts
     };
-    let from = route(from);
+    let from = from
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
     let to = route(to);
     let common = from
         .iter()

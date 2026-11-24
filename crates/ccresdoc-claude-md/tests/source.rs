@@ -45,7 +45,7 @@ fn custom_source_is_mount_scoped_and_imported_mdx_cannot_run_native_calls() {
         fs::write(output, &attack).unwrap();
     }
     assert!(attack.contains("doc_source_path: \"nested/attack.mdx\""));
-    assert!(attack.contains("[Home](../../#home)"));
+    assert!(attack.contains("[Home](../#home)"));
     assert!(!attack.contains(source.to_str().unwrap()));
     assert!(!attack.contains("<script>"));
     assert!(!attack.contains("<img"));
@@ -297,8 +297,8 @@ fn custom_skill_renders_package_structure_metadata_and_flat_unlisted_page() {
     assert!(guide.contains("unlisted: true"));
     assert!(guide.contains("doc_source_path: \"helpers/references/guide.md\""));
     assert!(guide.contains("\nfoo: bar\n"));
-    assert!(guide.contains("[Back](../#top)"));
-    assert!(guide.contains("[Other](../references-other/?x=1#frag)"));
+    assert!(guide.contains("[Back](./#top)"));
+    assert!(guide.contains("[Other](./references-other/?x=1#frag)"));
     assert!(guide.contains("Excluded (`private.md`)"));
     assert!(!guide.contains("PRIVATE_SECRET"));
     assert!(docs.join("my-skills/helpers/references-other.mdx").exists());
