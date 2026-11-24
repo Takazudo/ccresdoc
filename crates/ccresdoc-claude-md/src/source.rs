@@ -5,12 +5,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use notify::{RecursiveMode, Watcher};
-use notify_debouncer_full::{new_debouncer, DebounceEventResult};
+use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileIdMap};
 use walkdir::WalkDir;
 
 use crate::escape::escape_untrusted_mdx;
@@ -294,7 +295,7 @@ fn builtin_provenance(spec: &SourceSpec, mapping: &str, output: &Path) -> Result
                 ("skills".into(), relative)
             }
         }
-        "skills" => ("skills".into(), rel),
+        "skills" => skill_subpage_provenance(spec, stem)?,
         "agents" => ("agents".into(), format!("{stem}.toml")),
         "rules" => ("rules".into(), format!("{stem}.rules")),
         "config" => {
@@ -362,6 +363,78 @@ fn builtin_provenance(spec: &SourceSpec, mapping: &str, output: &Path) -> Result
     Ok(result)
 }
 
+fn skill_subpage_provenance(spec: &SourceSpec, output_stem: &str) -> Result<(String, String)> {
+    let (skill_slug, page_slug) = output_stem.split_once('/').ok_or_else(|| {
+        GenerateError::InvalidConfig(format!("invalid skill output: {output_stem}"))
+    })?;
+    let roots = [
+        ("skills", spec.root.join("skills")),
+        ("team-skills", spec.scan_root.join(".agents/skills")),
+    ];
+    for (mapping, root) in roots {
+        if mapping == "team-skills" && !matches!(spec.rule, SourceRule::Codex) {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if route_segment(&name) != skill_slug {
+                continue;
+            }
+            let package = entry.path().canonicalize().unwrap_or_else(|_| entry.path());
+            if !package.is_dir() {
+                continue;
+            }
+            for file in WalkDir::new(&package)
+                .follow_links(false)
+                .into_iter()
+                .flatten()
+            {
+                if !file.file_type().is_file()
+                    || !matches!(
+                        file.path().extension().and_then(|ext| ext.to_str()),
+                        Some("md" | "mdx")
+                    )
+                {
+                    continue;
+                }
+                let inner = file
+                    .path()
+                    .strip_prefix(&package)
+                    .expect("skill file under package");
+                if inner == Path::new("SKILL.md") {
+                    continue;
+                }
+                let inner_text = inner.to_string_lossy().replace('\\', "/");
+                let mut parts = inner_text.split('/');
+                let family = match parts.next() {
+                    Some("references") => "ref",
+                    Some("scripts") => "script",
+                    Some("assets") => "asset",
+                    _ => "",
+                };
+                let basename = inner
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("");
+                let slug = if family.is_empty() {
+                    route_segment(basename)
+                } else {
+                    format!("{family}-{}", route_segment(basename))
+                };
+                if slug == page_slug {
+                    return Ok((mapping.into(), format!("{name}/{inner_text}")));
+                }
+            }
+        }
+    }
+    Err(GenerateError::InvalidConfig(format!(
+        "cannot resolve skill subpage provenance for {output_stem}"
+    )))
+}
+
 #[derive(Clone, Copy)]
 enum MarkdownSelection {
     ClaudeInstructions,
@@ -383,6 +456,8 @@ fn render_preset_markdown_mapping(
     }
     let section = target.join(mapping);
     let mut selected = BTreeSet::new();
+    let mut inputs = Vec::new();
+    let mut route_map = BTreeMap::new();
     for entry in WalkDir::new(root)
         .follow_links(false)
         .into_iter()
@@ -449,8 +524,16 @@ fn render_preset_markdown_mapping(
                 route.display()
             )));
         }
+        route_map.insert(rel.clone(), route.clone());
+        inputs.push((entry.path().to_path_buf(), rel, route));
+    }
+    for (source_path, rel, route) in inputs {
         let content =
-            std::fs::read_to_string(entry.path()).map_err(|error| io(entry.path(), error))?;
+            std::fs::read_to_string(&source_path).map_err(|error| io(&source_path, error))?;
+        let filename = source_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&rel);
         let title = if matches!(
             selection,
             MarkdownSelection::ClaudeInstructions | MarkdownSelection::CodexInstructions
@@ -463,7 +546,8 @@ fn render_preset_markdown_mapping(
                 .filter(|line| !line.is_empty())
                 .unwrap_or(filename.as_ref())
         };
-        let mdx = format!("---\ntitle: \"{}\"\ngenerated: true\ndoc_source: \"{}\"\ndoc_source_mapping: \"{}\"\ndoc_source_path: \"{}\"\n---\n\n{}\n", yaml_scalar(title), yaml_scalar(&spec.id), mapping, yaml_scalar(&rel), escape_untrusted_mdx(&content));
+        let body = escape_untrusted_mdx(&rewrite_mapped_links(&content, &rel, &route_map));
+        let mdx = format!("---\ntitle: \"{}\"\ngenerated: true\ndoc_source: \"{}\"\ndoc_source_mapping: \"{}\"\ndoc_source_path: \"{}\"\n---\n\n{}\n", yaml_scalar(title), yaml_scalar(&spec.id), mapping, yaml_scalar(&rel), body);
         write(&section.join(route), &mdx)?;
     }
     let mut nested_dirs = BTreeSet::new();
@@ -556,13 +640,18 @@ fn generate_custom(
         let content =
             std::fs::read_to_string(&source_path).map_err(|error| io(&source_path, error))?;
         let filename = relative.rsplit('/').next().unwrap_or(&relative);
+        let (frontmatter, content_body) = if matches!(format, SourceFormat::Code) {
+            (None, content.as_str())
+        } else {
+            source_frontmatter(&content)
+        };
         let skill_structure =
             if matches!(format, SourceFormat::Skill) && filename.eq_ignore_ascii_case("SKILL.md") {
                 render_skill_package(spec, target, &source_path, &relative, &route, &mut selected)?
             } else {
                 String::new()
             };
-        let title =
+        let fallback_title =
             if matches!(format, SourceFormat::Skill) && filename.eq_ignore_ascii_case("SKILL.md") {
                 source_path
                     .parent()
@@ -572,30 +661,41 @@ fn generate_custom(
             } else {
                 filename
             };
+        let title = frontmatter
+            .as_ref()
+            .and_then(|data| data.get("title").or_else(|| data.get("name")))
+            .and_then(serde_yaml::Value::as_str)
+            .filter(|title| !title.is_empty())
+            .or_else(|| {
+                content_body
+                    .lines()
+                    .find_map(|line| line.strip_prefix("# ").map(str::trim))
+                    .filter(|line| !line.is_empty())
+            })
+            .unwrap_or(fallback_title);
+        let description = frontmatter
+            .as_ref()
+            .and_then(|data| data.get("description"))
+            .and_then(serde_yaml::Value::as_str)
+            .unwrap_or("");
         let body = match format {
             SourceFormat::Markdown | SourceFormat::Skill => format!(
                 "{}{}",
                 skill_structure,
-                escape_untrusted_mdx(&rewrite_mapped_links(
-                    &content,
-                    &relative,
-                    &route_map,
-                    &spec.mount
-                ))
+                escape_untrusted_mdx(&rewrite_mapped_links(content_body, &relative, &route_map))
             ),
             SourceFormat::Code => {
-                let fence_len = content
-                    .lines()
-                    .map(|line| line.chars().take_while(|c| *c == '`').count())
-                    .max()
-                    .unwrap_or(0)
-                    .max(2)
-                    + 1;
+                let fence_len = max_backtick_run(&content).max(2) + 1;
                 let fence = "`".repeat(fence_len);
                 format!("## Source\n\n{fence}\n{content}\n{fence}")
             }
         };
-        let mdx = format!("---\ntitle: \"{}\"\ngenerated: true\ndoc_source: \"{}\"\ndoc_source_mapping: \"files\"\ndoc_source_path: \"{}\"\n---\n\n{}\n", yaml_scalar(title), yaml_scalar(&spec.id), yaml_scalar(&relative), body);
+        let description_field = if description.is_empty() {
+            String::new()
+        } else {
+            format!("description: \"{}\"\n", yaml_scalar(description))
+        };
+        let mdx = format!("---\ntitle: \"{}\"\n{}generated: true\ndoc_source: \"{}\"\ndoc_source_mapping: \"files\"\ndoc_source_path: \"{}\"\n---\n\n{}\n", yaml_scalar(title), description_field, yaml_scalar(&spec.id), yaml_scalar(&relative), body);
         write(&destination, &mdx)?;
     }
     let mut nested_dirs = BTreeSet::new();
@@ -625,6 +725,20 @@ fn generate_custom(
     }
     counts.insert("files".into(), selected.len());
     Ok(())
+}
+
+fn max_backtick_run(content: &str) -> usize {
+    let mut longest = 0;
+    let mut current = 0;
+    for character in content.chars() {
+        if character == '`' {
+            current += 1;
+            longest = longest.max(current);
+        } else {
+            current = 0;
+        }
+    }
+    longest
 }
 
 fn render_skill_package(
@@ -689,7 +803,7 @@ fn render_skill_package(
             .unwrap_or(&inner_text);
         let page = format!("---\ntitle: \"{}\"\nunlisted: true\ngenerated: true\ndoc_source: \"{}\"\ndoc_source_mapping: \"files\"\ndoc_source_path: \"{}\"\n---\n\n{}\n", yaml_scalar(title), yaml_scalar(&spec.id), yaml_scalar(&rel), escape_untrusted_mdx(&content));
         write(&target.join(&route), &page)?;
-        links.push(format!("- [{inner_text}](./{slug})"));
+        links.push(format!("- [{inner_text}](./{slug}.mdx)"));
     }
     names.sort();
     links.sort();
@@ -811,7 +925,59 @@ fn rewrite_mapped_links(
     content: &str,
     current_rel: &str,
     routes: &BTreeMap<String, PathBuf>,
-    mount: &str,
+) -> String {
+    let mut output = String::with_capacity(content.len());
+    let mut fence = None;
+    for line in content.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let marker = if trimmed.starts_with("```") {
+            Some('`')
+        } else if trimmed.starts_with("~~~") {
+            Some('~')
+        } else {
+            None
+        };
+        if let Some(marker) = marker {
+            fence = if fence == Some(marker) {
+                None
+            } else if fence.is_none() {
+                Some(marker)
+            } else {
+                fence
+            };
+            output.push_str(line);
+            continue;
+        }
+        if fence.is_some() {
+            output.push_str(line);
+            continue;
+        }
+        let mut rest = line;
+        while let Some(open) = rest.find('`') {
+            let bytes = rest.as_bytes();
+            let count = bytes[open..]
+                .iter()
+                .take_while(|byte| **byte == b'`')
+                .count();
+            let needle = "`".repeat(count);
+            let after_open = open + count;
+            let Some(close) = rest[after_open..].find(&needle) else {
+                break;
+            };
+            output.push_str(&rewrite_links_segment(&rest[..open], current_rel, routes));
+            let end = after_open + close + count;
+            output.push_str(&rest[open..end]);
+            rest = &rest[end..];
+        }
+        output.push_str(&rewrite_links_segment(rest, current_rel, routes));
+    }
+    output
+}
+
+fn rewrite_links_segment(
+    content: &str,
+    current_rel: &str,
+    routes: &BTreeMap<String, PathBuf>,
 ) -> String {
     let mut output = String::with_capacity(content.len());
     let mut rest = content;
@@ -839,18 +1005,12 @@ fn rewrite_mapped_links(
             let suffix_start = destination.find(['?', '#']).unwrap_or(destination.len());
             let (target, suffix) = destination.split_at(suffix_start);
             let resolved = resolve_relative_link(current_rel, target);
-            if let Some(route) = resolved.as_ref().and_then(|path| routes.get(path)) {
-                let mut route = route.to_string_lossy().replace('\\', "/");
-                route.truncate(route.len() - ".mdx".len());
-                if route == "index" {
-                    route.clear();
-                } else if let Some(prefix) = route.strip_suffix("/index") {
-                    route = prefix.into();
-                }
-                format!(
-                    "[{label}](/docs/{mount}/{route}{delimiter}{suffix})",
-                    delimiter = if route.is_empty() { "" } else { "/" }
-                )
+            if let (Some(current_route), Some(route)) = (
+                routes.get(current_rel),
+                resolved.as_ref().and_then(|path| routes.get(path)),
+            ) {
+                let mapped = relative_output_link(current_route, route);
+                format!("[{label}]({mapped}{suffix})")
             } else {
                 format!("{label} (`{destination}`)")
             }
@@ -860,6 +1020,44 @@ fn rewrite_mapped_links(
     }
     output.push_str(rest);
     output
+}
+
+fn relative_output_link(from: &Path, to: &Path) -> String {
+    let from = from.parent().unwrap_or_else(|| Path::new(""));
+    let from = from
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let to = to
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let common = from
+        .iter()
+        .zip(&to)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let mut parts = vec!["..".to_owned(); from.len() - common];
+    parts.extend(to.iter().skip(common).cloned());
+    let relative = parts.join("/");
+    if relative.starts_with('.') {
+        relative
+    } else {
+        format!("./{relative}")
+    }
+}
+
+fn source_frontmatter(content: &str) -> (Option<serde_yaml::Value>, &str) {
+    let Some(rest) = content.strip_prefix("---\n") else {
+        return (None, content);
+    };
+    let Some((yaml, body)) = rest.split_once("\n---\n") else {
+        return (None, content);
+    };
+    match serde_yaml::from_str::<serde_yaml::Value>(yaml) {
+        Ok(data) => (Some(data), body),
+        Err(_) => (None, content),
+    }
 }
 
 fn resolve_relative_link(current_rel: &str, target: &str) -> Option<String> {
@@ -932,18 +1130,27 @@ pub enum SourceWatchEvent {
 
 pub struct SourceWatchHandle {
     debouncer: Option<Box<dyn std::any::Any + Send>>,
-    sender: Option<mpsc::Sender<SourceWatchEvent>>,
+    sender: Option<mpsc::Sender<WatchMessage>>,
     join: Option<JoinHandle<()>>,
 }
 impl Drop for SourceWatchHandle {
     fn drop(&mut self) {
-        self.debouncer = None;
+        if let Some(sender) = &self.sender {
+            let _ = sender.send(WatchMessage::Stop);
+        }
         self.sender = None;
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
+        self.debouncer = None;
     }
 }
+
+enum WatchMessage {
+    Event(SourceWatchEvent),
+    Stop,
+}
+type SourceDebouncer = Debouncer<notify::RecommendedWatcher, FileIdMap>;
 
 /// Watches external roots and direct Codex skill-link targets discovered at
 /// startup. A link changed to a different target requires source reapply or
@@ -956,7 +1163,7 @@ pub fn watch_source<F>(
 where
     F: Fn(SourceWatchEvent) + Send + 'static,
 {
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = mpsc::channel::<WatchMessage>();
     let callback = tx.clone();
     let mut watched_roots = if spec.root == spec.scan_root {
         vec![spec.root.clone()]
@@ -988,6 +1195,19 @@ where
         .into_iter()
         .map(|root| crate::canonical_or_absolute(&root))
         .collect::<Vec<_>>();
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|path| crate::canonical_or_absolute(&path));
+    if watched_roots.iter().any(|root| {
+        root.parent().is_none()
+            || home
+                .as_ref()
+                .is_some_and(|home| root == home || home.starts_with(root))
+    }) {
+        return Err(GenerateError::InvalidConfig(
+            "source watcher root is too broad".into(),
+        ));
+    }
     let event_roots = watched_roots.clone();
     let mut debouncer = new_debouncer(
         debounce,
@@ -1004,13 +1224,12 @@ where
                             .any(|root| path.starts_with(root) || root.starts_with(&path))
                     }) =>
             {
-                let _ = callback.send(SourceWatchEvent::Changed);
+                let _ = callback.send(WatchMessage::Event(SourceWatchEvent::Changed));
             }
             Err(errors) => {
                 for error in errors {
-                    let _ = callback.send(SourceWatchEvent::Error(GenerateError::watch(
-                        "source watcher backend",
-                        error,
+                    let _ = callback.send(WatchMessage::Event(SourceWatchEvent::Error(
+                        GenerateError::watch("source watcher backend", error),
                     )));
                 }
             }
@@ -1018,24 +1237,25 @@ where
         },
     )
     .map_err(|error| GenerateError::watch("start source watcher", error))?;
-    let mut watched = BTreeSet::new();
-    for root in watched_roots {
-        let mut parent = root.as_path();
-        while !parent.exists() {
-            parent = parent.parent().ok_or_else(|| {
-                GenerateError::InvalidConfig("source has no existing ancestor".into())
-            })?;
-        }
-        if watched.insert(parent.to_path_buf()) {
-            debouncer
-                .watcher()
-                .watch(parent, RecursiveMode::Recursive)
-                .map_err(|error| GenerateError::watch(format!("watch {parent:?}"), error))?;
-        }
-    }
+    let mut watched = BTreeMap::new();
+    reconcile_source_watches(&mut debouncer, &watched_roots, &mut watched)?;
+    let debouncer: Arc<Mutex<SourceDebouncer>> = Arc::new(Mutex::new(debouncer));
+    let worker_debouncer = debouncer.clone();
     let join = std::thread::spawn(move || {
-        while let Ok(event) = rx.recv() {
-            on_change(event);
+        while let Ok(message) = rx.recv() {
+            match message {
+                WatchMessage::Stop => break,
+                WatchMessage::Event(event) => {
+                    if let Err(error) = reconcile_source_watches(
+                        &mut worker_debouncer.lock().unwrap(),
+                        &watched_roots,
+                        &mut watched,
+                    ) {
+                        on_change(SourceWatchEvent::Error(error));
+                    }
+                    on_change(event);
+                }
+            }
         }
     });
     Ok(SourceWatchHandle {
@@ -1043,4 +1263,62 @@ where
         sender: Some(tx),
         join: Some(join),
     })
+}
+
+fn reconcile_source_watches(
+    debouncer: &mut SourceDebouncer,
+    roots: &[PathBuf],
+    watched: &mut BTreeMap<PathBuf, RecursiveMode>,
+) -> Result<()> {
+    for root in roots {
+        if root.exists() {
+            if watched.get(root) != Some(&RecursiveMode::Recursive) {
+                debouncer
+                    .watcher()
+                    .watch(root, RecursiveMode::Recursive)
+                    .map_err(|error| {
+                        GenerateError::watch(format!("watch source root {root:?}"), error)
+                    })?;
+                watched.insert(root.clone(), RecursiveMode::Recursive);
+            }
+            let parent = root
+                .parent()
+                .ok_or_else(|| GenerateError::InvalidConfig("source root has no parent".into()))?;
+            if !watched.contains_key(parent) {
+                debouncer
+                    .watcher()
+                    .watch(parent, RecursiveMode::NonRecursive)
+                    .map_err(|error| {
+                        GenerateError::watch(format!("watch source parent {parent:?}"), error)
+                    })?;
+                watched.insert(parent.to_path_buf(), RecursiveMode::NonRecursive);
+            }
+        } else {
+            watched.remove(root);
+            let mut anchor = root.as_path();
+            while !anchor.exists() {
+                anchor = anchor.parent().ok_or_else(|| {
+                    GenerateError::InvalidConfig("source has no existing ancestor".into())
+                })?;
+            }
+            if anchor.parent().is_none() {
+                return Err(GenerateError::InvalidConfig(
+                    "refusing broad root watcher for missing source".into(),
+                ));
+            }
+            if !watched.contains_key(anchor) {
+                debouncer
+                    .watcher()
+                    .watch(anchor, RecursiveMode::NonRecursive)
+                    .map_err(|error| {
+                        GenerateError::watch(
+                            format!("watch missing-source parent {anchor:?}"),
+                            error,
+                        )
+                    })?;
+                watched.insert(anchor.to_path_buf(), RecursiveMode::NonRecursive);
+            }
+        }
+    }
+    Ok(())
 }

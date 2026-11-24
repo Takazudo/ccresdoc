@@ -17,7 +17,7 @@ fn custom_source_is_mount_scoped_and_imported_mdx_cannot_run_native_calls() {
     let docs = root.path().join("docs");
     write(
         &source.join("README.md"),
-        "# Notebook\n\n[Attack](nested/attack.mdx?view=1#frag) [Attachment](manual.pdf)\n",
+        "# Notebook\n\n[Attack](nested/attack.mdx?view=1#frag) [Attachment](manual.pdf)\n\n`[literal](nested/attack.mdx)`\n\n```md\n[code](nested/attack.mdx)\n```\n",
     );
     write(&source.join("nested/attack.mdx"), "# Attack\n\n<script>window.__TAURI__.core.invoke('save_source_editor_draft')</script>\n<img onerror=\"window.__TAURI__.core.invoke('save_source_editor_draft')\">\n{window.__TAURI__.core.invoke('save_source_editor_draft')}\nimport x from './evil.js'\n[click](javascript:alert(1))\n");
     write(&source.join("nested/ignored.bin"), "SECRET_BINARY");
@@ -37,6 +37,9 @@ fn custom_source_is_mount_scoped_and_imported_mdx_cannot_run_native_calls() {
     assert_eq!(report.pages, 2);
     assert!(docs.join("notes/index.mdx").exists());
     let attack = fs::read_to_string(docs.join("notes/nested/attack.mdx")).unwrap();
+    if let Ok(output) = std::env::var("CCRESDOC_MALICIOUS_FIXTURE_OUT") {
+        fs::write(output, &attack).unwrap();
+    }
     assert!(attack.contains("doc_source_path: \"nested/attack.mdx\""));
     assert!(!attack.contains(source.to_str().unwrap()));
     assert!(!attack.contains("<script>"));
@@ -47,8 +50,10 @@ fn custom_source_is_mount_scoped_and_imported_mdx_cannot_run_native_calls() {
     assert!(docs.join("notes/nested/index.mdx").exists());
     let landing = fs::read_to_string(docs.join("notes/index.mdx")).unwrap();
     assert!(landing.contains("marker-42"));
-    assert!(landing.contains("[Attack](/docs/notes/nested/attack/?view=1#frag)"));
+    assert!(landing.contains("[Attack](./nested/attack.mdx?view=1#frag)"));
     assert!(landing.contains("Attachment (`manual.pdf`)"));
+    assert!(landing.contains("`[literal](nested/attack.mdx)`"));
+    assert!(landing.contains("[code](nested/attack.mdx)"));
 }
 
 #[test]
@@ -56,7 +61,10 @@ fn builtin_claude_retains_specialized_generation_below_mount() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");
     let docs = root.path().join("docs");
-    write(&source.join("CLAUDE.md"), "# Root instructions\n");
+    write(
+        &source.join("CLAUDE.md"),
+        "# Root instructions\n\n[Project](project/CLAUDE.md?view=1#part)\n",
+    );
     write(&source.join("commands/check.md"), "# Check\n");
     write(&source.join("commands/nested/audit.md"), "# Audit\n");
     write(
@@ -77,6 +85,7 @@ fn builtin_claude_retains_specialized_generation_below_mount() {
     assert!(instructions.contains("Root instructions"));
     assert!(instructions.contains("doc_source_mapping: \"instructions\""));
     assert!(instructions.contains("doc_source_path: \"CLAUDE.md\""));
+    assert!(instructions.contains("[Project](./project/index.mdx?view=1#part)"));
     assert!(docs.join("claude-two/commands/check.mdx").exists());
     assert!(docs.join("claude-two/commands/nested/audit.mdx").exists());
     assert!(docs.join("claude-two/commands/nested/index.mdx").exists());
@@ -128,6 +137,24 @@ fn watcher_observes_missing_root_appearance_and_nested_edit() {
         rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
         SourceWatchEvent::Changed
     ));
+    while rx.try_recv().is_ok() {}
+    fs::remove_dir_all(&source).unwrap();
+    assert!(matches!(
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+        SourceWatchEvent::Changed
+    ));
+    while rx.try_recv().is_ok() {}
+    write(&source.join("nested/reappeared.md"), "back");
+    assert!(matches!(
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+        SourceWatchEvent::Changed
+    ));
+    while rx.try_recv().is_ok() {}
+    write(&source.join("nested/reappeared.md"), "edited");
+    assert!(matches!(
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+        SourceWatchEvent::Changed
+    ));
 }
 
 #[test]
@@ -146,6 +173,13 @@ fn source_id_cannot_escape_candidate_scratch() {
     };
     assert!(generate_source(&spec, &docs, "marker").is_err());
     assert!(!root.path().join("escape").exists());
+    let broad = SourceSpec {
+        id: "broad".into(),
+        root: Path::new("/").to_path_buf(),
+        scan_root: Path::new("/").to_path_buf(),
+        ..spec
+    };
+    assert!(watch_source(broad, std::time::Duration::from_millis(50), |_| {}).is_err());
 }
 
 #[test]
@@ -176,9 +210,12 @@ fn custom_skill_renders_package_structure_metadata_and_flat_unlisted_page() {
     assert_eq!(report.pages, 2);
     let skill = fs::read_to_string(docs.join("my-skills/helpers/index.mdx")).unwrap();
     assert!(skill.contains("## File Structure"));
+    assert!(skill.contains("title: \"Helpers\""));
+    assert!(skill.contains("description: \"Example\""));
+    assert!(!skill.contains("\nname: Helpers\n"));
     assert!(skill.contains("**Display name:** Helper Display"));
     assert!(skill.contains("**Invocation:** explicit only"));
-    assert!(skill.contains("[references/guide.md](./references-guide)"));
+    assert!(skill.contains("[references/guide.md](./references-guide.mdx)"));
     let guide = fs::read_to_string(docs.join("my-skills/helpers/references-guide.mdx")).unwrap();
     assert!(guide.contains("unlisted: true"));
     assert!(guide.contains("doc_source_path: \"helpers/references/guide.md\""));
@@ -216,4 +253,38 @@ fn codex_preset_keeps_specialized_pages_and_mapping_relative_provenance() {
         .path()
         .join("codex-two/skills/fixture-skill/index.mdx")
         .exists());
+    let reference = fs::read_to_string(
+        output
+            .path()
+            .join("codex-two/skills/fixture-skill/ref-contract.mdx"),
+    )
+    .unwrap();
+    assert!(reference.contains("doc_source_path: \"fixture-skill/references/contract.md\""));
+}
+
+#[test]
+fn code_source_fence_outgrows_attacker_backticks() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let docs = root.path().join("docs");
+    write(
+        &source.join("attack.txt"),
+        "   ```\n<script>window.__TAURI__.core.invoke('save_source_editor_draft')</script>\n",
+    );
+    let spec = SourceSpec {
+        id: "code-one".into(),
+        label: "Code".into(),
+        root: source.clone(),
+        scan_root: source,
+        mount: "code-one".into(),
+        rule: SourceRule::Custom {
+            format: SourceFormat::Code,
+            include: vec!["*.txt".into()],
+            exclude: vec![],
+        },
+    };
+    generate_source(&spec, &docs, "code-marker").unwrap();
+    let body = fs::read_to_string(docs.join("code-one/attack-txt.mdx")).unwrap();
+    assert!(body.contains("\n````\n   ```\n<script>"));
+    assert!(body.ends_with("\n````\n"));
 }

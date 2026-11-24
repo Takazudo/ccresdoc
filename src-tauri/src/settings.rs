@@ -1331,7 +1331,10 @@ impl SettingsStore {
         validation: Vec<SettingsDiagnostic>,
     ) -> SettingsSnapshot {
         let authored = SettingsDraft::defaults();
-        let effective = self.project_defaults();
+        let mut effective = self.project_defaults();
+        if status != LoadStatus::Missing {
+            effective.sources.clear();
+        }
         SettingsSnapshot {
             config_path: self.path.clone(),
             file_exists,
@@ -1480,11 +1483,14 @@ impl SettingsStore {
             LoadStatus::Valid
         };
         let uses_authored = !blocking;
-        let active_effective = if uses_authored {
+        let mut active_effective = if uses_authored {
             effective.clone()
         } else {
             self.project_defaults()
         };
+        if !uses_authored {
+            active_effective.sources.clear();
+        }
         SettingsSnapshot {
             config_path: self.path.clone(),
             file_exists: true,
@@ -4125,5 +4131,25 @@ mod tests {
             .validate_source_catalog(&catalog)
             .iter()
             .any(|diagnostic| diagnostic.blocking));
+    }
+
+    #[test]
+    fn protected_configs_never_fall_back_to_scanning_default_sources() {
+        let (_root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        for (raw, status) in [
+            ("schema_version = 4\n", LoadStatus::UnsupportedVersion),
+            ("schema_version = 3\n[broken\n", LoadStatus::Malformed),
+            (
+                "schema_version = 3\n[[document_sources]]\nid = 'bad'\n",
+                LoadStatus::Invalid,
+            ),
+        ] {
+            fs::write(store.path(), raw).unwrap();
+            let snapshot = store.load();
+            assert_eq!(snapshot.status, status);
+            assert!(snapshot.effective.sources.is_empty());
+            assert_eq!(fs::read_to_string(store.path()).unwrap(), raw);
+        }
     }
 }
