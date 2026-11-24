@@ -12,6 +12,8 @@ export function installUnsavedNavigationGuard({
   confirmLeave: () => boolean;
 }): () => void {
   let currentIndex = Number(win.history.state?.index);
+  let currentState = win.history.state;
+  let currentUrl = win.location.href;
   let restoring = false;
   const accept = () => !isDirty() || confirmLeave();
   const onLink = (event: MouseEvent) => {
@@ -33,15 +35,22 @@ export function installUnsavedNavigationGuard({
       return;
     }
     const nextIndex = Number(event.state?.index);
-    if (accept()) { currentIndex = nextIndex; return; }
+    if (accept()) { currentIndex = nextIndex; currentState = event.state; currentUrl = win.location.href; return; }
     event.stopImmediatePropagation();
     // The browser has already moved before popstate fires. Return to the
     // editor's entry without allowing zfb to swap or destroy its draft.
-    restoring = true;
     const delta = Number.isFinite(currentIndex) && Number.isFinite(nextIndex)
       ? currentIndex - nextIndex
-      : 1;
-    win.history.go(delta || 1);
+      : NaN;
+    if (Number.isFinite(delta) && delta !== 0) {
+      restoring = true;
+      win.history.go(delta);
+    } else {
+      // An older entry may have no router index, so its direction is unknown.
+      // Restore the editor URL without guessing Back or Forward, and leave the
+      // next traversal guarded as usual.
+      win.history.pushState(currentState, "", currentUrl);
+    }
   };
   doc.addEventListener("click", onLink, true);
   doc.addEventListener("ccresdoc:before-document-navigation", onCommand);
