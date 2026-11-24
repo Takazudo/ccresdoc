@@ -1894,10 +1894,10 @@ fn normalize_source(raw: &str, home: &Path) -> Result<PathBuf, (DiagnosticKind, 
                     format!("HOME cannot be normalized: {error}"),
                 )
             })?;
-            if canonical == canonical_home {
+            if canonical_home.starts_with(&canonical) {
                 Err((
                     DiagnosticKind::InvalidSourcePath,
-                    "source directory must be narrower than HOME".into(),
+                    "source directory must be narrower than HOME so it can be watched".into(),
                 ))
             } else {
                 Ok(canonical)
@@ -3306,6 +3306,29 @@ mod tests {
             diagnostic.blocking
                 && diagnostic.field.as_deref() == Some("source.claude_dir")
                 && diagnostic.message.contains("narrower than HOME")
+        }));
+    }
+
+    #[test]
+    fn source_catalog_rejects_watcher_roots_above_home_before_save() {
+        let (root, store) = fixture();
+        let ancestor = root.path().to_string_lossy().into_owned();
+        let mut catalog = SourceCatalog::defaults();
+        catalog.sources[0].root = ancestor.clone();
+        assert!(store.validate_source_catalog(&catalog).iter().any(|item| {
+            item.blocking
+                && item.field.as_deref() == Some("sources.legacy-claude.root")
+                && item.message.contains("narrower than HOME")
+        }));
+        assert!(matches!(
+            store.save_source_catalog(&catalog, None),
+            Err(SaveError::Validation(_))
+        ));
+
+        catalog.sources[0].root = "~/.claude".into();
+        catalog.sources[0].scan_root = ScanRootChoice::Separate { path: ancestor };
+        assert!(store.validate_source_catalog(&catalog).iter().any(|item| {
+            item.blocking && item.field.as_deref() == Some("sources.legacy-claude.scan_root")
         }));
     }
 
