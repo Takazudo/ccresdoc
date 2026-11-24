@@ -256,9 +256,17 @@ fn custom_skill_renders_package_structure_metadata_and_flat_unlisted_page() {
     let docs = root.path().join("docs");
     write(
         &source.join("helpers/SKILL.md"),
-        "---\nname: Helpers\ndescription: Example\n---\n\n# Helpers\n",
+        "---\nname: Helpers\ndescription: Example\n---\n\n# Helpers\n\n[Guide](references/guide.md?mode=1#part) [Private](references/private.md)\n",
     );
-    write(&source.join("helpers/references/guide.md"), "# Guide\n");
+    write(
+        &source.join("helpers/references/guide.md"),
+        "---\nfoo: bar\n---\n# Guide\n\n[Back](../SKILL.md#top) [Other](other.mdx?x=1#frag) [Excluded](private.md)\n",
+    );
+    write(&source.join("helpers/references/other.mdx"), "# Other\n");
+    write(
+        &source.join("helpers/references/private.md"),
+        "PRIVATE_SECRET\n",
+    );
     write(&source.join("helpers/agents/openai.yaml"), "interface:\n  display_name: Helper Display\n  short_description: Useful helper\npolicy:\n  allow_implicit_invocation: false\n");
     write(&source.join("helpers/assets/private.bin"), "BINARY_SECRET");
     let spec = SourceSpec {
@@ -270,11 +278,11 @@ fn custom_skill_renders_package_structure_metadata_and_flat_unlisted_page() {
         rule: SourceRule::Custom {
             format: SourceFormat::Skill,
             include: vec!["*/SKILL.md".into()],
-            exclude: vec![],
+            exclude: vec!["helpers/references/private.md".into()],
         },
     };
     let report = generate_source(&spec, &docs, "skill-marker").unwrap();
-    assert_eq!(report.pages, 2);
+    assert_eq!(report.pages, 3);
     let skill = fs::read_to_string(docs.join("my-skills/helpers/index.mdx")).unwrap();
     assert!(skill.contains("## File Structure"));
     assert!(skill.contains("title: \"Helpers\""));
@@ -283,9 +291,20 @@ fn custom_skill_renders_package_structure_metadata_and_flat_unlisted_page() {
     assert!(skill.contains("**Display name:** Helper Display"));
     assert!(skill.contains("**Invocation:** explicit only"));
     assert!(skill.contains("[references/guide.md](./references-guide/)"));
+    assert!(skill.contains("[Guide](./references-guide/?mode=1#part)"));
+    assert!(skill.contains("Private (`references/private.md`)"));
     let guide = fs::read_to_string(docs.join("my-skills/helpers/references-guide.mdx")).unwrap();
     assert!(guide.contains("unlisted: true"));
     assert!(guide.contains("doc_source_path: \"helpers/references/guide.md\""));
+    assert!(guide.contains("\nfoo: bar\n"));
+    assert!(guide.contains("[Back](../#top)"));
+    assert!(guide.contains("[Other](../references-other/?x=1#frag)"));
+    assert!(guide.contains("Excluded (`private.md`)"));
+    assert!(!guide.contains("PRIVATE_SECRET"));
+    assert!(docs.join("my-skills/helpers/references-other.mdx").exists());
+    assert!(!docs
+        .join("my-skills/helpers/references-private.mdx")
+        .exists());
     assert!(!docs.join("my-skills/helpers/assets/private.bin").exists());
 }
 

@@ -659,6 +659,29 @@ fn generate_custom(
         route_map.insert(relative.clone(), route.clone());
         inputs.push((path, relative, route));
     }
+    let mut skill_structures = BTreeMap::new();
+    let mut skill_subpages = Vec::new();
+    if matches!(format, SourceFormat::Skill) {
+        for (source_path, relative, route) in &inputs {
+            if !relative
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+            {
+                continue;
+            }
+            let (structure, pages) = prepare_skill_package(
+                source_path,
+                relative,
+                route,
+                &excludes,
+                &mut selected,
+                &mut route_map,
+            )?;
+            skill_structures.insert(relative.clone(), structure);
+            skill_subpages.extend(pages);
+        }
+    }
     for (source_path, relative, route) in inputs {
         let destination = target.join(&route);
         let content =
@@ -669,20 +692,10 @@ fn generate_custom(
         } else {
             source_frontmatter(&content)
         };
-        let skill_structure =
-            if matches!(format, SourceFormat::Skill) && filename.eq_ignore_ascii_case("SKILL.md") {
-                render_skill_package(
-                    spec,
-                    target,
-                    &source_path,
-                    &relative,
-                    &route,
-                    &excludes,
-                    &mut selected,
-                )?
-            } else {
-                String::new()
-            };
+        let skill_structure = skill_structures
+            .get(&relative)
+            .map(String::as_str)
+            .unwrap_or("");
         let fallback_title =
             if matches!(format, SourceFormat::Skill) && filename.eq_ignore_ascii_case("SKILL.md") {
                 source_path
@@ -730,6 +743,14 @@ fn generate_custom(
         let mdx = format!("---\ntitle: \"{}\"\n{}generated: true\ndoc_source: \"{}\"\ndoc_source_mapping: \"files\"\ndoc_source_path: \"{}\"\n---\n\n{}\n", yaml_scalar(title), description_field, yaml_scalar(&spec.id), yaml_scalar(&relative), body);
         write(&destination, &mdx)?;
     }
+    for page in skill_subpages {
+        let content = std::fs::read_to_string(&page.source_path)
+            .map_err(|error| io(&page.source_path, error))?;
+        let body =
+            escape_untrusted_mdx(&rewrite_mapped_links(&content, &page.relative, &route_map));
+        let mdx = format!("---\ntitle: \"{}\"\nunlisted: true\ngenerated: true\ndoc_source: \"{}\"\ndoc_source_mapping: \"files\"\ndoc_source_path: \"{}\"\n---\n\n{}\n", yaml_scalar(&page.title), yaml_scalar(&spec.id), yaml_scalar(&page.relative), body);
+        write(&target.join(&page.route), &mdx)?;
+    }
     let mut nested_dirs = BTreeSet::new();
     for route in &selected {
         let mut current = route.parent();
@@ -773,15 +794,21 @@ fn max_backtick_run(content: &str) -> usize {
     longest
 }
 
-fn render_skill_package(
-    spec: &SourceSpec,
-    target: &Path,
+struct SkillSubpage {
+    source_path: PathBuf,
+    relative: String,
+    route: PathBuf,
+    title: String,
+}
+
+fn prepare_skill_package(
     skill_file: &Path,
     skill_rel: &str,
     skill_route: &Path,
     excludes: &GlobSet,
     selected: &mut BTreeSet<PathBuf>,
-) -> Result<String> {
+    route_map: &mut BTreeMap<String, PathBuf>,
+) -> Result<(String, Vec<SkillSubpage>)> {
     let package = skill_file
         .parent()
         .ok_or_else(|| GenerateError::InvalidConfig("skill has no package directory".into()))?;
@@ -795,6 +822,7 @@ fn render_skill_package(
         .unwrap_or_else(|| Path::new(""));
     let mut names = Vec::new();
     let mut links = Vec::new();
+    let mut pages = Vec::new();
     for entry in WalkDir::new(package).follow_links(false) {
         let entry = entry.map_err(|error| GenerateError::InvalidConfig(error.to_string()))?;
         if !entry.file_type().is_file() || entry.path() == skill_file {
@@ -831,14 +859,17 @@ fn render_skill_package(
                 route.display()
             )));
         }
-        let content =
-            std::fs::read_to_string(entry.path()).map_err(|error| io(entry.path(), error))?;
         let title = inner
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or(&inner_text);
-        let page = format!("---\ntitle: \"{}\"\nunlisted: true\ngenerated: true\ndoc_source: \"{}\"\ndoc_source_mapping: \"files\"\ndoc_source_path: \"{}\"\n---\n\n{}\n", yaml_scalar(title), yaml_scalar(&spec.id), yaml_scalar(&rel), escape_untrusted_mdx(&content));
-        write(&target.join(&route), &page)?;
+        route_map.insert(rel.clone(), route.clone());
+        pages.push(SkillSubpage {
+            source_path: entry.path().to_path_buf(),
+            relative: rel,
+            route: route.clone(),
+            title: title.to_owned(),
+        });
         links.push(format!(
             "- [{}]({})",
             escape_markdown_link_label(&inner_text),
@@ -913,7 +944,7 @@ fn render_skill_package(
             }
         }
     }
-    Ok(out)
+    Ok((out, pages))
 }
 
 fn escape_markdown_link_label(label: &str) -> String {
