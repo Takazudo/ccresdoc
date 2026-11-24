@@ -25,6 +25,7 @@ mod search_index_publication;
 pub mod settings;
 pub mod settings_commands;
 pub mod settings_window;
+pub mod source_commands;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,8 +38,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, thread};
 
 use ccresdoc_claude_md::{
-    generate_codex, watch_codex, CodexConfig, CodexWatchEvent, CodexWatchHandle,
-    Config as GenConfig, WatchEvent, WatchHandle, DEFAULT_DEBOUNCE,
+    generate_source, watch_source, SourceFormat, SourceRule, SourceSpec, SourceWatchEvent,
+    SourceWatchHandle, DEFAULT_DEBOUNCE,
 };
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -47,7 +48,7 @@ use runtime::{
     RuntimeDiagnosticKind, SystemPortBoundary,
 };
 use search_index_publication::publish_search_index;
-use settings::{EffectiveSettings, SettingsStore};
+use settings::{EffectiveSettings, EffectiveSource, PublicFormat, RuleSnapshot, SettingsStore};
 use settings_window::{
     lifecycle_action, open_or_focus_settings, LifecycleAction, SETTINGS_MENU_ID,
     SETTINGS_WINDOW_LABEL,
@@ -115,8 +116,7 @@ struct Sidecar {
 }
 
 struct ResourceWatchers {
-    claude: Option<WatchHandle>,
-    codex: Option<CodexWatchHandle>,
+    sources: Vec<SourceWatchHandle>,
     /// Serializes coordinator-owned overview publications across both source
     /// watchers. Detail namespaces remain disjoint and generator-owned.
     publication: Arc<Mutex<()>>,
@@ -125,7 +125,7 @@ struct ResourceWatchers {
 struct ResourceRuntime {
     generation: u64,
     marker: String,
-    selection: runtime::ResourceSelection,
+    source_mounts: std::collections::BTreeMap<String, String>,
     effective: EffectiveSettings,
     counts: runtime::ResourceCounts,
     workspace: PathBuf,
@@ -1048,8 +1048,9 @@ fn stop_owned_runtime_resources(
         log_to(
             log_path,
             &format!(
-                "stop runtime[{}]: claude={} codex={}",
-                owned.generation, owned.selection.claude, owned.selection.codex
+                "stop runtime[{}]: sources={}",
+                owned.generation,
+                owned.source_mounts.len()
             ),
         );
         // Never hold the resource slot while joining: an in-flight callback
@@ -1057,8 +1058,7 @@ fn stop_owned_runtime_resources(
         let watchers = std::mem::replace(
             &mut owned.watchers,
             ResourceWatchers {
-                claude: None,
-                codex: None,
+                sources: Vec::new(),
                 publication: Arc::new(Mutex::new(())),
             },
         );
@@ -1146,7 +1146,7 @@ fn publish_launch_failure(
 struct CandidateTree {
     root: PathBuf,
     marker: String,
-    selection: runtime::ResourceSelection,
+    source_mounts: std::collections::BTreeMap<String, String>,
     counts: runtime::ResourceCounts,
 }
 
@@ -1159,33 +1159,16 @@ impl Drop for CandidateTree {
     }
 }
 
-fn write_overview(
-    docs_dir: &Path,
-    kind: &str,
-    enabled: bool,
-    categories: &[&str],
-    marker: &str,
-) -> Result<(), String> {
-    let dir = docs_dir.join(kind);
-    fs::create_dir_all(&dir).map_err(|error| format!("create {kind} overview: {error}"))?;
-    fs::write(
-        dir.join("index.mdx"),
-        runtime::overview_mdx(kind, enabled, categories, marker),
-    )
-    .map_err(|error| format!("write {kind} overview: {error}"))
-}
-
-/// A rollback and its shared-index repair are one coordinator operation. The
-/// publication is attempted even when journal restoration reports an error so
-/// the index describes the best tree that is actually left on disk.
-fn rollback_and_republish(
-    journal: runtime::ManagedTreeJournal,
+/// Restore the previous owned source tree and refresh search from the
+/// restored private manifest even when rollback itself reports an error.
+fn rollback_source_and_republish(
+    journal: runtime::ManagedSourceJournal,
     workspace: &Path,
     docs_dir: &Path,
 ) -> Result<(), String> {
     let rollback = journal
         .rollback()
-        .map_err(|error| format!("managed-tree restore failed: {error}"));
+        .map_err(|error| format!("source-tree restore failed: {error}"));
     let publication = publish_search_index(workspace, docs_dir)
         .map_err(|error| format!("restored search-index publication failed: {error}"));
     match (rollback, publication) {
@@ -1197,133 +1180,186 @@ fn rollback_and_republish(
 
 /// Generate a complete selected-resource candidate away from the served docs
 /// tree. Disabled paths are never dereferenced or passed to a generator.
+fn source_spec(source: &EffectiveSource) -> SourceSpec {
+    let rule = match &source.rules {
+        RuleSnapshot::ClaudeCode { .. } => SourceRule::ClaudeCode,
+        RuleSnapshot::Codex { .. } => SourceRule::Codex,
+        RuleSnapshot::Custom {
+            format,
+            include,
+            exclude,
+            ..
+        } => SourceRule::Custom {
+            format: match format {
+                PublicFormat::Markdown => SourceFormat::Markdown,
+                PublicFormat::Code => SourceFormat::Code,
+                PublicFormat::Skill => SourceFormat::Skill,
+            },
+            include: include.clone(),
+            exclude: exclude.clone(),
+        },
+    };
+    SourceSpec {
+        id: source.id.clone(),
+        label: source.label.clone(),
+        root: source.root.clone(),
+        scan_root: source.scan_root.clone(),
+        mount: source.mount.clone(),
+        rule,
+    }
+}
+
+/// Build every enabled source into an isolated candidate. The app-owned
+/// management article is checked in and never part of this generated tree.
 fn build_candidate(
     workspace: &Path,
     desired: &EffectiveSettings,
     generation: u64,
     log_path: &str,
 ) -> Result<CandidateTree, String> {
-    let selection = runtime::ResourceSelection::from_effective(desired);
     let marker = runtime::transition_marker(generation)
         .map_err(|error| format!("create transition marker: {error}"))?;
     let transitions = workspace.join(".ccresdoc-resource-transitions");
     let root = transitions.join(format!("candidate-{marker}"));
     runtime::remove_exact(&root).map_err(|error| format!("clear candidate: {error}"))?;
     fs::create_dir_all(&root).map_err(|error| format!("create candidate: {error}"))?;
-    let candidate = CandidateTree {
+    let mut candidate = CandidateTree {
         root,
         marker,
-        selection,
+        source_mounts: std::collections::BTreeMap::new(),
         counts: runtime::ResourceCounts::default(),
     };
-    let mut candidate = candidate;
-
-    let mut claude_categories = Vec::new();
-    if selection.claude {
-        let source = desired
-            .claude_dir
-            .as_ref()
-            .ok_or_else(|| "Claude is enabled without an effective source".to_string())?;
-        let config = GenConfig {
-            claude_dir: source.clone(),
-            project_root: source.clone(),
-            docs_dir: candidate.root.clone(),
-        };
-        let report = ccresdoc_claude_md::generate(&config)
-            .map_err(|error| format!("Claude candidate generation failed: {error}"))?;
-        candidate.counts.claude_md = report.claude_md;
-        candidate.counts.claude_commands = report.commands;
-        candidate.counts.claude_skills = report.skills;
-        candidate.counts.claude_agents = report.agents;
-        if report.claude_md > 0 {
-            claude_categories.push("claude-md");
-        }
-        if report.commands > 0 {
-            claude_categories.push("claude-commands");
-        }
-        if report.skills > 0 {
-            claude_categories.push("claude-skills");
-        }
-        if report.agents > 0 {
-            claude_categories.push("claude-agents");
-        }
+    for source in &desired.sources {
+        let spec = source_spec(source);
+        let report =
+            generate_source(&spec, &candidate.root, &candidate.marker).map_err(|error| {
+                format!(
+                    "source '{}' candidate generation failed: {error}",
+                    source.id
+                )
+            })?;
+        candidate
+            .counts
+            .source_pages
+            .insert(report.source_id.clone(), report.pages);
+        candidate
+            .source_mounts
+            .insert(report.source_id.clone(), report.mount.clone());
         log_to(
             log_path,
             &format!(
-                "launch[{generation}]: Claude candidate — claude_md={} commands={} skills={} agents={}",
-                report.claude_md, report.commands, report.skills, report.agents
+                "launch[{generation}]: source {} mount={} pages={}",
+                report.source_id, report.mount, report.pages
             ),
         );
     }
-
-    let mut codex_categories = Vec::new();
-    if selection.codex {
-        let source = desired
-            .codex_dir
-            .as_ref()
-            .ok_or_else(|| "Codex is enabled without an effective source".to_string())?;
-        let config = CodexConfig {
-            codex_dir: source.clone(),
-            project_root: source.clone(),
-            docs_dir: candidate.root.clone(),
-        };
-        let report = generate_codex(&config)
-            .map_err(|error| format!("Codex candidate generation failed: {error}"))?;
-        candidate.counts.codex_agents_md = report.agents_md;
-        candidate.counts.codex_config = report.config;
-        candidate.counts.codex_agents = report.agents;
-        candidate.counts.codex_hooks = report.hooks;
-        candidate.counts.codex_rules = report.rules;
-        candidate.counts.codex_skills = report.skills;
-        candidate.counts.codex_warnings = report.warnings.len();
-        if report.agents_md > 0 {
-            codex_categories.push("codex-agents-md");
-        }
-        if report.config > 0 {
-            codex_categories.push("codex-config");
-        }
-        if report.agents > 0 {
-            codex_categories.push("codex-agents");
-        }
-        if report.hooks > 0 {
-            codex_categories.push("codex-hooks");
-        }
-        if report.rules > 0 {
-            codex_categories.push("codex-rules");
-        }
-        if report.skills > 0 {
-            codex_categories.push("codex-skills");
-        }
-        log_to(
-            log_path,
-            &format!(
-                "launch[{generation}]: Codex candidate — agents_md={} config={} agents={} hooks={} rules={} skills={} warnings={}",
-                report.agents_md,
-                report.config,
-                report.agents,
-                report.hooks,
-                report.rules,
-                report.skills,
-                report.warnings.len()
-            ),
-        );
-    }
-
-    write_overview(
-        &candidate.root,
-        "claude",
-        selection.claude,
-        &claude_categories,
-        &candidate.marker,
-    )?;
-    write_overview(
-        &candidate.root,
-        "codex",
-        selection.codex,
-        &codex_categories,
-        &candidate.marker,
-    )?;
     Ok(candidate)
+}
+
+fn rebuild_watched_sources(
+    app_handle: &AppHandle,
+    desired: &EffectiveSettings,
+    workspace: &Path,
+    docs_dir: &Path,
+    generation: u64,
+    log_path: &str,
+) -> Result<(), String> {
+    if !watcher_publication_allowed(app_handle, generation) {
+        return Ok(());
+    }
+    let candidate = build_candidate(workspace, desired, generation, log_path)?;
+    if !watcher_publication_allowed(app_handle, generation) {
+        return Ok(());
+    }
+    let backup = workspace
+        .join(".ccresdoc-resource-transitions")
+        .join(format!("watch-backup-{}", candidate.marker));
+    let manifest = workspace.join(".ccresdoc-owned-sources.json");
+    let journal = runtime::ManagedSourceJournal::promote(
+        docs_dir,
+        &candidate.root,
+        &backup,
+        &manifest,
+        &candidate.source_mounts,
+    )
+    .map_err(|error| format!("watch publication failed: {error}"))?;
+    if !watcher_publication_allowed(app_handle, generation) {
+        return rollback_source_and_republish(journal, workspace, docs_dir);
+    }
+    if let Err(error) = publish_search_index(workspace, docs_dir) {
+        return Err(format!(
+            "watch search publication failed: {error}; {}",
+            rollback_source_and_republish(journal, workspace, docs_dir)
+                .err()
+                .unwrap_or_default()
+        ));
+    }
+    let mounts = candidate
+        .source_mounts
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    let state = app_handle.state::<AppState>();
+    let port = state.effective_port.load(Ordering::SeqCst);
+    let ready = runtime::wait_for_ready(
+        port,
+        Duration::from_secs(45),
+        (state.runtime.generation(), generation),
+        || None,
+        |port| {
+            runtime::probe_source_readiness(
+                port,
+                &mounts,
+                &candidate.marker,
+                Duration::from_secs(1),
+            )
+        },
+    );
+    if ready != ReadyResult::Ready {
+        return Err(format!(
+            "watch readiness failed: {ready:?}; {}",
+            rollback_source_and_republish(journal, workspace, docs_dir)
+                .err()
+                .unwrap_or_default()
+        ));
+    }
+    if !watcher_publication_allowed(app_handle, generation) {
+        return rollback_source_and_republish(journal, workspace, docs_dir);
+    }
+    journal
+        .commit()
+        .map_err(|error| format!("watch backup cleanup failed: {error}"))?;
+    let recovered = {
+        let mut slot = state.resources.lock().unwrap();
+        let Some(runtime) = slot
+            .as_mut()
+            .filter(|runtime| runtime.generation == generation)
+        else {
+            return Ok(());
+        };
+        let recovered = runtime.effective.sources != desired.sources;
+        runtime.marker.clone_from(&candidate.marker);
+        runtime.source_mounts.clone_from(&candidate.source_mounts);
+        runtime.effective.sources.clone_from(&desired.sources);
+        runtime.counts.clone_from(&candidate.counts);
+        recovered
+    };
+    if recovered {
+        state.runtime.publish_ready(
+            desired.clone(),
+            PortChoice {
+                preferred_port: desired.preferred_port,
+                effective_port: port,
+                fallback_used: desired.preferred_port != port,
+            },
+            generation,
+        );
+    }
+    state
+        .runtime
+        .publish_generated(candidate.counts.clone(), generation);
+    state.runtime.clear_watch_failure(generation);
+    Ok(())
 }
 
 fn start_resource_watchers(
@@ -1332,218 +1368,70 @@ fn start_resource_watchers(
     workspace: &Path,
     docs_dir: &Path,
     generation: u64,
-    marker: &str,
+    _marker: &str,
     log_path: &str,
 ) -> Result<ResourceWatchers, String> {
     let mut watchers = ResourceWatchers {
-        claude: None,
-        codex: None,
+        sources: Vec::new(),
         publication: Arc::new(Mutex::new(())),
     };
-    if desired.claude_resources {
-        let source = desired
-            .claude_dir
-            .as_ref()
-            .ok_or_else(|| "Claude is enabled without an effective source".to_string())?;
+    for source in &desired.sources {
+        let spec = source_spec(source);
+        let source_id = source.id.clone();
         let callback_app = app_handle.clone();
-        let callback_log = log_path.to_string();
-        let callback_docs = docs_dir.to_path_buf();
+        let callback_desired = desired.clone();
         let callback_workspace = workspace.to_path_buf();
-        let callback_marker = marker.to_string();
-        let publication = watchers.publication.clone();
-        watchers.claude = Some(
-            ccresdoc_claude_md::watch(
-                GenConfig {
-                    claude_dir: source.clone(),
-                    project_root: source.clone(),
-                    docs_dir: docs_dir.to_path_buf(),
-                },
-                DEFAULT_DEBOUNCE,
-                move |event| {
-                    if !watcher_publication_allowed(&callback_app, generation) {
-                        return;
-                    }
-                    match event {
-                        WatchEvent::Regenerated(report) => {
-                            let _publication = publication.lock().unwrap();
-                            if !watcher_publication_allowed(&callback_app, generation) {
-                                return;
-                            }
-                            let mut categories = Vec::new();
-                            if report.claude_md > 0 {
-                                categories.push("claude-md");
-                            }
-                            if report.commands > 0 {
-                                categories.push("claude-commands");
-                            }
-                            if report.skills > 0 {
-                                categories.push("claude-skills");
-                            }
-                            if report.agents > 0 {
-                                categories.push("claude-agents");
-                            }
-                            if let Err(error) = write_overview(
-                                &callback_docs,
-                                "claude",
-                                true,
-                                &categories,
-                                &callback_marker,
-                            ) {
-                                log_to(&callback_log, &format!("watch[{generation}]: Claude overview error: {error}"));
-                            }
-                            if let Err(error) =
-                                publish_search_index(&callback_workspace, &callback_docs)
-                            {
-                                log_to(
-                                    &callback_log,
-                                    &format!(
-                                        "watch[{generation}]: shared search-index error after Claude regeneration: {error}"
-                                    ),
-                                );
-                            }
-                            let counts = {
-                                let state = callback_app.state::<AppState>();
-                                let mut resources = state.resources.lock().unwrap();
-                                resources.as_mut().and_then(|runtime| {
-                                    (runtime.generation == generation).then(|| {
-                                        runtime.counts.claude_md = report.claude_md;
-                                        runtime.counts.claude_commands = report.commands;
-                                        runtime.counts.claude_skills = report.skills;
-                                        runtime.counts.claude_agents = report.agents;
-                                        runtime.counts.clone()
-                                    })
-                                })
-                            };
-                            if let Some(counts) = counts {
-                                callback_app
-                                    .state::<AppState>()
-                                    .runtime
-                                    .publish_generated(counts, generation);
-                            }
-                            log_to(&callback_log, &format!(
-                                "watch[{generation}]: Claude regenerated — claude_md={} commands={} skills={} agents={}",
-                                report.claude_md, report.commands, report.skills, report.agents
-                            ));
-                        }
-                        WatchEvent::Error(error) => log_to(
-                            &callback_log,
-                            &format!("watch[{generation}]: Claude error: {error}"),
-                        ),
-                    }
-                },
-            )
-            .map_err(|error| format!("start Claude watcher: {error}"))?,
-        );
-    }
-    if desired.codex_resources {
-        let source = desired
-            .codex_dir
-            .as_ref()
-            .ok_or_else(|| "Codex is enabled without an effective source".to_string())?;
-        let callback_app = app_handle.clone();
-        let callback_log = log_path.to_string();
         let callback_docs = docs_dir.to_path_buf();
-        let callback_workspace = workspace.to_path_buf();
-        let callback_marker = marker.to_string();
+        let callback_log = log_path.to_string();
         let publication = watchers.publication.clone();
-        watchers.codex = Some(
-            watch_codex(
-                CodexConfig {
-                    codex_dir: source.clone(),
-                    project_root: source.clone(),
-                    docs_dir: docs_dir.to_path_buf(),
-                },
-                DEFAULT_DEBOUNCE,
-                move |event| {
-                    if !watcher_publication_allowed(&callback_app, generation) {
-                        return;
-                    }
-                    match event {
-                        CodexWatchEvent::Regenerated(report) => {
-                            let _publication = publication.lock().unwrap();
-                            if !watcher_publication_allowed(&callback_app, generation) {
-                                return;
-                            }
-                            let mut categories = Vec::new();
-                            if report.agents_md > 0 {
-                                categories.push("codex-agents-md");
-                            }
-                            if report.config > 0 {
-                                categories.push("codex-config");
-                            }
-                            if report.agents > 0 {
-                                categories.push("codex-agents");
-                            }
-                            if report.hooks > 0 {
-                                categories.push("codex-hooks");
-                            }
-                            if report.rules > 0 {
-                                categories.push("codex-rules");
-                            }
-                            if report.skills > 0 {
-                                categories.push("codex-skills");
-                            }
-                            if let Err(error) = write_overview(
-                                &callback_docs,
-                                "codex",
-                                true,
-                                &categories,
-                                &callback_marker,
-                            ) {
-                                log_to(&callback_log, &format!("watch[{generation}]: Codex overview error: {error}"));
-                            }
-                            if let Err(error) =
-                                publish_search_index(&callback_workspace, &callback_docs)
-                            {
-                                log_to(
-                                    &callback_log,
-                                    &format!(
-                                        "watch[{generation}]: shared search-index error after Codex regeneration: {error}"
-                                    ),
-                                );
-                            }
-                            let counts = {
-                                let state = callback_app.state::<AppState>();
-                                let mut resources = state.resources.lock().unwrap();
-                                resources.as_mut().and_then(|runtime| {
-                                    (runtime.generation == generation).then(|| {
-                                        runtime.counts.codex_agents_md = report.agents_md;
-                                        runtime.counts.codex_config = report.config;
-                                        runtime.counts.codex_agents = report.agents;
-                                        runtime.counts.codex_hooks = report.hooks;
-                                        runtime.counts.codex_rules = report.rules;
-                                        runtime.counts.codex_skills = report.skills;
-                                        runtime.counts.codex_warnings = report.warnings.len();
-                                        runtime.counts.clone()
-                                    })
-                                })
-                            };
-                            if let Some(counts) = counts {
-                                callback_app
-                                    .state::<AppState>()
-                                    .runtime
-                                    .publish_generated(counts, generation);
-                            }
-                            log_to(&callback_log, &format!(
-                                "watch[{generation}]: Codex regenerated — agents_md={} config={} agents={} hooks={} rules={} skills={} warnings={}",
-                                report.agents_md,
-                                report.config,
-                                report.agents,
-                                report.hooks,
-                                report.rules,
-                                report.skills,
-                                report.warnings.len()
-                            ));
-                        }
-                        CodexWatchEvent::Error { source, error } => log_to(
+        let handle = watch_source(spec, DEFAULT_DEBOUNCE, move |event| {
+            if !watcher_publication_allowed(&callback_app, generation) {
+                return;
+            }
+            let _lease = publication.lock().unwrap();
+            if !watcher_publication_allowed(&callback_app, generation) {
+                return;
+            }
+            match event {
+                SourceWatchEvent::Changed => {
+                    match rebuild_watched_sources(
+                        &callback_app,
+                        &callback_desired,
+                        &callback_workspace,
+                        &callback_docs,
+                        generation,
+                        &callback_log,
+                    ) {
+                        Ok(()) => log_to(
                             &callback_log,
-                            &format!("watch[{generation}]: Codex {source:?} error: {error}"),
+                            &format!("watch[{generation}]: source {source_id} republished"),
                         ),
+                        Err(error) => {
+                            callback_app
+                                .state::<AppState>()
+                                .runtime
+                                .publish_watch_failure(error.clone(), generation);
+                            log_to(
+                                &callback_log,
+                                &format!("watch[{generation}]: source {source_id} failed: {error}"),
+                            );
+                        }
                     }
-                },
-            )
-            .map_err(|error| format!("start Codex watcher: {error}"))?,
-        );
+                }
+                SourceWatchEvent::Error(error) => {
+                    callback_app
+                        .state::<AppState>()
+                        .runtime
+                        .publish_watch_failure(error.to_string(), generation);
+                    log_to(
+                        &callback_log,
+                        &format!("watch[{generation}]: source {source_id} event failed: {error}"),
+                    );
+                }
+            }
+        })
+        .map_err(|error| format!("start source watcher '{}': {error}", source.id))?;
+        watchers.sources.push(handle);
     }
     Ok(watchers)
 }
@@ -1555,7 +1443,12 @@ fn relaunch_previous_runtime(
     log_path: &str,
 ) -> Result<(ResourceRuntime, PortChoice), String> {
     let docs_dir = previous.workspace.join("src").join("content").join("docs");
-    let selection = runtime::ResourceSelection::from_effective(&previous.effective);
+    let mounts = previous
+        .effective
+        .sources
+        .iter()
+        .map(|source| source.mount.clone())
+        .collect::<Vec<_>>();
     let watchers = start_resource_watchers(
         app_handle,
         &previous.effective,
@@ -1584,12 +1477,7 @@ fn relaunch_previous_runtime(
             _ => None,
         },
         |port| {
-            runtime::probe_resource_readiness(
-                port,
-                selection,
-                &previous.marker,
-                Duration::from_secs(1),
-            )
+            runtime::probe_source_readiness(port, &mounts, &previous.marker, Duration::from_secs(1))
         },
     );
     if ready != ReadyResult::Ready {
@@ -1606,7 +1494,12 @@ fn relaunch_previous_runtime(
         ResourceRuntime {
             generation,
             marker: previous.marker,
-            selection,
+            source_mounts: previous
+                .effective
+                .sources
+                .iter()
+                .map(|source| (source.id.clone(), source.mount.clone()))
+                .collect(),
             effective: previous.effective,
             counts: previous.counts,
             workspace: previous.workspace,
@@ -1749,21 +1642,49 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
         }
     };
 
-    // 4. Build the entire four-state candidate outside the served tree. This
-    // is the only point at which selected sources are inspected.
+    // Build outside the served tree. On a cold source failure, start the
+    // app-owned article without selected sources so the user can repair the
+    // persisted catalog there. A working previous runtime is left untouched.
+    let mut active_desired = desired.clone();
+    let mut cold_source_error = None;
     let candidate = match build_candidate(&workspace, &desired, my_gen, &log_path) {
         Ok(candidate) => candidate,
         Err(error) => {
-            publish_launch_failure(
-                &state,
-                my_gen,
-                &desired,
-                RuntimeDiagnosticKind::GenerateFailed,
-                None,
-                error,
+            if resources_arc.lock().unwrap().is_some() {
+                publish_launch_failure(
+                    &state,
+                    my_gen,
+                    &desired,
+                    RuntimeDiagnosticKind::GenerateFailed,
+                    None,
+                    error,
+                );
+                emit_launch_error_if_current(app_handle, my_gen, "generate_failed");
+                return;
+            }
+            log_to(
+                &log_path,
+                &format!(
+                    "launch[{my_gen}]: source generation failed; opening recovery article: {error}"
+                ),
             );
-            emit_launch_error_if_current(app_handle, my_gen, "generate_failed");
-            return;
+            cold_source_error = Some(error);
+            active_desired.sources.clear();
+            match build_candidate(&workspace, &active_desired, my_gen, &log_path) {
+                Ok(candidate) => candidate,
+                Err(recovery_error) => {
+                    publish_launch_failure(
+                        &state,
+                        my_gen,
+                        &desired,
+                        RuntimeDiagnosticKind::GenerateFailed,
+                        None,
+                        recovery_error,
+                    );
+                    emit_launch_error_if_current(app_handle, my_gen, "generate_failed");
+                    return;
+                }
+            }
         }
     };
 
@@ -1799,50 +1720,55 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
     let backup_dir = workspace
         .join(".ccresdoc-resource-transitions")
         .join(format!("backup-{}", candidate.marker));
-    let journal =
-        match runtime::ManagedTreeJournal::promote(&docs_dir, &candidate.root, &backup_dir) {
-            Ok(journal) => journal,
-            Err(error) => {
-                let mut diagnostic = RuntimeDiagnostic {
-                    kind: RuntimeDiagnosticKind::PromotionFailed,
-                    preferred_port: desired.preferred_port,
-                    attempted_port: None,
-                    message: format!("candidate promotion/restore failed: {error}"),
-                };
-                if let Err(publication) = publish_search_index(&workspace, &docs_dir) {
-                    diagnostic.kind = RuntimeDiagnosticKind::RestoreFailed;
-                    diagnostic.message.push_str(&format!(
-                        "; restored search-index publication failed: {publication}"
-                    ));
-                }
-                if previous_metadata.is_some() {
-                    if let Err(relaunch) = recover_previous_runtime(
-                        app_handle,
-                        &resources_arc,
-                        previous_metadata,
-                        my_gen,
-                        &log_path,
-                    ) {
-                        diagnostic.kind = RuntimeDiagnosticKind::RelaunchFailed;
-                        diagnostic
-                            .message
-                            .push_str(&format!("; previous relaunch failed: {relaunch}"));
-                        state.runtime.clear_active(my_gen);
-                    }
-                } else {
+    let journal = match runtime::ManagedSourceJournal::promote(
+        &docs_dir,
+        &candidate.root,
+        &backup_dir,
+        &workspace.join(".ccresdoc-owned-sources.json"),
+        &candidate.source_mounts,
+    ) {
+        Ok(journal) => journal,
+        Err(error) => {
+            let mut diagnostic = RuntimeDiagnostic {
+                kind: RuntimeDiagnosticKind::PromotionFailed,
+                preferred_port: desired.preferred_port,
+                attempted_port: None,
+                message: format!("candidate promotion/restore failed: {error}"),
+            };
+            if let Err(publication) = publish_search_index(&workspace, &docs_dir) {
+                diagnostic.kind = RuntimeDiagnosticKind::RestoreFailed;
+                diagnostic.message.push_str(&format!(
+                    "; restored search-index publication failed: {publication}"
+                ));
+            }
+            if previous_metadata.is_some() {
+                if let Err(relaunch) = recover_previous_runtime(
+                    app_handle,
+                    &resources_arc,
+                    previous_metadata,
+                    my_gen,
+                    &log_path,
+                ) {
+                    diagnostic.kind = RuntimeDiagnosticKind::RelaunchFailed;
+                    diagnostic
+                        .message
+                        .push_str(&format!("; previous relaunch failed: {relaunch}"));
                     state.runtime.clear_active(my_gen);
                 }
-                state.runtime.publish_failed(diagnostic, my_gen);
-                emit_launch_error_if_current(app_handle, my_gen, "promotion_failed");
-                return;
+            } else {
+                state.runtime.clear_active(my_gen);
             }
-        };
+            state.runtime.publish_failed(diagnostic, my_gen);
+            emit_launch_error_if_current(app_handle, my_gen, "promotion_failed");
+            return;
+        }
+    };
 
     // The old sidecar is stopped, so promote + publication form an
     // unobservable cutover. The new sidecar and watchers never start against a
     // tree whose shared index still describes the previous selection.
     if let Err(error) = publish_search_index(&workspace, &docs_dir) {
-        let rollback = rollback_and_republish(journal, &workspace, &docs_dir);
+        let rollback = rollback_source_and_republish(journal, &workspace, &docs_dir);
         let mut kind = RuntimeDiagnosticKind::PromotionFailed;
         let mut message = format!("candidate search-index publication failed: {error}");
         if let Err(restore) = rollback {
@@ -1873,7 +1799,11 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
     // failure drops/joins the first before the tree journal is rolled back.
     let watchers = match start_resource_watchers(
         app_handle,
-        &desired,
+        if cold_source_error.is_some() {
+            &desired
+        } else {
+            &active_desired
+        },
         &workspace,
         &docs_dir,
         my_gen,
@@ -1881,8 +1811,18 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
         &log_path,
     ) {
         Ok(watchers) => watchers,
+        Err(error) if cold_source_error.is_some() => {
+            log_to(
+                &log_path,
+                &format!("launch[{my_gen}]: recovery shell watcher unavailable: {error}"),
+            );
+            ResourceWatchers {
+                sources: Vec::new(),
+                publication: Arc::new(Mutex::new(())),
+            }
+        }
         Err(error) => {
-            let rollback = rollback_and_republish(journal, &workspace, &docs_dir);
+            let rollback = rollback_source_and_republish(journal, &workspace, &docs_dir);
             let mut kind = RuntimeDiagnosticKind::WatchFailed;
             let mut message = match rollback {
                 Ok(()) => error,
@@ -1963,9 +1903,13 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
                     })
             },
             |port| {
-                runtime::probe_resource_readiness(
+                runtime::probe_source_readiness(
                     port,
-                    candidate.selection,
+                    &candidate
+                        .source_mounts
+                        .values()
+                        .cloned()
+                        .collect::<Vec<_>>(),
                     &candidate.marker,
                     Duration::from_secs(1),
                 )
@@ -1997,7 +1941,7 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
         if let Some(mut sidecar) = candidate_sidecar {
             kill_sidecar(&mut sidecar, &log_path);
         }
-        match rollback_and_republish(journal, &workspace, &docs_dir) {
+        match rollback_source_and_republish(journal, &workspace, &docs_dir) {
             Err(error) => log_to(
                 &log_path,
                 &format!("launch: supersession restore failed: {error}"),
@@ -2029,12 +1973,12 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
         ReadyResult::Ready => {
             let sidecar = candidate_sidecar.expect("ready sidecar remains owned");
             let marker = candidate.marker.clone();
-            let mut active_effective = desired.clone();
+            let mut active_effective = active_desired.clone();
             active_effective.effective_port = choice.effective_port;
             let ready_runtime = ResourceRuntime {
                 generation: my_gen,
                 marker,
-                selection: candidate.selection,
+                source_mounts: candidate.source_mounts.clone(),
                 effective: active_effective,
                 counts: candidate.counts.clone(),
                 workspace: workspace.clone(),
@@ -2052,7 +1996,7 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
                 let handoff_generation = state.runtime.generation().load(Ordering::SeqCst);
                 drop(unpublished.watchers);
                 kill_sidecar(&mut unpublished.sidecar, &log_path);
-                match rollback_and_republish(journal, &workspace, &docs_dir) {
+                match rollback_source_and_republish(journal, &workspace, &docs_dir) {
                     Err(error) => log_to(
                         &log_path,
                         &format!("launch: publication restore failed: {error}"),
@@ -2079,7 +2023,18 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
             state
                 .effective_port
                 .store(choice.effective_port, Ordering::SeqCst);
-            state.runtime.publish_ready(desired, choice, my_gen);
+            state.runtime.publish_ready(active_desired, choice, my_gen);
+            if let Some(error) = cold_source_error {
+                state.runtime.publish_failed(
+                    RuntimeDiagnostic {
+                        kind: RuntimeDiagnosticKind::GenerateFailed,
+                        preferred_port: desired.preferred_port,
+                        attempted_port: Some(choice.effective_port),
+                        message: error,
+                    },
+                    my_gen,
+                );
+            }
             state.browser_bridge.activate(my_gen);
             state
                 .runtime
@@ -2114,7 +2069,7 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
                     .clone()
                     .unwrap_or_else(|| format!("{result:?}")),
             };
-            let restore_result = rollback_and_republish(journal, &workspace, &docs_dir);
+            let restore_result = rollback_source_and_republish(journal, &workspace, &docs_dir);
             let had_previous = previous_metadata.is_some();
             let recovery = match restore_result {
                 Ok(()) if had_previous => recover_previous_runtime(
@@ -2129,7 +2084,7 @@ fn launch(app_handle: &AppHandle, my_gen: u64, desired: EffectiveSettings) {
             };
             if let Err(error) = recovery {
                 log_to(&log_path, &format!("launch: recovery failed: {error}"));
-                diagnostic.kind = if error.starts_with("managed-tree restore failed") {
+                diagnostic.kind = if error.starts_with("source-tree restore failed") {
                     RuntimeDiagnosticKind::RestoreFailed
                 } else {
                     RuntimeDiagnosticKind::RelaunchFailed
@@ -2249,8 +2204,8 @@ fn main() {
         .unwrap_or_else(|_| home.join(".config/ccresdoc/config.toml"));
     let settings_store =
         SettingsStore::with_theme_packs(config_path, home, settings::bundled_theme_pack_slugs());
-    // Schema v2 is a clean break: a positively recognized v1 file at the active
-    // path is removed once so v2 defaults load. Nothing is written until Save.
+    // Schema v1 is intentionally retired. Recognized v2 settings are instead
+    // upgraded atomically so authored source paths and app choices survive.
     match settings_store.retire_recognized_v1() {
         Ok(settings::V1Retirement::Retired(revision)) => eprintln!(
             "settings: retired schema-v1 config {} ({})",
@@ -2262,6 +2217,9 @@ fn main() {
         }
         Ok(settings::V1Retirement::Absent | settings::V1Retirement::NotRecognized) => {}
         Err(error) => eprintln!("settings: schema-v1 retirement failed: {error}"),
+    }
+    if let Err(error) = settings_store.migrate_v2() {
+        eprintln!("settings: schema-v2 migration failed: {error}");
     }
     let settings_snapshot = settings_store.load();
     let appearance_seed =
@@ -2308,6 +2266,14 @@ fn main() {
             settings_commands::pick_source_directory,
             settings_commands::open_config_file,
             settings_commands::reveal_config_file,
+            source_commands::get_source_editor_snapshot,
+            source_commands::validate_source_editor_draft,
+            source_commands::save_source_editor_draft,
+            source_commands::rebase_source_editor_draft,
+            source_commands::apply_saved_sources,
+            source_commands::pick_document_source_directory,
+            source_commands::recover_document_source,
+            source_commands::open_document_source_editor,
         ])
         .setup(move |app| {
             // Resolve the log path under the app-data dir (always writable).
@@ -2366,25 +2332,18 @@ fn main() {
                     if browser_bridge::emit_native_command(app_handle, command_id).is_none() {
                         return;
                     }
-                    match command_id {
-                        "reload-documentation" => {
-                            navigate_to_loading(app_handle);
-                            start_launch(app_handle);
-                        }
-                        "open-in-default-browser" => {
-                            let app = app_handle.clone();
-                            tauri::async_runtime::spawn(async move {
-                                let Some(window) = app.get_webview_window("main") else {
-                                    return;
-                                };
-                                let _ = browser_bridge::open_current_page_in_default_browser(
-                                    window,
-                                    app.clone(),
-                                )
-                                .await;
-                            });
-                        }
-                        _ => {}
+                    if command_id == "open-in-default-browser" {
+                        let app = app_handle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let Some(window) = app.get_webview_window("main") else {
+                                return;
+                            };
+                            let _ = browser_bridge::open_current_page_in_default_browser(
+                                window,
+                                app.clone(),
+                            )
+                            .await;
+                        });
                     }
                 }
             });
@@ -2591,7 +2550,7 @@ mod tests {
     }
 
     #[test]
-    fn candidate_generation_covers_four_states_without_touching_live_tree() {
+    fn candidate_generation_covers_variable_sources_without_touching_live_tree() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace = temp.path().join("workspace");
         let live_docs = workspace.join("src/content/docs");
@@ -2610,7 +2569,33 @@ mod tests {
             (3, false, true),
             (4, true, true),
         ] {
+            let mut sources = Vec::new();
+            if claude_enabled {
+                sources.push(EffectiveSource {
+                    id: "source-claude".into(),
+                    label: "Claude".into(),
+                    root: claude.clone(),
+                    scan_root: claude.clone(),
+                    mount: "claude".into(),
+                    rules: RuleSnapshot::ClaudeCode {
+                        definition_version: 1,
+                    },
+                });
+            }
+            if codex_enabled {
+                sources.push(EffectiveSource {
+                    id: "source-codex".into(),
+                    label: "Codex".into(),
+                    root: codex.clone(),
+                    scan_root: codex.clone(),
+                    mount: "codex".into(),
+                    rules: RuleSnapshot::Codex {
+                        definition_version: 1,
+                    },
+                });
+            }
             let effective = EffectiveSettings {
+                sources,
                 claude_resources: claude_enabled,
                 codex_resources: codex_enabled,
                 claude_dir: claude_enabled.then(|| claude.clone()),
@@ -2623,29 +2608,26 @@ mod tests {
                 shortcuts: settings::default_shortcut_entries(),
             };
             let candidate = build_candidate(&workspace, &effective, generation, "").unwrap();
-            assert_eq!(candidate.root.join("claude-md").exists(), claude_enabled);
             assert_eq!(
-                candidate.root.join("codex-agents-md").exists(),
+                candidate
+                    .root
+                    .join("claude/instructions/index.mdx")
+                    .exists(),
+                claude_enabled
+            );
+            assert_eq!(
+                candidate.root.join("codex/instructions/index.mdx").exists(),
                 codex_enabled
             );
-            assert_eq!(candidate.counts.claude_md > 0, claude_enabled);
-            assert_eq!(candidate.counts.codex_agents_md > 0, codex_enabled);
-            let claude_overview =
-                fs::read_to_string(candidate.root.join("claude/index.mdx")).unwrap();
-            let codex_overview =
-                fs::read_to_string(candidate.root.join("codex/index.mdx")).unwrap();
-            assert!(claude_overview.contains(if claude_enabled {
-                "data-ccresdoc-state=\"enabled\""
-            } else {
-                "data-ccresdoc-state=\"disabled\""
-            }));
-            assert!(codex_overview.contains(if codex_enabled {
-                "data-ccresdoc-state=\"enabled\""
-            } else {
-                "data-ccresdoc-state=\"disabled\""
-            }));
-            assert!(claude_overview.contains(&candidate.marker));
-            assert!(codex_overview.contains(&candidate.marker));
+            assert_eq!(
+                candidate.counts.source_pages.len(),
+                usize::from(claude_enabled) + usize::from(codex_enabled)
+            );
+            for mount in candidate.source_mounts.values() {
+                let overview =
+                    fs::read_to_string(candidate.root.join(mount).join("index.mdx")).unwrap();
+                assert!(overview.contains(&candidate.marker));
+            }
             assert_eq!(
                 fs::read_to_string(live_docs.join("foreign.mdx")).unwrap(),
                 "served-before-cutover"
@@ -2664,6 +2646,28 @@ mod tests {
         fs::write(claude.join("CLAUDE.md"), "# generated first").unwrap();
         fs::write(live_docs.join("served.mdx"), "previous").unwrap();
         let effective = EffectiveSettings {
+            sources: vec![
+                EffectiveSource {
+                    id: "first".into(),
+                    label: "First".into(),
+                    root: claude.clone(),
+                    scan_root: claude.clone(),
+                    mount: "first".into(),
+                    rules: RuleSnapshot::ClaudeCode {
+                        definition_version: 1,
+                    },
+                },
+                EffectiveSource {
+                    id: "second".into(),
+                    label: "Second".into(),
+                    root: workspace.clone(),
+                    scan_root: workspace.clone(),
+                    mount: "second".into(),
+                    rules: RuleSnapshot::Codex {
+                        definition_version: 1,
+                    },
+                },
+            ],
             claude_resources: true,
             codex_resources: true,
             claude_dir: Some(claude),
@@ -2678,7 +2682,7 @@ mod tests {
             shortcuts: settings::default_shortcut_entries(),
         };
         let error = build_candidate(&workspace, &effective, 9, "").unwrap_err();
-        assert!(error.contains("Codex candidate generation failed"));
+        assert!(error.contains("source 'second' candidate generation failed"));
         assert_eq!(
             fs::read_to_string(live_docs.join("served.mdx")).unwrap(),
             "previous"
@@ -2691,41 +2695,61 @@ mod tests {
     }
 
     #[test]
-    fn promoted_and_rolled_back_trees_republish_matching_search_indexes() {
+    fn promoted_and_rolled_back_sources_republish_matching_search_indexes() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace = temp.path().join("workspace");
         let docs = workspace.join("src/content/docs");
-        let candidate = workspace.join("candidate");
-        let backup = workspace.join("backup");
-        fs::create_dir_all(docs.join("claude-md")).unwrap();
+        let initial = workspace.join("initial");
+        let initial_backup = workspace.join("initial-backup");
+        let manifest = workspace.join(".ccresdoc-owned-sources.json");
+        fs::create_dir_all(initial.join("first")).unwrap();
         fs::write(
-            docs.join("claude-md/old.mdx"),
+            initial.join("first/old.mdx"),
             "---\ntitle: Old\n---\n\nold body\n",
         )
+        .unwrap();
+        runtime::ManagedSourceJournal::promote(
+            &docs,
+            &initial,
+            &initial_backup,
+            &manifest,
+            &std::collections::BTreeMap::from([("source-a".into(), "first".into())]),
+        )
+        .unwrap()
+        .commit()
         .unwrap();
         publish_search_index(&workspace, &docs).unwrap();
         assert!(
             fs::read_to_string(workspace.join("public/docs/search-index.json"))
                 .unwrap()
-                .contains("claude:claude-md/old")
+                .contains("source-a:first/old")
         );
 
-        fs::create_dir_all(candidate.join("codex-config")).unwrap();
+        let candidate = workspace.join("candidate");
+        let backup = workspace.join("backup");
+        fs::create_dir_all(candidate.join("second")).unwrap();
         fs::write(
-            candidate.join("codex-config/new.mdx"),
+            candidate.join("second/new.mdx"),
             "---\ntitle: New\n---\n\nnew body\n",
         )
         .unwrap();
-        let journal = runtime::ManagedTreeJournal::promote(&docs, &candidate, &backup).unwrap();
+        let journal = runtime::ManagedSourceJournal::promote(
+            &docs,
+            &candidate,
+            &backup,
+            &manifest,
+            &std::collections::BTreeMap::from([("source-b".into(), "second".into())]),
+        )
+        .unwrap();
         publish_search_index(&workspace, &docs).unwrap();
         let promoted = fs::read_to_string(workspace.join("public/docs/search-index.json")).unwrap();
-        assert!(promoted.contains("codex:codex-config/new"));
-        assert!(!promoted.contains("claude:claude-md/old"));
+        assert!(promoted.contains("source-b:second/new"));
+        assert!(!promoted.contains("source-a:first/old"));
 
-        rollback_and_republish(journal, &workspace, &docs).unwrap();
+        rollback_source_and_republish(journal, &workspace, &docs).unwrap();
         let restored = fs::read_to_string(workspace.join("public/docs/search-index.json")).unwrap();
-        assert!(restored.contains("claude:claude-md/old"));
-        assert!(!restored.contains("codex:codex-config/new"));
+        assert!(restored.contains("source-a:first/old"));
+        assert!(!restored.contains("source-b:second/new"));
     }
 
     #[test]

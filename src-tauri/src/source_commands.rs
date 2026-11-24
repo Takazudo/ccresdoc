@@ -26,19 +26,42 @@ pub(crate) fn open_document_source_editor(
     app: AppHandle,
 ) -> Result<(), CommandError> {
     if window.label() != SETTINGS_WINDOW_LABEL {
-        return Err(CommandError::new("forbidden_window", "this action requires Settings"));
+        return Err(CommandError::new(
+            "forbidden_window",
+            "this action requires Settings",
+        ));
     }
     let state = app.state::<AppState>();
-    let port = state.resources.lock().unwrap().as_ref()
+    let port = state
+        .resources
+        .lock()
+        .unwrap()
+        .as_ref()
         .map(|runtime| runtime.effective.effective_port)
-        .ok_or_else(|| CommandError::new("runtime_unavailable", "the document server is not running; repair a source here and retry"))?;
-    let main = app.get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or_else(|| {
+            CommandError::new(
+                "runtime_unavailable",
+                "the document server is not running; repair a source here and retry",
+            )
+        })?;
+    let main = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| CommandError::new("window", "main window is unavailable"))?;
-    let url = format!("http://localhost:{port}{EDITOR_PATH}").parse::<tauri::Url>()
+    let url = format!("http://localhost:{port}{EDITOR_PATH}")
+        .parse::<tauri::Url>()
         .map_err(|error| CommandError::new("url", error.to_string()))?;
-    main.navigate(url).map_err(|error| CommandError::new("window", format!("open source editor: {error}")))?;
-    main.show().map_err(|error| CommandError::new("window", error.to_string()))?;
-    main.set_focus().map_err(|error| CommandError::new("window", error.to_string()))?;
+    let already_open = main.url().is_ok_and(|current| {
+        current.path() == EDITOR_PATH
+            && crate::browser_bridge::validate_active_docs_url(&current, port).is_ok()
+    });
+    if !already_open {
+        main.navigate(url)
+            .map_err(|error| CommandError::new("window", format!("open source editor: {error}")))?;
+    }
+    main.show()
+        .map_err(|error| CommandError::new("window", error.to_string()))?;
+    main.set_focus()
+        .map_err(|error| CommandError::new("window", error.to_string()))?;
     Ok(())
 }
 
@@ -60,7 +83,14 @@ pub struct SourceEditorSnapshot {
 fn snapshot(state: &AppState) -> SourceEditorSnapshot {
     let settings = state.settings_store.load();
     let runtime = state.runtime.snapshot();
-    let pending_apply = settings.revision != runtime.authored.revision || runtime.phase != RuntimePhase::Ready;
+    let pending_apply =
+        settings.revision != runtime.authored.revision || runtime.phase != RuntimePhase::Ready;
+    let owned_generation = state
+        .resources
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map_or(runtime.generation, |owned| owned.generation);
     SourceEditorSnapshot {
         catalog: settings.source_catalog,
         builtin_presets: builtin_presets(),
@@ -68,7 +98,7 @@ fn snapshot(state: &AppState) -> SourceEditorSnapshot {
         load_status: settings.status,
         validation: settings.validation,
         runtime_phase: runtime.phase,
-        runtime_generation: runtime.generation,
+        runtime_generation: owned_generation,
         pending_apply,
         active_source_ids: runtime.active.map_or_else(Vec::new, |active| {
             active.sources.into_iter().map(|source| source.id).collect()
@@ -83,20 +113,42 @@ fn authorize_editor(
     expected_generation: Option<u64>,
 ) -> Result<u64, CommandError> {
     if window.label() != MAIN_WINDOW_LABEL {
-        return Err(CommandError::new("forbidden_window", "source editing requires the main window"));
+        return Err(CommandError::new(
+            "forbidden_window",
+            "source editing requires the main window",
+        ));
     }
-    let (generation, port) = state.resources.lock().unwrap().as_ref()
+    let (generation, port) = state
+        .resources
+        .lock()
+        .unwrap()
+        .as_ref()
         .map(|runtime| (runtime.generation, runtime.effective.effective_port))
-        .ok_or_else(|| CommandError::new("runtime_unavailable", "the document runtime is not active"))?;
+        .ok_or_else(|| {
+            CommandError::new("runtime_unavailable", "the document runtime is not active")
+        })?;
+    let coordinator = state.runtime.snapshot();
     let current_generation = state.runtime.generation().load(Ordering::SeqCst);
-    if current_generation != generation
-        || state.browser_bridge.bootstrap().is_none_or(|bootstrap| bootstrap.runtime_generation != generation)
+    if !owned_generation_is_current(generation, current_generation, coordinator.phase)
+        || state
+            .browser_bridge
+            .bootstrap()
+            .is_none_or(|bootstrap| bootstrap.runtime_generation != generation)
     {
-        return Err(CommandError::new("stale_generation", "reload the editor for the current document runtime"));
+        return Err(CommandError::new(
+            "stale_generation",
+            "reload the editor for the current document runtime",
+        ));
     }
-    let url = window.url().map_err(|error| CommandError::new("caller_url", error.to_string()))?;
+    let url = window
+        .url()
+        .map_err(|error| CommandError::new("caller_url", error.to_string()))?;
     validate_editor_scope(window.label(), &url, port, generation, expected_generation)?;
     Ok(generation)
+}
+
+fn owned_generation_is_current(owned: u64, coordinator: u64, phase: RuntimePhase) -> bool {
+    owned == coordinator || phase == RuntimePhase::SavedNotActive
 }
 
 fn validate_editor_scope(
@@ -107,14 +159,25 @@ fn validate_editor_scope(
     expected_generation: Option<u64>,
 ) -> Result<(), CommandError> {
     if label != MAIN_WINDOW_LABEL {
-        return Err(CommandError::new("forbidden_window", "source editing requires the main window"));
+        return Err(CommandError::new(
+            "forbidden_window",
+            "source editing requires the main window",
+        ));
     }
     if expected_generation.is_some_and(|expected| expected != generation) {
-        return Err(CommandError::new("stale_generation", "reload the editor for the current document runtime"));
+        return Err(CommandError::new(
+            "stale_generation",
+            "reload the editor for the current document runtime",
+        ));
     }
     crate::browser_bridge::validate_active_docs_url(url, port)?;
-    if url.path() != EDITOR_PATH || url.query().is_some() || url.fragment().is_some() {
-        return Err(CommandError::new("forbidden_route", "source editing requires the app-owned document article"));
+    // The article's normal TOC adds a fragment without leaving the trusted
+    // editor document. Queries remain outside the editor command contract.
+    if url.path() != EDITOR_PATH || url.query().is_some() {
+        return Err(CommandError::new(
+            "forbidden_route",
+            "source editing requires the app-owned document article",
+        ));
     }
     Ok(())
 }
@@ -126,7 +189,8 @@ fn require_same_revision(
     let actual = state.settings_store.load().revision;
     if actual.as_ref() != expected {
         return Err(CommandError::from(SaveError::RevisionConflict {
-            expected: expected.cloned(), actual,
+            expected: expected.cloned(),
+            actual,
         }));
     }
     Ok(())
@@ -163,7 +227,9 @@ pub(crate) fn save_source_editor_draft(
     authorize_editor(&window, &state, Some(expected_generation))?;
     state.runtime.with_serialized_apply(|| {
         authorize_editor(&window, &state, Some(expected_generation))?;
-        state.settings_store.save_source_catalog(&catalog, expected_revision.as_ref())
+        state
+            .settings_store
+            .save_source_catalog(&catalog, expected_revision.as_ref())
             .map_err(CommandError::from)?;
         Ok(snapshot(&state))
     })
@@ -181,7 +247,9 @@ pub(crate) fn rebase_source_editor_draft(
     authorize_editor(&window, &state, Some(expected_generation))?;
     state.runtime.with_serialized_apply(|| {
         authorize_editor(&window, &state, Some(expected_generation))?;
-        state.settings_store.rebase_source_catalog(&catalog, &base_catalog, &stale_revision)
+        state
+            .settings_store
+            .rebase_source_catalog(&catalog, &base_catalog, &stale_revision)
             .map_err(CommandError::from)?;
         Ok(snapshot(&state))
     })
@@ -203,8 +271,14 @@ pub(crate) async fn apply_saved_sources(
         let state = task_app.state::<AppState>();
         authorize_editor(&window, &state, Some(expected_generation))?;
         require_same_revision(&state, expected_revision.as_ref())?;
-        crate::settings_commands::apply_persisted_sources(&task_app, &state, expected_revision.as_ref())
-    }).await.map_err(|error| CommandError::new("task", format!("apply task failed: {error}")))?
+        crate::settings_commands::apply_persisted_sources(
+            &task_app,
+            &state,
+            expected_revision.as_ref(),
+        )
+    })
+    .await
+    .map_err(|error| CommandError::new("task", format!("apply task failed: {error}")))?
 }
 
 #[tauri::command]
@@ -215,14 +289,21 @@ pub(crate) async fn pick_document_source_directory(
 ) -> Result<Option<String>, CommandError> {
     authorize_editor(&window, &state, Some(expected_generation))?;
     let selected = window.dialog().file().blocking_pick_folder();
-    let Some(selected) = selected else { return Ok(None); };
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
     authorize_editor(&window, &state, Some(expected_generation))?;
-    let path = selected.into_path()
+    let path = selected
+        .into_path()
         .map_err(|error| CommandError::new("invalid_path", error.to_string()))?;
-    let canonical = fs::canonicalize(&path)
-        .map_err(|error| CommandError::new("invalid_path", format!("{}: {error}", path.display())))?;
+    let canonical = fs::canonicalize(&path).map_err(|error| {
+        CommandError::new("invalid_path", format!("{}: {error}", path.display()))
+    })?;
     if !canonical.is_dir() {
-        return Err(CommandError::new("invalid_path", "selected path is not a directory"));
+        return Err(CommandError::new(
+            "invalid_path",
+            "selected path is not a directory",
+        ));
     }
     Ok(Some(canonical.to_string_lossy().into_owned()))
 }
@@ -244,7 +325,10 @@ pub(crate) async fn recover_document_source(
     expected_revision: Option<ContentRevision>,
 ) -> Result<RuntimeApplyResult, CommandError> {
     if window.label() != SETTINGS_WINDOW_LABEL {
-        return Err(CommandError::new("forbidden_window", "source recovery requires Settings"));
+        return Err(CommandError::new(
+            "forbidden_window",
+            "source recovery requires Settings",
+        ));
     }
     let task_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -253,19 +337,29 @@ pub(crate) async fn recover_document_source(
             require_same_revision(&state, expected_revision.as_ref())?;
             let mut catalog = state.settings_store.load().source_catalog;
             let source_id = match &action {
-                RecoveryAction::Disable { source_id } | RecoveryAction::ReplaceRoot { source_id, .. } => source_id,
+                RecoveryAction::Disable { source_id }
+                | RecoveryAction::ReplaceRoot { source_id, .. } => source_id,
             };
-            let source = catalog.sources.iter_mut().find(|source| source.id == *source_id)
-                .ok_or_else(|| CommandError::new("unknown_source", "that source no longer exists"))?;
+            let source = catalog
+                .sources
+                .iter_mut()
+                .find(|source| source.id == *source_id)
+                .ok_or_else(|| {
+                    CommandError::new("unknown_source", "that source no longer exists")
+                })?;
             match action {
                 RecoveryAction::Disable { .. } => source.enabled = false,
                 RecoveryAction::ReplaceRoot { root, .. } => source.root = root,
             }
-            let saved = state.settings_store.save_source_catalog(&catalog, expected_revision.as_ref())
+            let saved = state
+                .settings_store
+                .save_source_catalog(&catalog, expected_revision.as_ref())
                 .map_err(CommandError::from)?;
             Ok(crate::settings_commands::apply_saved(&task_app, &state, saved, true).0)
         })
-    }).await.map_err(|error| CommandError::new("task", format!("recovery task failed: {error}")))?
+    })
+    .await
+    .map_err(|error| CommandError::new("task", format!("recovery task failed: {error}")))?
 }
 
 #[cfg(test)]
@@ -273,24 +367,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn failed_apply_keeps_the_previous_owned_editor_authorized() {
+        assert!(owned_generation_is_current(
+            4,
+            5,
+            RuntimePhase::SavedNotActive
+        ));
+        assert!(!owned_generation_is_current(4, 5, RuntimePhase::Starting));
+        assert!(!owned_generation_is_current(4, 5, RuntimePhase::Ready));
+    }
+
+    #[test]
     fn editor_scope_rejects_wrong_window_origin_port_route_and_generation() {
-        let url = tauri::Url::parse("http://localhost:4892/docs/ccresdoc/document-sources/").unwrap();
+        let url =
+            tauri::Url::parse("http://localhost:4892/docs/ccresdoc/document-sources/").unwrap();
         assert!(validate_editor_scope("main", &url, 4892, 7, Some(7)).is_ok());
-        assert_eq!(validate_editor_scope("settings", &url, 4892, 7, Some(7)).unwrap_err().code, "forbidden_window");
-        assert_eq!(validate_editor_scope("main", &url, 4892, 7, Some(6)).unwrap_err().code, "stale_generation");
+        let toc_url = tauri::Url::parse(
+            "http://localhost:4892/docs/ccresdoc/document-sources/#how-changes-take-effect",
+        )
+        .unwrap();
+        assert!(validate_editor_scope("main", &toc_url, 4892, 7, Some(7)).is_ok());
+        assert_eq!(
+            validate_editor_scope("settings", &url, 4892, 7, Some(7))
+                .unwrap_err()
+                .code,
+            "forbidden_window"
+        );
+        assert_eq!(
+            validate_editor_scope("main", &url, 4892, 7, Some(6))
+                .unwrap_err()
+                .code,
+            "stale_generation"
+        );
         for other in [
             "http://evil.example:4892/docs/ccresdoc/document-sources/",
             "http://localhost:4893/docs/ccresdoc/document-sources/",
             "https://localhost:4892/docs/ccresdoc/document-sources/",
         ] {
-            assert_eq!(validate_editor_scope("main", &tauri::Url::parse(other).unwrap(), 4892, 7, Some(7)).unwrap_err().code, "forbidden_docs_url");
+            assert_eq!(
+                validate_editor_scope("main", &tauri::Url::parse(other).unwrap(), 4892, 7, Some(7))
+                    .unwrap_err()
+                    .code,
+                "forbidden_docs_url"
+            );
         }
         for other in [
             "http://localhost:4892/docs/ccresdoc/document-sources",
             "http://localhost:4892/docs/claude/",
             "http://localhost:4892/docs/ccresdoc/document-sources/?untrusted=1",
         ] {
-            assert_eq!(validate_editor_scope("main", &tauri::Url::parse(other).unwrap(), 4892, 7, Some(7)).unwrap_err().code, "forbidden_route");
+            assert_eq!(
+                validate_editor_scope("main", &tauri::Url::parse(other).unwrap(), 4892, 7, Some(7))
+                    .unwrap_err()
+                    .code,
+                "forbidden_route"
+            );
         }
     }
 }

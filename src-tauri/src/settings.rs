@@ -786,9 +786,9 @@ impl SettingsStore {
             ReadState::Unreadable(error) => return Err(SaveError::Unreadable(error.to_string())),
         };
         merge_fields(&mut doc, &draft, &SettingField::all());
-        if schema_from_raw(&before.raw_content) == MIGRATED_SCHEMA_VERSION {
-            merge_source_catalog(&mut doc, &catalog_from_legacy(&draft));
-        } else if before.status == LoadStatus::Missing {
+        if schema_from_raw(&before.raw_content) == MIGRATED_SCHEMA_VERSION
+            || before.status == LoadStatus::Missing
+        {
             merge_source_catalog(&mut doc, &catalog_from_legacy(&draft));
         }
         let impact = impact_between(&before.authored, &draft, &SettingField::all());
@@ -867,7 +867,19 @@ impl SettingsStore {
         if schema_from_raw(&before.raw_content) != MIGRATED_SCHEMA_VERSION {
             return Ok(before);
         }
-        if before.status != LoadStatus::Valid {
+        // A v2 source may be temporarily absent. Preserve its authored path
+        // during migration so the document manager can repair it on first
+        // launch; malformed fields and unrelated invalid app settings still
+        // keep the old bytes protected.
+        if before.status != LoadStatus::Valid
+            && !before.validation.iter().all(|diagnostic| {
+                !diagnostic.blocking
+                    || matches!(
+                        diagnostic.kind,
+                        DiagnosticKind::InvalidSourcePath | DiagnosticKind::UnreadableSourcePath
+                    )
+            })
+        {
             return Err(SaveError::LatestNotValid);
         }
         let Some(revision) = before.revision.as_ref() else {
@@ -4054,6 +4066,26 @@ mod tests {
         assert!(String::from_utf8_lossy(&first).contains("custom = 'keep'"));
         store.migrate_v2().unwrap();
         assert_eq!(fs::read(store.path()).unwrap(), first);
+    }
+
+    #[test]
+    fn v2_migration_preserves_enabled_missing_root_for_native_recovery() {
+        let (_root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        let old =
+            "schema_version = 2\n[source]\nclaude_dir = '/missing/ccresdoc-migration-recovery'\n";
+        fs::write(store.path(), old).unwrap();
+        assert_eq!(store.load().status, LoadStatus::Invalid);
+        let migrated = store.migrate_v2().unwrap();
+        assert_eq!(migrated.authored.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(
+            migrated.source_catalog.sources[0].root,
+            "/missing/ccresdoc-migration-recovery"
+        );
+        assert!(migrated.source_catalog.sources[0].enabled);
+        let once = fs::read(store.path()).unwrap();
+        store.migrate_v2().unwrap();
+        assert_eq!(fs::read(store.path()).unwrap(), once);
     }
 
     #[test]

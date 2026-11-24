@@ -43,8 +43,11 @@ export const RUNTIME_APP_FILES = Object.freeze([
   "src/config/theme-pack-slugs.json",
   "src/content/docs/index.mdx",
   "src/content/docs/welcome.mdx",
-  "src/content/docs/claude/index.mdx",
-  "src/content/docs/codex/index.mdx",
+  "src/content/docs/ccresdoc/document-sources.mdx",
+  "src/document-sources/catalog.ts",
+  "src/document-sources/manager.tsx",
+  "src/document-sources/manager.css",
+  "src/document-sources/navigation-guard.ts",
   "src/styles/global.css",
 ]);
 
@@ -56,12 +59,12 @@ export const RUNTIME_DIST_ROUTE_FILES = Object.freeze([
   "404.html",
   "index.html",
   "docs/index.html",
-  "docs/claude/index.html",
-  "docs/codex/index.html",
+  "docs/ccresdoc/document-sources/index.html",
 ]);
 
-// `claude/` and `codex/` are the coordinator-owned generic landing inputs.
-// Only their hyphenated detail/status namespaces are generator-owned.
+// Source mounts are user-defined. Only the CCResDoc management article and
+// the root help pages may enter the release stage; every other docs subtree is
+// native-generated at launch.
 export const GENERATED_RESOURCE_NAMESPACE_PATTERN = /^(?:claude|codex)-/;
 export const GENERATED_RUNTIME_NAMESPACE_PATTERN = /^\.ccresdoc(?:-|$)/;
 
@@ -158,6 +161,8 @@ export function copyGeneratedThemePacks(sourceRoot, destinationRoot) {
 
 function pathHasGeneratedNamespace(relativePath) {
   const parts = portable(relativePath).split("/");
+  if (parts[0] === "src" && parts[1] === "content" && parts[2] === "docs"
+    && parts.length > 3 && !["index.mdx", "welcome.mdx", "ccresdoc"].includes(parts[3])) return true;
   return parts.some((part) => GENERATED_RUNTIME_NAMESPACE_PATTERN.test(part))
     || parts.some((part) => GENERATED_RESOURCE_NAMESPACE_PATTERN.test(part));
 }
@@ -247,8 +252,7 @@ export function assertAllowlistedInventory(root) {
     assert(
       relativePath === "index.mdx"
         || relativePath === "welcome.mdx"
-        || relativePath === "claude/index.mdx"
-        || relativePath === "codex/index.mdx",
+        || relativePath === "ccresdoc/document-sources.mdx",
       `unexpected content input in runtime workspace: ${relativePath}`,
     );
   }

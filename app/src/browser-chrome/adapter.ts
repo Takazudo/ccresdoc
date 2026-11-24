@@ -16,6 +16,7 @@ import type {
 
 const COMMAND_EVENT = "ccresdoc://browser-command";
 const BOOTSTRAP_EVENT = "ccresdoc://browser-bootstrap";
+const BEFORE_DOCUMENT_NAVIGATION_EVENT = "ccresdoc:before-document-navigation";
 const BROWSER_SCOPE_KEY = "ccresdoc:browser-history-scope:v1";
 const EDITING_SELECTOR = [
   "input",
@@ -223,6 +224,10 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
     if (envelope.runtimeGeneration !== undefined
       && this.runtimeGeneration !== undefined
       && envelope.runtimeGeneration !== this.runtimeGeneration) return false;
+    if (["back", "forward", "home", "reload-documentation"].includes(command)
+      && !this.root.document.dispatchEvent(new Event(BEFORE_DOCUMENT_NAVIGATION_EVENT, { cancelable: true }))) {
+      return false;
+    }
     if (envelope.hostHandled) return true;
 
     switch (command) {

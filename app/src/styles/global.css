@@ -6,6 +6,7 @@
 @import "@takazudo/zudo-doc/content.css";
 @import "@takazudo/zudo-doc/page-loading.css";
 @import "@takazudo/zudo-doc/features.css";
+@import "../document-sources/manager.css";
 
 :root {
   --ccresdoc-browser-toolbar-h: 3.25rem;

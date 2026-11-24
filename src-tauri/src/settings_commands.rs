@@ -184,7 +184,7 @@ pub struct DraftValidation {
 
 /// Applies a saved document and emits the authoritative appearance event.
 /// Returns the emitted envelope so a caller can answer with exactly it.
-fn apply_saved(
+pub(crate) fn apply_saved(
     app: &AppHandle,
     state: &AppState,
     saved: SaveResult,
@@ -239,6 +239,44 @@ fn apply_saved(
         },
         envelope,
     )
+}
+
+/// Activate the persisted source catalog after a separate editor Save. The
+/// revision check keeps an older editor from applying a newer window's draft.
+pub(crate) fn apply_persisted_sources(
+    app: &AppHandle,
+    state: &AppState,
+    expected_revision: Option<&ContentRevision>,
+) -> Result<RuntimeApplyResult, CommandError> {
+    state.runtime.with_serialized_apply(|| {
+        let snapshot = state.settings_store.load();
+        if snapshot.revision.as_ref() != expected_revision {
+            return Err(SaveError::RevisionConflict {
+                expected: expected_revision.cloned(),
+                actual: snapshot.revision,
+            }
+            .into());
+        }
+        if !matches!(snapshot.status, LoadStatus::Missing | LoadStatus::Valid) {
+            return Err(CommandError::new(
+                "settings_unavailable",
+                "the persisted settings are not valid for activation",
+            ));
+        }
+        let generation = state.runtime.claim_generation();
+        let effective = snapshot.effective.clone();
+        state.runtime.publish_starting(snapshot, generation);
+        launch(app, generation, effective);
+        Ok(RuntimeApplyResult {
+            snapshot: state.runtime.snapshot(),
+            impact: ApplyImpact::RestartRuntime,
+            status: if state.runtime.snapshot().phase == RuntimePhase::Ready {
+                ApplyStatus::Active
+            } else {
+                ApplyStatus::SavedNotActive
+            },
+        })
+    })
 }
 
 fn save_operation(
@@ -371,13 +409,24 @@ pub(crate) fn validate_settings_draft(
     draft: SettingsDraft,
 ) -> Result<DraftValidation, CommandError> {
     authorize_settings(&window)?;
-    let (effective, diagnostics) = state.settings_store.validate(&draft);
+    let (effective, _) = state.settings_store.validate(&draft);
+    let diagnostics = state.settings_store.validate_app_fields(&draft);
     let valid = !diagnostics.iter().any(|diagnostic| diagnostic.blocking);
     Ok(DraftValidation {
         effective,
         diagnostics,
         valid,
     })
+}
+
+fn app_setting_fields() -> BTreeSet<SettingField> {
+    BTreeSet::from([
+        SettingField::AppearanceMode,
+        SettingField::ThemePack,
+        SettingField::PreferredPort,
+        SettingField::FallbackToFreePort,
+        SettingField::Shortcuts,
+    ])
 }
 
 #[tauri::command]
@@ -396,9 +445,11 @@ pub(crate) async fn save_and_apply_settings(
     tauri::async_runtime::spawn_blocking(move || {
         let state = task_app.state::<AppState>();
         save_operation(&task_app, &state, || {
-            state
-                .settings_store
-                .save(&draft, expected_revision.as_ref())
+            state.settings_store.save_app_fields(
+                &draft,
+                &app_setting_fields(),
+                expected_revision.as_ref(),
+            )
         })
     })
     .await
@@ -414,6 +465,12 @@ pub(crate) async fn rebase_stale_settings(
     stale_revision: ContentRevision,
 ) -> Result<RuntimeApplyResult, CommandError> {
     authorize_settings(&window)?;
+    if !dirty_fields.is_subset(&app_setting_fields()) {
+        return Err(CommandError::new(
+            "invalid_fields",
+            "native Settings may only rebase application fields",
+        ));
+    }
     app.state::<AppState>()
         .browser_bridge
         .set_capture_active(false);

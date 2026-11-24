@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ccresdoc_claude_md::{search_index_json, SearchIndexNamespace, SearchIndexPage};
 
-use crate::runtime::{CLAUDE_NAMESPACES, CODEX_NAMESPACES};
+use crate::runtime::owned_source_mounts;
 
 const SEARCH_INDEX_RELATIVE_PATH: &str = "public/docs/search-index.json";
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -20,23 +20,25 @@ struct Frontmatter {
     category_no_page: bool,
 }
 
-/// Collect every generator-owned page currently present in the served tree.
-///
-/// The generic `claude/` and `codex/` landings are coordinator-authored status
-/// pages, so only the exact detail namespaces participate. Reading the actual
-/// tree (rather than a settings snapshot) also makes rollback publication
-/// describe whatever the journal successfully restored.
-pub(crate) fn collect_generated_pages(docs_dir: &Path) -> Result<Vec<SearchIndexPage>, String> {
+/// Collect only source-ID-owned pages from the private publication manifest.
+/// Reading the manifest and served tree after promotion or rollback ensures
+/// search describes the exact content currently owned by the runtime.
+pub(crate) fn collect_generated_pages(
+    workspace: &Path,
+    docs_dir: &Path,
+) -> Result<Vec<SearchIndexPage>, String> {
     let mut pages = Vec::new();
-    for (namespace, names) in [
-        (SearchIndexNamespace::Claude, &CLAUDE_NAMESPACES[1..]),
-        (SearchIndexNamespace::Codex, &CODEX_NAMESPACES[1..]),
-    ] {
-        for name in names {
-            let root = docs_dir.join(name);
-            if root.exists() {
-                collect_namespace(&root, docs_dir, namespace, &mut pages)?;
-            }
+    let owned = owned_source_mounts(&workspace.join(".ccresdoc-owned-sources.json"))
+        .map_err(|error| format!("read source ownership for search: {error}"))?;
+    for (source_id, mount) in owned {
+        let root = docs_dir.join(mount);
+        if root.exists() {
+            collect_namespace(
+                &root,
+                docs_dir,
+                &SearchIndexNamespace::Source(source_id),
+                &mut pages,
+            )?;
         }
     }
     Ok(pages)
@@ -45,7 +47,7 @@ pub(crate) fn collect_generated_pages(docs_dir: &Path) -> Result<Vec<SearchIndex
 fn collect_namespace(
     directory: &Path,
     docs_dir: &Path,
-    namespace: SearchIndexNamespace,
+    namespace: &SearchIndexNamespace,
     pages: &mut Vec<SearchIndexPage>,
 ) -> Result<(), String> {
     let mut entries = fs::read_dir(directory)
@@ -71,7 +73,7 @@ fn collect_namespace(
 fn read_page(
     path: &Path,
     docs_dir: &Path,
-    namespace: SearchIndexNamespace,
+    namespace: &SearchIndexNamespace,
 ) -> Result<SearchIndexPage, String> {
     let source = fs::read_to_string(path)
         .map_err(|error| format!("read generated page {}: {error}", path.display()))?;
@@ -91,7 +93,7 @@ fn read_page(
         .ok_or_else(|| format!("generated page path is not UTF-8: {}", path.display()))?;
 
     Ok(SearchIndexPage {
-        namespace,
+        namespace: namespace.clone(),
         slug,
         title: frontmatter.title,
         body: body.to_owned(),
@@ -108,7 +110,7 @@ fn split_frontmatter(source: &str) -> Option<(&str, &str)> {
     source.split_once("\n---\n")
 }
 
-/// Parse the fixed scalar subset emitted by this repository's two generators.
+/// Parse the scalar subset emitted by the native source generator.
 /// Keeping collection on that producer-owned format avoids adding a second
 /// YAML dependency to the Tauri host merely to recover six known keys.
 fn parse_generated_frontmatter(source: &str) -> Frontmatter {
@@ -171,7 +173,7 @@ fn slash_path(path: &Path) -> Option<String> {
 
 /// Rebuild and atomically replace the shared runtime index.
 pub(crate) fn publish_search_index(workspace: &Path, docs_dir: &Path) -> Result<(), String> {
-    let pages = collect_generated_pages(docs_dir)?;
+    let pages = collect_generated_pages(workspace, docs_dir)?;
     let json = search_index_json(pages)
         .map_err(|error| format!("serialize generated search index: {error}"))?;
     atomic_replace(&workspace.join(SEARCH_INDEX_RELATIVE_PATH), json.as_bytes())
@@ -231,62 +233,100 @@ mod tests {
         fs::write(path, format!("---\n{frontmatter}\n---\n\n{body}\n")).unwrap();
     }
 
-    #[test]
-    fn collection_covers_both_namespaces_and_exclusion_schema() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let docs = temp.path().join("docs");
-        page(
-            &docs,
-            "claude-md/global.mdx",
-            "title: Claude\ndescription: Claude description",
-            "# Claude body",
-        );
-        page(
-            &docs,
-            "codex-skills/tool/index.mdx",
-            "title: Codex\ndescription: Codex description",
-            "Codex body",
-        );
-        page(
-            &docs,
-            "codex-skills/tool/private.mdx",
-            "title: Private\nunlisted: true",
-            "hidden",
-        );
-        page(&docs, "claude/index.mdx", "title: Landing", "ignored");
-
-        let json = search_index_json(collect_generated_pages(&docs).unwrap()).unwrap();
-        let rows = serde_json::from_str::<Vec<Value>>(&json).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0]["id"], "claude:claude-md/global");
-        assert_eq!(rows[1]["id"], "codex:codex-skills/tool");
-        for row in rows {
-            let keys = row.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
-            assert_eq!(keys, ["body", "description", "id", "title", "url"]);
+    fn promote_sources(
+        workspace: &Path,
+        docs: &Path,
+        revision: &str,
+        sources: &[(&str, &str, &str)],
+    ) {
+        let candidate = workspace.join(format!("candidate-{revision}"));
+        let mut mounts = std::collections::BTreeMap::new();
+        for (source_id, mount, title) in sources {
+            page(
+                &candidate,
+                &format!("{mount}/item.mdx"),
+                &format!("title: {title}"),
+                "body",
+            );
+            mounts.insert((*source_id).to_owned(), (*mount).to_owned());
         }
+        let journal = crate::runtime::ManagedSourceJournal::promote(
+            docs,
+            &candidate,
+            &workspace.join(format!("backup-{revision}")),
+            &workspace.join(".ccresdoc-owned-sources.json"),
+            &mounts,
+        )
+        .unwrap();
+        journal.commit().unwrap();
     }
 
     #[test]
-    fn selection_is_derived_from_exact_namespaces_and_empty_is_overwritten() {
+    fn collection_uses_source_identity_and_ignores_unowned_documents() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace = temp.path();
         let docs = workspace.join("src/content/docs");
-        page(&docs, "claude-md/a.mdx", "title: A", "a");
-        publish_search_index(workspace, &docs).unwrap();
-        assert!(
-            fs::read_to_string(workspace.join(SEARCH_INDEX_RELATIVE_PATH))
-                .unwrap()
-                .contains("claude:claude-md/a")
+        page(
+            &docs,
+            "ccresdoc/document-sources.mdx",
+            "title: Manager",
+            "private editor",
         );
+        page(&docs, "foreign/item.mdx", "title: Foreign", "unrelated");
+        let candidate = workspace.join("candidate");
+        page(
+            &candidate,
+            "notes/item.mdx",
+            "title: Notes\ndescription: Notes description",
+            "notes body",
+        );
+        page(&candidate, "other/item.mdx", "title: Other", "other body");
+        page(
+            &candidate,
+            "other/private.mdx",
+            "title: Private\nunlisted: true",
+            "hidden",
+        );
+        let mounts = std::collections::BTreeMap::from([
+            ("source-notes".to_owned(), "notes".to_owned()),
+            ("source-other".to_owned(), "other".to_owned()),
+        ]);
+        crate::runtime::ManagedSourceJournal::promote(
+            &docs,
+            &candidate,
+            &workspace.join("backup"),
+            &workspace.join(".ccresdoc-owned-sources.json"),
+            &mounts,
+        )
+        .unwrap()
+        .commit()
+        .unwrap();
+        let json = search_index_json(collect_generated_pages(workspace, &docs).unwrap()).unwrap();
+        let rows = serde_json::from_str::<Vec<Value>>(&json).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["id"], "source-notes:notes/item");
+        assert_eq!(rows[1]["id"], "source-other:other/item");
+        assert!(!json.contains("private editor"));
+        assert!(!json.contains("unrelated"));
+    }
 
-        fs::remove_dir_all(docs.join("claude-md")).unwrap();
-        page(&docs, "codex-config/b.mdx", "title: B", "b");
+    #[test]
+    fn removing_and_remounting_sources_replaces_stale_search_rows() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace = temp.path();
+        let docs = workspace.join("src/content/docs");
+        promote_sources(workspace, &docs, "one", &[("source-a", "first", "A")]);
         publish_search_index(workspace, &docs).unwrap();
-        let selected = fs::read_to_string(workspace.join(SEARCH_INDEX_RELATIVE_PATH)).unwrap();
-        assert!(!selected.contains("claude:"));
-        assert!(selected.contains("codex:codex-config/b"));
+        let first = fs::read_to_string(workspace.join(SEARCH_INDEX_RELATIVE_PATH)).unwrap();
+        assert!(first.contains("source-a:first/item"));
 
-        fs::remove_dir_all(docs.join("codex-config")).unwrap();
+        promote_sources(workspace, &docs, "two", &[("source-a", "renamed", "A")]);
+        publish_search_index(workspace, &docs).unwrap();
+        let second = fs::read_to_string(workspace.join(SEARCH_INDEX_RELATIVE_PATH)).unwrap();
+        assert!(!second.contains("first/item"));
+        assert!(second.contains("source-a:renamed/item"));
+
+        promote_sources(workspace, &docs, "three", &[]);
         publish_search_index(workspace, &docs).unwrap();
         assert_eq!(
             fs::read_to_string(workspace.join(SEARCH_INDEX_RELATIVE_PATH)).unwrap(),

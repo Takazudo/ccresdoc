@@ -37,7 +37,7 @@ function fixture() {
   return { source, destination };
 }
 
-test("runtime source copy admits only generic landings and release-owned files", () => {
+test("runtime source copy admits only the manager article and release-owned files", () => {
   const { source, destination } = fixture();
   mkdirSync(join(source, "src/content/docs/claude-skills"), { recursive: true });
   writeFileSync(join(source, "src/content/docs/claude-skills/private.mdx"), "ccresdoc-private-resource\n");
@@ -47,7 +47,7 @@ test("runtime source copy admits only generic landings and release-owned files",
   const inventory = copyRuntimeApp(source, destination);
   assert.equal(inventory.copiedDistFiles.length, 0);
   assertAllowlistedInventory(destination);
-  assert.equal(readFileSync(join(destination, "src/content/docs/claude/index.mdx"), "utf8"), "src/content/docs/claude/index.mdx\n");
+  assert.equal(readFileSync(join(destination, "src/content/docs/ccresdoc/document-sources.mdx"), "utf8"), "src/content/docs/ccresdoc/document-sources.mdx\n");
   assert.equal(readdirSync(join(destination, "src/content/docs"), { withFileTypes: true }).some((entry) => entry.name === "claude-skills"), false);
   assert.equal(readdirSync(join(destination, "src/content/docs"), { withFileTypes: true }).some((entry) => entry.name.startsWith(".ccresdoc")), false);
 
@@ -58,13 +58,13 @@ test("runtime source copy admits only generic landings and release-owned files",
 
 test("dist route allowlist rejects generated detail routes", () => {
   const { source, destination } = fixture();
-  mkdirSync(join(source, "dist/docs/claude"), { recursive: true });
-  writeFileSync(join(source, "dist/docs/claude/index.html"), "generic Claude landing\n");
+  mkdirSync(join(source, "dist/docs/ccresdoc/document-sources"), { recursive: true });
+  writeFileSync(join(source, "dist/docs/ccresdoc/document-sources/index.html"), "generic manager article\n");
   mkdirSync(join(source, "dist/assets"), { recursive: true });
   writeFileSync(join(source, "dist/assets/app.js"), "generic package asset\n");
   const inventory = copyRuntimeApp(source, destination, { includeDist: true });
-  assert.deepEqual(inventory.copiedDistFiles, ["assets/app.js", "docs/claude/index.html"]);
-  assert.equal(readFileSync(join(destination, "dist/docs/claude/index.html"), "utf8"), "generic Claude landing\n");
+  assert.deepEqual(inventory.copiedDistFiles, ["assets/app.js", "docs/ccresdoc/document-sources/index.html"]);
+  assert.equal(readFileSync(join(destination, "dist/docs/ccresdoc/document-sources/index.html"), "utf8"), "generic manager article\n");
 
   mkdirSync(join(source, "dist/docs/claude-skills"), { recursive: true });
   writeFileSync(join(source, "dist/docs/claude-skills/private.html"), "ccresdoc-private-resource\n");

@@ -1253,10 +1253,7 @@ pub fn probe_source_readiness(
         let Ok((status, body)) = probe_path(port, &path, io_timeout) else {
             return ReadinessState::HttpUnavailable;
         };
-        if status != 200
-            || !body.contains(marker)
-            || !body.contains(&format!("data-ccresdoc-source="))
-        {
+        if status != 200 || !body.contains(marker) || !body.contains("data-ccresdoc-source=") {
             return if status == 200 {
                 ReadinessState::StaleContent
             } else {

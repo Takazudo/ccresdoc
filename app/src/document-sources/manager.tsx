@@ -1,7 +1,6 @@
 "use client";
 
 import { getScope } from "@takazudo/zfb/zudo-react";
-import "./manager.css";
 import {
   applyPresetRules, cloneCatalog, duplicateSource, localCatalogErrors,
   saveRulesAsPreset, sourceFromPreset,

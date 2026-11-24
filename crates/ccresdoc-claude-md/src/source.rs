@@ -303,11 +303,11 @@ fn builtin_provenance(spec: &SourceSpec, mapping: &str, output: &Path) -> Result
             if let Ok(entries) = std::fs::read_dir(&spec.root) {
                 for entry in entries.flatten() {
                     let name = entry.file_name().to_string_lossy().into_owned();
-                    if name.ends_with(".toml") || name == "config.toml.example" {
-                        if route_segment(&name) == stem {
-                            found = Some(name);
-                            break;
-                        }
+                    if (name.ends_with(".toml") || name == "config.toml.example")
+                        && route_segment(&name) == stem
+                    {
+                        found = Some(name);
+                        break;
                     }
                 }
             }
@@ -1099,8 +1099,7 @@ fn yaml_scalar(value: &str) -> String {
     value
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
-        .replace('\n', " ")
-        .replace('\r', " ")
+        .replace(['\n', '\r'], " ")
 }
 fn html_attr(value: &str) -> String {
     value
