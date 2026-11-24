@@ -314,6 +314,7 @@ fn custom_skill_broad_include_selects_package_contents_once() {
     let source = root.path().join("source");
     let docs = root.path().join("docs");
     write(&source.join("helpers/SKILL.md"), "# Helpers\n");
+    write(&source.join("helpers/README.md"), "# Read me\n");
     write(&source.join("helpers/references/guide.md"), "# Guide\n");
     write(
         &source.join("helpers/references/private.md"),
@@ -332,11 +333,13 @@ fn custom_skill_broad_include_selects_package_contents_once() {
         },
     };
     let report = generate_source(&spec, &docs, "marker").unwrap();
-    assert_eq!(report.pages, 2);
+    assert_eq!(report.pages, 3);
     let package = fs::read_to_string(docs.join("broad/helpers/index.mdx")).unwrap();
+    assert!(package.contains("[README.md](./readme.mdx)"));
     assert!(package.contains("[references/guide.md](./references-guide.mdx)"));
     assert!(!package.contains("private.md"));
     assert!(docs.join("broad/helpers/references-guide.mdx").exists());
+    assert!(docs.join("broad/helpers/readme.mdx").exists());
     assert!(!docs.join("broad/helpers/references-private.mdx").exists());
 }
 

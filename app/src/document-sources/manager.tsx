@@ -100,6 +100,7 @@ export function startDocumentSourcesManager(root: HTMLElement): () => void {
   const setMessage = (value: string, isError = false) => { message = value; error = isError; const node = root.querySelector<HTMLElement>("[data-manager-status]"); if (node) { node.textContent = value; node.dataset.error = String(isError); } };
   const updateDirty = () => { dirty = !same(baseCatalog, draft); updateActions(); };
   const updateActions = () => {
+    root.inert = busy;
     root.querySelectorAll<HTMLButtonElement>("[data-action=save]").forEach((button) => { button.disabled = busy || !dirty || conflict; });
     root.querySelectorAll<HTMLButtonElement>("[data-action=apply]").forEach((button) => { button.disabled = busy || dirty || conflict || !snapshot || snapshot.loadStatus === "unsupported_version"; });
     root.querySelectorAll<HTMLButtonElement>("[data-action=discard]").forEach((button) => { button.disabled = busy || !dirty; });
@@ -151,13 +152,14 @@ export function startDocumentSourcesManager(root: HTMLElement): () => void {
   };
   const save = async (rebase = false) => {
     if (!snapshot || busy) return;
-    await validate();
-    if (diagnostics.some((entry) => entry.blocking !== false)) { setMessage("Correct the highlighted source fields before saving.", true); return; }
     busy = true; updateActions();
     try {
+      await validate();
+      if (diagnostics.some((entry) => entry.blocking !== false)) { setMessage("Correct the highlighted source fields before saving.", true); return; }
+      const submitted = cloneCatalog(draft);
       const next = rebase && snapshot.revision
-        ? await api.rebase(draft, baseCatalog, snapshot.revision, snapshot.runtimeGeneration)
-        : await api.save(draft, snapshot.revision, snapshot.runtimeGeneration);
+        ? await api.rebase(submitted, baseCatalog, snapshot.revision, snapshot.runtimeGeneration)
+        : await api.save(submitted, snapshot.revision, snapshot.runtimeGeneration);
       accept(next); setMessage("Sources saved. Choose Apply saved to update documents and search.");
     } catch (issue) {
       const code = issue && typeof issue === "object" && "code" in issue ? String(issue.code) : "";
@@ -245,6 +247,7 @@ export function startDocumentSourcesManager(root: HTMLElement): () => void {
     (form.elements.namedItem("name") as HTMLInputElement)?.focus();
   };
   const onClick = async (event: MouseEvent) => {
+    if (busy) return;
     const button = (event.target as Element).closest<HTMLButtonElement>("button[data-action]");
     if (!button || !root.contains(button)) return;
     const action = button.dataset.action;
@@ -253,7 +256,7 @@ export function startDocumentSourcesManager(root: HTMLElement): () => void {
     if (action === "add-source") { const chosen = findPreset((root.querySelector("#manager-add-preset") as HTMLSelectElement).value); if (!chosen) return; draft.sources.push(sourceFromPreset(draft, chosen, id())); updateDirty(); render(); }
     if (action === "duplicate" && source) { draft.sources.push(duplicateSource(draft, source, id())); updateDirty(); render(); }
     if (action === "remove" && source && confirm(`Remove ${source.label} from CCResDoc? Its original files will stay in place.`)) { draft.sources = draft.sources.filter((entry) => entry.id !== source.id); updateDirty(); render(); }
-    if ((action === "pick-root" || action === "pick-scan") && source && snapshot) { try { const selected = await api.pick(snapshot.runtimeGeneration); if (selected) { if (action === "pick-root") source.root = selected; else source.scan_root = { kind: "separate", path: selected }; updateDirty(); render(); void validate(); } } catch (issue) { setMessage(errorMessage(issue), true); } }
+    if ((action === "pick-root" || action === "pick-scan") && source && snapshot) { try { const selected = await api.pick(snapshot.runtimeGeneration); if (selected && !busy) { if (action === "pick-root") source.root = selected; else source.scan_root = { kind: "separate", path: selected }; updateDirty(); render(); void validate(); } } catch (issue) { setMessage(errorMessage(issue), true); } }
     if (action === "save-rules-preset" && source) showDialog("save", source);
     if (action === "new-preset") showDialog("new");
     if (action === "edit-preset" && preset && !preset.id.startsWith("builtin-")) showDialog("edit", undefined, preset);
@@ -265,7 +268,7 @@ export function startDocumentSourcesManager(root: HTMLElement): () => void {
     if (action === "reload" && confirm("Discard this draft and reload settings from disk?")) void reload();
     if (action === "rebase" && snapshot?.revision && confirm("Rebase only your changed sources and presets onto the latest settings?")) void save(true);
   };
-  const onInput = (event: Event) => { const target = event.target; if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) if (target.dataset.field) setField(target); };
+  const onInput = (event: Event) => { if (busy) return; const target = event.target; if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) if (target.dataset.field) setField(target); };
   const onFocus = () => { if (!busy && snapshot) void reload(true); };
   const onBeforeUnload = (event: BeforeUnloadEvent) => { if (!dirty) return; event.preventDefault(); event.returnValue = ""; };
   const stopNavigationGuard = installUnsavedNavigationGuard({

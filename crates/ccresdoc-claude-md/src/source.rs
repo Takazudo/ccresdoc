@@ -609,7 +609,7 @@ fn generate_custom(
     let excludes = globs(exclude)?;
     std::fs::create_dir_all(target).map_err(|error| io(target, error))?;
     let mut selected = BTreeSet::new();
-    let mut inputs = Vec::new();
+    let mut candidates = Vec::new();
     let mut route_map = BTreeMap::new();
     for entry in WalkDir::new(&spec.root).follow_links(false) {
         let entry = entry.map_err(|error| GenerateError::InvalidConfig(error.to_string()))?;
@@ -624,6 +624,30 @@ fn generate_custom(
         if !includes.is_match(&relative) || excludes.is_match(&relative) {
             continue;
         }
+        candidates.push((entry.path().to_path_buf(), relative));
+    }
+    if matches!(format, SourceFormat::Skill) {
+        let packages: Vec<PathBuf> = candidates
+            .iter()
+            .filter(|(_, relative)| {
+                relative
+                    .rsplit('/')
+                    .next()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+            })
+            .filter_map(|(path, _)| path.parent().map(Path::to_path_buf))
+            .collect();
+        candidates.retain(|(path, relative)| {
+            let nested = !relative
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+                && packages.iter().any(|package| path.starts_with(package));
+            !nested
+        });
+    }
+    let mut inputs = Vec::new();
+    for (path, relative) in candidates {
         let route = route_for(&relative, format)?;
         if !selected.insert(route.clone()) {
             return Err(GenerateError::SlugCollision(format!(
@@ -633,31 +657,7 @@ fn generate_custom(
             )));
         }
         route_map.insert(relative.clone(), route.clone());
-        inputs.push((entry.path().to_path_buf(), relative, route));
-    }
-    if matches!(format, SourceFormat::Skill) {
-        let packages: Vec<PathBuf> = inputs
-            .iter()
-            .filter(|(_, relative, _)| {
-                relative
-                    .rsplit('/')
-                    .next()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
-            })
-            .filter_map(|(path, _, _)| path.parent().map(Path::to_path_buf))
-            .collect();
-        inputs.retain(|(path, relative, route)| {
-            let nested = !relative
-                .rsplit('/')
-                .next()
-                .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
-                && packages.iter().any(|package| path.starts_with(package));
-            if nested {
-                selected.remove(route);
-                route_map.remove(relative);
-            }
-            !nested
-        });
+        inputs.push((path, relative, route));
     }
     for (source_path, relative, route) in inputs {
         let destination = target.join(&route);
