@@ -769,7 +769,7 @@ fn emitted_command_body_escapes_jsx_and_braces() {
     assert!(page.contains("&lt;Widget&gt;"));
     assert!(page.contains("&#123;value&#125;"));
     assert!(page.contains("`<Code>`")); // inline code preserved
-    assert!(page.contains("<div>")); // known HTML tag preserved
+    assert!(page.contains("&lt;div&gt;")); // imported HTML is inert
 }
 
 #[test]
@@ -790,9 +790,9 @@ fn emitted_skill_reference_normalizes_mdx_incompatible_markdown() {
 
     generate(&config_for(&claude, &docs)).unwrap();
     let page = read(&docs.join("claude-skills/links/ref-autolinks.mdx"));
-    assert!(page.contains("[https://example.com/docs](<https://example.com/docs>)"));
-    assert!(page.contains("[docs@example.com](<mailto:docs@example.com>)"));
-    assert!(page.contains("first<br />second"));
+    assert!(page.contains("[https://example.com/docs](https://example.com/docs)"));
+    assert!(page.contains("[docs@example.com](mailto:docs@example.com)"));
+    assert!(page.contains("first&lt;br&gt;second"));
 }
 
 // ---------------------------------------------------------------------------

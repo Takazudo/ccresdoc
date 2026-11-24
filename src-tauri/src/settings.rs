@@ -13,9 +13,17 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
-use toml_edit::{value, Array, DocumentMut, Item, Table, Value};
+use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table, Value};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 2;
+#[path = "settings/source_model.rs"]
+mod source_model;
+pub use source_model::{
+    builtin_presets, DocumentSource, EffectiveSource, PresetRef, PublicFormat, RuleSnapshot,
+    ScanRootChoice, SourceCatalog, UserPreset, BUILTIN_RULE_VERSION, MANAGEMENT_MOUNT,
+};
+
+pub const CURRENT_SCHEMA_VERSION: i64 = 3;
+pub const MIGRATED_SCHEMA_VERSION: i64 = 2;
 /// The only earlier schema the startup retirement recognizes.
 pub const RETIRED_SCHEMA_VERSION: i64 = 1;
 pub const DEFAULT_PORT: u16 = 4892;
@@ -378,6 +386,8 @@ pub struct EffectiveSettings {
     pub effective_port: u16,
     pub fallback_to_free_port: bool,
     pub shortcuts: Vec<ShortcutEntry>,
+    #[serde(default)]
+    pub sources: Vec<EffectiveSource>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -451,6 +461,7 @@ pub struct SettingsSnapshot {
     /// replacement characters here, while its revision still hashes exact bytes.
     pub raw_content: Option<String>,
     pub authored: SettingsDraft,
+    pub source_catalog: SourceCatalog,
     pub effective: EffectiveSettings,
     pub active: ActiveState,
     pub validation: Vec<SettingsDiagnostic>,
@@ -716,7 +727,10 @@ impl SettingsStore {
             if let Some(theme_pack) = theme_pack {
                 draft.theme_pack = theme_pack.into();
             }
-            match self.save(&draft, latest.revision.as_ref()) {
+            let fields = [SettingField::AppearanceMode, SettingField::ThemePack]
+                .into_iter()
+                .collect();
+            match self.save_app_fields(&draft, &fields, latest.revision.as_ref()) {
                 Ok(result) => return Ok(result),
                 Err(error @ SaveError::RevisionConflict { .. }) => last_conflict = Some(error),
                 Err(error) => return Err(error),
@@ -772,6 +786,11 @@ impl SettingsStore {
             ReadState::Unreadable(error) => return Err(SaveError::Unreadable(error.to_string())),
         };
         merge_fields(&mut doc, &draft, &SettingField::all());
+        if schema_from_raw(&before.raw_content) == MIGRATED_SCHEMA_VERSION {
+            merge_source_catalog(&mut doc, &catalog_from_legacy(&draft));
+        } else if before.status == LoadStatus::Missing {
+            merge_source_catalog(&mut doc, &catalog_from_legacy(&draft));
+        }
         let impact = impact_between(&before.authored, &draft, &SettingField::all());
         self.write_document(&doc, expected_revision)?;
         Ok(SaveResult {
@@ -804,6 +823,9 @@ impl SettingsStore {
                 let candidate = self.normalized_draft(&candidate)?;
                 let impact = impact_between(&latest.authored, &candidate, dirty_fields);
                 merge_fields(&mut doc, &candidate, dirty_fields);
+                if schema_from_raw(&latest.raw_content) == MIGRATED_SCHEMA_VERSION {
+                    merge_source_catalog(&mut doc, &catalog_from_legacy(&candidate));
+                }
                 let latest_revision = ContentRevision::from_bytes(&bytes);
                 self.write_document(&doc, Some(&latest_revision))?;
                 Ok(SaveResult {
@@ -829,12 +851,357 @@ impl SettingsStore {
         let draft = self.normalized_draft(draft)?;
         let mut doc = DocumentMut::new();
         merge_fields(&mut doc, &draft, &SettingField::all());
+        merge_source_catalog(&mut doc, &SourceCatalog::defaults());
         self.write_document(&doc, Some(expected_revision))?;
         Ok(SaveResult {
             snapshot: self.load(),
             impact: ApplyImpact::RestartRuntime,
             rebased: false,
         })
+    }
+
+    /// Persist a recognized v2 document as v3 without changing any authored
+    /// app fields, comments or unknown keys. A second call is a no-op.
+    pub fn migrate_v2(&self) -> Result<SettingsSnapshot, SaveError> {
+        let before = self.load();
+        if schema_from_raw(&before.raw_content) != MIGRATED_SCHEMA_VERSION {
+            return Ok(before);
+        }
+        if before.status != LoadStatus::Valid {
+            return Err(SaveError::LatestNotValid);
+        }
+        let Some(revision) = before.revision.as_ref() else {
+            return Err(SaveError::Unreadable("v2 config has no revision".into()));
+        };
+        let mut doc = match self.read_state() {
+            ReadState::Present { doc: Ok(doc), .. } => *doc,
+            ReadState::Present { doc: Err(_), .. } => return Err(SaveError::Malformed),
+            _ => return Err(SaveError::Unreadable("v2 config cannot be read".into())),
+        };
+        set_value_preserving_decor(&mut doc["schema_version"], value(CURRENT_SCHEMA_VERSION));
+        merge_source_catalog(&mut doc, &before.source_catalog);
+        self.write_document(&doc, Some(revision))?;
+        Ok(self.load())
+    }
+
+    /// Native Settings writes only the fields its own form owns. Source and
+    /// preset arrays are copied from the freshest revision, never from a stale
+    /// whole-settings draft.
+    pub fn save_app_fields(
+        &self,
+        draft: &SettingsDraft,
+        fields: &BTreeSet<SettingField>,
+        expected_revision: Option<&ContentRevision>,
+    ) -> Result<SaveResult, SaveError> {
+        if fields.iter().any(|field| {
+            matches!(
+                field,
+                SettingField::ClaudeResources
+                    | SettingField::CodexResources
+                    | SettingField::ClaudeDir
+                    | SettingField::CodexDir
+            )
+        }) {
+            return Err(SaveError::Validation(vec![diagnostic(
+                DiagnosticKind::InvalidType,
+                Some("resources"),
+                "source fields must use the source catalog transaction".into(),
+                true,
+            )]));
+        }
+        let before = self.load();
+        self.ensure_revision(expected_revision, before.revision.as_ref())?;
+        self.ensure_writable_status(&before)?;
+        if before.validation.iter().any(|diagnostic| {
+            diagnostic.blocking
+                && diagnostic.kind == DiagnosticKind::InvalidType
+                && diagnostic.field.as_deref().is_some_and(|field| {
+                    field.starts_with("document_sources") || field.starts_with("user_presets")
+                })
+        }) {
+            return Err(SaveError::LatestNotValid);
+        }
+        let mut candidate = before.authored.clone();
+        copy_dirty(&mut candidate, draft, fields);
+        let diagnostics = self.validate_app_fields(&candidate);
+        let blocking = diagnostics
+            .into_iter()
+            .filter(|d| d.blocking)
+            .collect::<Vec<_>>();
+        if !blocking.is_empty() {
+            return Err(SaveError::Validation(blocking));
+        }
+        let (effective, _) = self.validate_and_project(&candidate);
+        candidate.shortcuts = effective.shortcuts;
+        let impact = impact_between(&before.authored, &candidate, fields);
+        let mut doc = self.read_document_for_write()?;
+        let write_fields = if before.status == LoadStatus::Missing {
+            SettingField::app_fields()
+        } else {
+            fields.clone()
+        };
+        merge_fields(&mut doc, &candidate, &write_fields);
+        if schema_from_raw(&before.raw_content) == MIGRATED_SCHEMA_VERSION {
+            merge_source_catalog(&mut doc, &catalog_from_legacy(&candidate));
+        } else if before.status == LoadStatus::Missing {
+            merge_source_catalog(&mut doc, &before.source_catalog);
+        }
+        self.write_document(&doc, expected_revision)?;
+        Ok(SaveResult {
+            snapshot: self.load(),
+            impact,
+            rebased: false,
+        })
+    }
+
+    pub fn validate_source_catalog(&self, catalog: &SourceCatalog) -> Vec<SettingsDiagnostic> {
+        self.project_source_catalog(catalog, true).1
+    }
+
+    pub fn validate_app_fields(&self, draft: &SettingsDraft) -> Vec<SettingsDiagnostic> {
+        let (_, mut diagnostics) = self.validate_and_project(draft);
+        diagnostics.retain(|diagnostic| {
+            !diagnostic
+                .field
+                .as_deref()
+                .is_some_and(|field| field.starts_with("source."))
+        });
+        if draft.schema_version != CURRENT_SCHEMA_VERSION {
+            diagnostics.push(diagnostic(
+                DiagnosticKind::UnsupportedSchemaVersion,
+                Some("schema_version"),
+                format!("schema version {} is unsupported", draft.schema_version),
+                true,
+            ));
+        }
+        diagnostics
+    }
+
+    fn project_source_catalog(
+        &self,
+        catalog: &SourceCatalog,
+        strict_paths: bool,
+    ) -> (Vec<EffectiveSource>, Vec<SettingsDiagnostic>) {
+        let mut diagnostics = Vec::new();
+        let mut ids = BTreeSet::new();
+        let mut mounts = BTreeSet::new();
+        let mut result = Vec::new();
+        for source in &catalog.sources {
+            let field = format!("sources.{}", source.id);
+            if !valid_identity(&source.id) || !ids.insert(source.id.clone()) {
+                diagnostics.push(diagnostic(
+                    DiagnosticKind::InvalidType,
+                    Some(&field),
+                    "source ID must be unique and contain letters, digits, underscores or hyphens"
+                        .into(),
+                    true,
+                ));
+            }
+            if source.label.trim().is_empty() {
+                diagnostics.push(diagnostic(
+                    DiagnosticKind::InvalidType,
+                    Some(&format!("{field}.label")),
+                    "source label is required".into(),
+                    true,
+                ));
+            }
+            if !valid_mount(&source.mount) || !mounts.insert(source.mount.clone()) {
+                diagnostics.push(diagnostic(
+                    DiagnosticKind::InvalidType,
+                    Some(&format!("{field}.mount")),
+                    "mount must be a unique lowercase route segment outside app-owned namespaces"
+                        .into(),
+                    true,
+                ));
+            }
+            if let RuleSnapshot::Custom {
+                include, exclude, ..
+            } = &source.rules
+            {
+                for (kind, patterns) in [("include", include), ("exclude", exclude)] {
+                    for pattern in patterns {
+                        if pattern.trim().is_empty()
+                            || pattern.starts_with('/')
+                            || pattern.contains("..")
+                            || pattern.contains('\\')
+                        {
+                            diagnostics.push(diagnostic(
+                                DiagnosticKind::InvalidType,
+                                Some(&format!("{field}.rules.{kind}")),
+                                "patterns must be relative and cannot traverse folders".into(),
+                                true,
+                            ));
+                        }
+                    }
+                }
+                if include.is_empty() {
+                    diagnostics.push(diagnostic(
+                        DiagnosticKind::InvalidType,
+                        Some(&format!("{field}.rules.include")),
+                        "at least one include pattern is required".into(),
+                        true,
+                    ));
+                }
+            }
+            if !source.enabled {
+                continue;
+            }
+            let Some(root) = self.project_catalog_path(
+                &source.root,
+                strict_paths,
+                &format!("{field}.root"),
+                &mut diagnostics,
+            ) else {
+                continue;
+            };
+            let scan_root = match &source.scan_root {
+                ScanRootChoice::Same => root.clone(),
+                ScanRootChoice::Separate { path } => {
+                    let Some(scan_root) = self.project_catalog_path(
+                        path,
+                        strict_paths,
+                        &format!("{field}.scan_root"),
+                        &mut diagnostics,
+                    ) else {
+                        continue;
+                    };
+                    scan_root
+                }
+            };
+            result.push(EffectiveSource {
+                id: source.id.clone(),
+                label: source.label.clone(),
+                root,
+                scan_root,
+                mount: source.mount.clone(),
+                rules: source.rules.clone(),
+            });
+        }
+        let mut preset_ids = BTreeSet::new();
+        for preset in &catalog.presets {
+            if !valid_identity(&preset.id)
+                || preset.id.starts_with("builtin-")
+                || !preset_ids.insert(preset.id.clone())
+                || preset.name.trim().is_empty()
+                || preset.version == 0
+            {
+                diagnostics.push(diagnostic(
+                    DiagnosticKind::InvalidType,
+                    Some(&format!("presets.{}", preset.id)),
+                    "preset needs a unique non-built-in ID, name and positive version".into(),
+                    true,
+                ));
+            }
+        }
+        (result, diagnostics)
+    }
+
+    fn project_catalog_path(
+        &self,
+        raw: &str,
+        strict: bool,
+        field: &str,
+        diagnostics: &mut Vec<SettingsDiagnostic>,
+    ) -> Option<PathBuf> {
+        match normalize_source(raw, &self.home) {
+            Ok(path) => Some(path),
+            Err((kind, message)) if !strict && path_is_missing(raw, &self.home) => {
+                let path = expand_source_path(raw, &self.home)?;
+                diagnostics.push(diagnostic(kind, Some(field), message, false));
+                Some(path)
+            }
+            Err((kind, message)) => {
+                diagnostics.push(diagnostic(kind, Some(field), message, true));
+                None
+            }
+        }
+    }
+
+    pub fn save_source_catalog(
+        &self,
+        catalog: &SourceCatalog,
+        expected_revision: Option<&ContentRevision>,
+    ) -> Result<SaveResult, SaveError> {
+        let before = self.load();
+        self.ensure_revision(expected_revision, before.revision.as_ref())?;
+        self.ensure_writable_status(&before)?;
+        if before.validation.iter().any(|diagnostic| {
+            diagnostic.blocking
+                && diagnostic.kind == DiagnosticKind::InvalidType
+                && diagnostic.field.as_deref().is_some_and(|field| {
+                    field.starts_with("document_sources") || field.starts_with("user_presets")
+                })
+        }) {
+            return Err(SaveError::LatestNotValid);
+        }
+        let diagnostics = self.validate_source_catalog(catalog);
+        let blocking = diagnostics
+            .into_iter()
+            .filter(|d| d.blocking)
+            .collect::<Vec<_>>();
+        if !blocking.is_empty() {
+            return Err(SaveError::Validation(blocking));
+        }
+        let mut doc = self.read_document_for_write()?;
+        merge_source_catalog(&mut doc, catalog);
+        set_value_preserving_decor(&mut doc["schema_version"], value(CURRENT_SCHEMA_VERSION));
+        self.write_document(&doc, expected_revision)?;
+        Ok(SaveResult {
+            snapshot: self.load(),
+            impact: if before.source_catalog == *catalog {
+                ApplyImpact::None
+            } else {
+                ApplyImpact::RestartRuntime
+            },
+            rebased: false,
+        })
+    }
+
+    pub fn rebase_source_catalog(
+        &self,
+        draft: &SourceCatalog,
+        base: &SourceCatalog,
+        stale_revision: &ContentRevision,
+    ) -> Result<SaveResult, SaveError> {
+        let latest = self.load();
+        if latest.revision.as_ref() == Some(stale_revision) {
+            return Err(SaveError::NotStale);
+        }
+        if latest.status != LoadStatus::Valid {
+            return Err(SaveError::LatestNotValid);
+        }
+        let merged =
+            merge_catalog_three_way(base, draft, &latest.source_catalog).ok_or_else(|| {
+                SaveError::RevisionConflict {
+                    expected: Some(stale_revision.clone()),
+                    actual: latest.revision.clone(),
+                }
+            })?;
+        let mut saved = self.save_source_catalog(&merged, latest.revision.as_ref())?;
+        saved.rebased = true;
+        Ok(saved)
+    }
+
+    fn ensure_writable_status(&self, snapshot: &SettingsSnapshot) -> Result<(), SaveError> {
+        match snapshot.status {
+            LoadStatus::Missing | LoadStatus::Valid | LoadStatus::Invalid => Ok(()),
+            LoadStatus::Malformed => Err(SaveError::Malformed),
+            LoadStatus::UnsupportedVersion => Err(SaveError::UnsupportedVersion(schema_from_raw(
+                &snapshot.raw_content,
+            ))),
+            LoadStatus::Unreadable => {
+                Err(SaveError::Unreadable(first_message(&snapshot.validation)))
+            }
+        }
+    }
+
+    fn read_document_for_write(&self) -> Result<DocumentMut, SaveError> {
+        match self.read_state() {
+            ReadState::Missing => Ok(DocumentMut::new()),
+            ReadState::Present { doc: Ok(doc), .. } => Ok(*doc),
+            ReadState::Present { doc: Err(_), .. } => Err(SaveError::Malformed),
+            ReadState::Unreadable(error) => Err(SaveError::Unreadable(error.to_string())),
+        }
     }
 
     /// Explicit, bounded startup operation: remove a positively recognized
@@ -972,6 +1339,7 @@ impl SettingsStore {
             revision,
             raw_content,
             authored,
+            source_catalog: SourceCatalog::defaults(),
             active: ActiveState {
                 uses_authored_settings: false,
                 source_is_authored: false,
@@ -988,7 +1356,7 @@ impl SettingsStore {
         let revision = Some(ContentRevision::from_bytes(&bytes));
         let version = integer_at(doc, &["schema_version"]);
         if let Some(version) = version {
-            if version != CURRENT_SCHEMA_VERSION {
+            if version != CURRENT_SCHEMA_VERSION && version != MIGRATED_SCHEMA_VERSION {
                 return self.default_snapshot(
                     LoadStatus::UnsupportedVersion,
                     true,
@@ -1082,6 +1450,28 @@ impl SettingsStore {
         }
 
         let (effective, mut semantic) = self.validate_and_project(&authored);
+        if version == Some(CURRENT_SCHEMA_VERSION) {
+            semantic.retain(|diagnostic| {
+                !diagnostic
+                    .field
+                    .as_deref()
+                    .is_some_and(|field| field.starts_with("source."))
+            });
+        }
+        let mut source_catalog = if version == Some(MIGRATED_SCHEMA_VERSION) {
+            let mut catalog = SourceCatalog::defaults();
+            catalog.sources[0].enabled = authored.claude_resources;
+            catalog.sources[0].root.clone_from(&authored.claude_dir);
+            catalog.sources[1].enabled = authored.codex_resources;
+            catalog.sources[1].root.clone_from(&authored.codex_dir);
+            catalog
+        } else {
+            read_source_catalog(doc, &mut diagnostics)
+        };
+        let (sources, mut source_diagnostics) = self.project_source_catalog(&source_catalog, false);
+        semantic.append(&mut source_diagnostics);
+        let mut effective = effective;
+        effective.sources = sources;
         diagnostics.append(&mut semantic);
         let blocking = diagnostics.iter().any(|d| d.blocking);
         let status = if blocking {
@@ -1102,6 +1492,7 @@ impl SettingsStore {
             revision,
             raw_content,
             authored,
+            source_catalog: std::mem::take(&mut source_catalog),
             active: ActiveState {
                 uses_authored_settings: uses_authored,
                 source_is_authored: uses_authored,
@@ -1125,6 +1516,9 @@ impl SettingsStore {
             effective_port: DEFAULT_PORT,
             fallback_to_free_port: true,
             shortcuts: default_shortcut_entries(),
+            sources: self
+                .project_source_catalog(&SourceCatalog::defaults(), false)
+                .0,
         }
     }
 
@@ -1194,6 +1588,7 @@ impl SettingsStore {
                 effective_port: port,
                 fallback_to_free_port: draft.fallback_to_free_port,
                 shortcuts,
+                sources: Vec::new(),
             },
             diagnostics,
         )
@@ -1338,6 +1733,17 @@ impl SettingsStore {
 }
 
 impl SettingField {
+    fn app_fields() -> BTreeSet<Self> {
+        [
+            Self::AppearanceMode,
+            Self::ThemePack,
+            Self::PreferredPort,
+            Self::FallbackToFreePort,
+            Self::Shortcuts,
+        ]
+        .into_iter()
+        .collect()
+    }
     fn all() -> BTreeSet<Self> {
         [
             Self::ClaudeResources,
@@ -1434,6 +1840,37 @@ fn normalize_source(raw: &str, home: &Path) -> Result<PathBuf, (DiagnosticKind, 
                 Ok(canonical)
             }
         })
+}
+
+fn expand_source_path(raw: &str, home: &Path) -> Option<PathBuf> {
+    let path = if let Some(rest) = raw.strip_prefix("~/") {
+        home.join(rest)
+    } else if raw == "~" {
+        home.to_path_buf()
+    } else {
+        if raw.starts_with('~') {
+            return None;
+        }
+        PathBuf::from(raw)
+    };
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    if path == home || home.starts_with(&path) {
+        return None;
+    }
+    Some(path)
+}
+
+fn path_is_missing(raw: &str, home: &Path) -> bool {
+    expand_source_path(raw, home).is_some_and(|path| {
+        std::fs::metadata(path).is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+    })
 }
 
 fn item_at<'a>(doc: &'a DocumentMut, path: &[&str]) -> Option<&'a Item> {
@@ -1819,6 +2256,313 @@ fn merge_fields(doc: &mut DocumentMut, draft: &SettingsDraft, fields: &BTreeSet<
     if fields.contains(&SettingField::Shortcuts) {
         merge_shortcuts(doc, &draft.shortcuts);
     }
+}
+
+fn valid_identity(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+}
+
+fn catalog_from_legacy(draft: &SettingsDraft) -> SourceCatalog {
+    let mut catalog = SourceCatalog::defaults();
+    catalog.sources[0].enabled = draft.claude_resources;
+    catalog.sources[0].root.clone_from(&draft.claude_dir);
+    catalog.sources[1].enabled = draft.codex_resources;
+    catalog.sources[1].root.clone_from(&draft.codex_dir);
+    catalog
+}
+
+fn valid_mount(mount: &str) -> bool {
+    !mount.is_empty()
+        && mount.len() <= 80
+        && mount.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && mount
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
+        && !matches!(
+            mount,
+            "ccresdoc"
+                | "index"
+                | "welcome"
+                | "claude-md"
+                | "claude-commands"
+                | "claude-skills"
+                | "claude-agents"
+                | "codex-agents-md"
+                | "codex-config"
+                | "codex-agents"
+                | "codex-hooks"
+                | "codex-rules"
+                | "codex-skills"
+        )
+}
+
+fn string_array(values: &[String]) -> Item {
+    let mut array = Array::new();
+    for value in values {
+        array.push(value.as_str());
+    }
+    Item::Value(Value::Array(array))
+}
+
+fn rule_table(rules: &RuleSnapshot) -> Table {
+    let mut table = Table::new();
+    match rules {
+        RuleSnapshot::ClaudeCode { definition_version } => {
+            table["kind"] = value("claude_code");
+            table["definition_version"] = value(i64::from(*definition_version));
+        }
+        RuleSnapshot::Codex { definition_version } => {
+            table["kind"] = value("codex");
+            table["definition_version"] = value(i64::from(*definition_version));
+        }
+        RuleSnapshot::Custom {
+            definition_version,
+            format,
+            include,
+            exclude,
+        } => {
+            table["kind"] = value("custom");
+            table["definition_version"] = value(i64::from(*definition_version));
+            table["format"] = value(match format {
+                PublicFormat::Markdown => "markdown",
+                PublicFormat::Code => "code",
+                PublicFormat::Skill => "skill",
+            });
+            table["include"] = string_array(include);
+            table["exclude"] = string_array(exclude);
+        }
+    }
+    table
+}
+
+fn merge_source_catalog(doc: &mut DocumentMut, catalog: &SourceCatalog) {
+    let mut sources = ArrayOfTables::new();
+    for source in &catalog.sources {
+        let mut table = Table::new();
+        table["id"] = value(&source.id);
+        table["label"] = value(&source.label);
+        table["enabled"] = value(source.enabled);
+        table["root"] = value(&source.root);
+        table["mount"] = value(&source.mount);
+        let mut scan = Table::new();
+        match &source.scan_root {
+            ScanRootChoice::Same => scan["kind"] = value("same"),
+            ScanRootChoice::Separate { path } => {
+                scan["kind"] = value("separate");
+                scan["path"] = value(path);
+            }
+        }
+        table["scan_root"] = Item::Table(scan);
+        if let Some(origin) = &source.origin_preset {
+            let mut preset = Table::new();
+            preset["id"] = value(&origin.id);
+            preset["name"] = value(&origin.name);
+            preset["version"] = value(i64::from(origin.version));
+            table["origin_preset"] = Item::Table(preset);
+        }
+        table["rules"] = Item::Table(rule_table(&source.rules));
+        sources.push(table);
+    }
+    doc["document_sources"] = Item::ArrayOfTables(sources);
+    let mut presets = ArrayOfTables::new();
+    for preset in &catalog.presets {
+        let mut table = Table::new();
+        table["id"] = value(&preset.id);
+        table["name"] = value(&preset.name);
+        table["description"] = value(&preset.description);
+        table["version"] = value(i64::from(preset.version));
+        table["rules"] = Item::Table(rule_table(&preset.rules));
+        presets.push(table);
+    }
+    doc["user_presets"] = Item::ArrayOfTables(presets);
+    set_section_value(doc, "document_source_catalog", "format_version", value(1));
+}
+
+fn read_source_catalog(
+    doc: &DocumentMut,
+    diagnostics: &mut Vec<SettingsDiagnostic>,
+) -> SourceCatalog {
+    let Some(source_item) = doc.get("document_sources") else {
+        return SourceCatalog::defaults();
+    };
+    let Some(source_tables) = source_item.as_array_of_tables() else {
+        diagnostics.push(invalid_type("document_sources", "an array of tables"));
+        return SourceCatalog::defaults();
+    };
+    let mut catalog = SourceCatalog::default();
+    for (index, table) in source_tables.iter().enumerate() {
+        match parse_document_source(table) {
+            Some(source) => catalog.sources.push(source),
+            None => diagnostics.push(invalid_type(
+                &format!("document_sources[{index}]"),
+                "a complete source table",
+            )),
+        }
+    }
+    if let Some(preset_item) = doc.get("user_presets") {
+        if let Some(preset_tables) = preset_item.as_array_of_tables() {
+            for (index, table) in preset_tables.iter().enumerate() {
+                match parse_user_preset(table) {
+                    Some(preset) => catalog.presets.push(preset),
+                    None => diagnostics.push(invalid_type(
+                        &format!("user_presets[{index}]"),
+                        "a complete preset table",
+                    )),
+                }
+            }
+        } else {
+            diagnostics.push(invalid_type("user_presets", "an array of tables"));
+        }
+    }
+    catalog
+}
+
+fn table_string(table: &Table, key: &str) -> Option<String> {
+    table.get(key)?.as_str().map(str::to_owned)
+}
+fn table_u32(table: &Table, key: &str) -> Option<u32> {
+    u32::try_from(table.get(key)?.as_integer()?).ok()
+}
+fn table_strings(table: &Table, key: &str) -> Option<Vec<String>> {
+    table
+        .get(key)?
+        .as_array()?
+        .iter()
+        .map(|value| value.as_str().map(str::to_owned))
+        .collect()
+}
+fn parse_rules(table: &Table) -> Option<RuleSnapshot> {
+    let version = table_u32(table, "definition_version")?;
+    match table_string(table, "kind")?.as_str() {
+        "claude_code" => Some(RuleSnapshot::ClaudeCode {
+            definition_version: version,
+        }),
+        "codex" => Some(RuleSnapshot::Codex {
+            definition_version: version,
+        }),
+        "custom" => Some(RuleSnapshot::Custom {
+            definition_version: version,
+            format: match table_string(table, "format")?.as_str() {
+                "markdown" => PublicFormat::Markdown,
+                "code" => PublicFormat::Code,
+                "skill" => PublicFormat::Skill,
+                _ => return None,
+            },
+            include: table_strings(table, "include")?,
+            exclude: table_strings(table, "exclude")?,
+        }),
+        _ => None,
+    }
+}
+fn parse_document_source(table: &Table) -> Option<DocumentSource> {
+    let scan = table.get("scan_root")?.as_table()?;
+    let scan_root = match table_string(scan, "kind")?.as_str() {
+        "same" => ScanRootChoice::Same,
+        "separate" => ScanRootChoice::Separate {
+            path: table_string(scan, "path")?,
+        },
+        _ => return None,
+    };
+    let origin_preset = match table.get("origin_preset") {
+        None => None,
+        Some(item) => {
+            let table = item.as_table()?;
+            Some(PresetRef {
+                id: table_string(table, "id")?,
+                name: table_string(table, "name")?,
+                version: table_u32(table, "version")?,
+            })
+        }
+    };
+    Some(DocumentSource {
+        id: table_string(table, "id")?,
+        label: table_string(table, "label")?,
+        enabled: table.get("enabled")?.as_bool()?,
+        root: table_string(table, "root")?,
+        scan_root,
+        mount: table_string(table, "mount")?,
+        origin_preset,
+        rules: parse_rules(table.get("rules")?.as_table()?)?,
+    })
+}
+fn parse_user_preset(table: &Table) -> Option<UserPreset> {
+    Some(UserPreset {
+        id: table_string(table, "id")?,
+        name: table_string(table, "name")?,
+        description: table_string(table, "description")?,
+        version: table_u32(table, "version")?,
+        rules: parse_rules(table.get("rules")?.as_table()?)?,
+    })
+}
+
+fn merge_catalog_three_way(
+    base: &SourceCatalog,
+    draft: &SourceCatalog,
+    latest: &SourceCatalog,
+) -> Option<SourceCatalog> {
+    Some(SourceCatalog {
+        sources: merge_entries_by_id(&base.sources, &draft.sources, &latest.sources, |entry| {
+            &entry.id
+        })?,
+        presets: merge_entries_by_id(&base.presets, &draft.presets, &latest.presets, |entry| {
+            &entry.id
+        })?,
+    })
+}
+
+fn merge_entries_by_id<T: Clone + PartialEq>(
+    base: &[T],
+    draft: &[T],
+    latest: &[T],
+    id: impl Fn(&T) -> &str,
+) -> Option<Vec<T>> {
+    let base_map = base
+        .iter()
+        .map(|entry| (id(entry).to_owned(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let draft_map = draft
+        .iter()
+        .map(|entry| (id(entry).to_owned(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let latest_map = latest
+        .iter()
+        .map(|entry| (id(entry).to_owned(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let keys = base_map
+        .keys()
+        .chain(draft_map.keys())
+        .chain(latest_map.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut merged = latest.to_vec();
+    for key in keys {
+        let base_entry = base_map.get(&key).copied();
+        let draft_entry = draft_map.get(&key).copied();
+        let latest_entry = latest_map.get(&key).copied();
+        if draft_entry == base_entry {
+            continue;
+        }
+        if latest_entry != base_entry && latest_entry != draft_entry {
+            return None;
+        }
+        match (
+            merged.iter().position(|entry| id(entry) == key),
+            draft_entry,
+        ) {
+            (Some(index), Some(entry)) => merged[index] = entry.clone(),
+            (Some(index), None) => {
+                merged.remove(index);
+            }
+            (None, Some(entry)) => merged.push(entry.clone()),
+            (None, None) => {}
+        }
+    }
+    Some(merged)
 }
 
 fn merge_shortcuts(doc: &mut DocumentMut, entries: &[ShortcutEntry]) {
@@ -2215,7 +2959,7 @@ mod tests {
         assert_eq!(saved.snapshot.status, LoadStatus::Valid);
         assert!(fs::read_to_string(store.path())
             .unwrap()
-            .contains("schema_version = 2"));
+            .contains("schema_version = 3"));
 
         // Relaunch: retirement leaves the saved v2 config alone.
         let relaunched = SettingsStore::with_theme_packs(
@@ -2239,7 +2983,7 @@ mod tests {
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
         for content in [
             "schema_version = 1\n[source\nnope".to_string(),
-            "schema_version = 3\nfuture = true\n".to_string(),
+            "schema_version = 4\nfuture = true\n".to_string(),
             "schema_version = 2\n[appearance]\nmode = \"dark\"\n".to_string(),
             "[appearance]\nmode = \"dark\"\n".to_string(),
             "schema_version = 1\n[unrelated]\nkey = 1\n".to_string(),
@@ -2457,12 +3201,12 @@ mod tests {
     fn future_version_cannot_be_saved_or_replaced() {
         let (_root, store) = fixture();
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
-        fs::write(store.path(), "schema_version = 3\nfuture = true\n").unwrap();
+        fs::write(store.path(), "schema_version = 4\nfuture = true\n").unwrap();
         let loaded = store.load();
         assert_eq!(loaded.status, LoadStatus::UnsupportedVersion);
         assert!(matches!(
             store.save(&loaded.authored, loaded.revision.as_ref()),
-            Err(SaveError::UnsupportedVersion(3))
+            Err(SaveError::UnsupportedVersion(4))
         ));
         assert!(matches!(
             store.replace_malformed(&loaded.authored, loaded.revision.as_ref().unwrap()),
@@ -2991,7 +3735,7 @@ mod tests {
             store.rebase_dirty(&current.authored, &dirty, &stale_revision),
             Err(SaveError::LatestNotValid)
         ));
-        fs::write(store.path(), "schema_version = 3\n").unwrap();
+        fs::write(store.path(), "schema_version = 4\n").unwrap();
         assert!(matches!(
             store.rebase_dirty(&current.authored, &dirty, &stale_revision),
             Err(SaveError::LatestNotValid)
@@ -3242,7 +3986,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(SettingsDraft::defaults()).unwrap(),
             serde_json::json!({
-                "schema_version": 2,
+                "schema_version": 3,
                 "claude_resources": true,
                 "codex_resources": false,
                 "claude_dir": "~/.claude",
@@ -3283,5 +4027,103 @@ mod tests {
                 .shortcuts,
             default_shortcut_entries()
         );
+    }
+
+    #[test]
+    fn v2_migration_is_atomic_idempotent_and_preserves_disabled_paths() {
+        let (_root, store) = fixture();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        let old = "# owner note\nschema_version = 2\ncustom = 'keep'\n[resources]\nclaude = false\ncodex = false\n[source]\nclaude_dir = '/missing/claude'\ncodex_dir = '/missing/codex'\n[appearance]\nmode = 'dark'\n[server]\npreferred_port = 5900\n";
+        fs::write(store.path(), old).unwrap();
+        let migrated = store.migrate_v2().unwrap();
+        assert_eq!(migrated.authored.schema_version, 3);
+        assert_eq!(migrated.source_catalog.sources.len(), 2);
+        assert_eq!(migrated.source_catalog.sources[0].root, "/missing/claude");
+        assert_eq!(migrated.source_catalog.sources[1].root, "/missing/codex");
+        assert!(!migrated.source_catalog.sources[0].enabled);
+        assert_eq!(migrated.authored.appearance_mode, "dark");
+        assert_eq!(migrated.authored.preferred_port, 5900);
+        let first = fs::read(store.path()).unwrap();
+        assert!(String::from_utf8_lossy(&first).contains("# owner note"));
+        assert!(String::from_utf8_lossy(&first).contains("custom = 'keep'"));
+        store.migrate_v2().unwrap();
+        assert_eq!(fs::read(store.path()).unwrap(), first);
+    }
+
+    #[test]
+    fn scoped_app_write_preserves_source_table_bytes_and_source_rebase_is_per_id() {
+        let (root, store) = fixture();
+        let first = store
+            .save_source_catalog(&SourceCatalog::defaults(), None)
+            .unwrap()
+            .snapshot;
+        let before = fs::read_to_string(store.path()).unwrap();
+        let mut app = first.authored.clone();
+        app.appearance_mode = "dark".into();
+        let fields = [SettingField::AppearanceMode].into_iter().collect();
+        let saved = store
+            .save_app_fields(&app, &fields, first.revision.as_ref())
+            .unwrap()
+            .snapshot;
+        let after = fs::read_to_string(store.path()).unwrap();
+        assert_eq!(
+            before.split("[[document_sources]]").nth(1),
+            after.split("[[document_sources]]").nth(1)
+        );
+        let base = saved.source_catalog.clone();
+        let mut draft = base.clone();
+        draft.sources[0].label = "Local Claude".into();
+        let mut concurrent = base.clone();
+        concurrent.sources[1].label = "Work Codex".into();
+        let current = store
+            .save_source_catalog(&concurrent, saved.revision.as_ref())
+            .unwrap()
+            .snapshot;
+        let merged = store
+            .rebase_source_catalog(&draft, &base, saved.revision.as_ref().unwrap())
+            .unwrap();
+        assert!(merged.rebased);
+        assert_eq!(
+            merged.snapshot.source_catalog.sources[0].label,
+            "Local Claude"
+        );
+        assert_eq!(
+            merged.snapshot.source_catalog.sources[1].label,
+            "Work Codex"
+        );
+        let mut collision = base.clone();
+        collision.sources[1].label = "Conflicting Codex".into();
+        assert!(matches!(
+            store.rebase_source_catalog(&collision, &base, saved.revision.as_ref().unwrap()),
+            Err(SaveError::RevisionConflict { .. })
+        ));
+        assert!(root.path().join("home/.claude").exists());
+        assert_eq!(current.source_catalog.sources[1].label, "Work Codex");
+    }
+
+    #[test]
+    fn persisted_source_that_disappears_keeps_identity_for_recovery_watch() {
+        let (root, store) = fixture();
+        let disappearing = root.path().join("disappearing");
+        fs::create_dir(&disappearing).unwrap();
+        let mut catalog = SourceCatalog::defaults();
+        catalog.sources[0].root = disappearing.to_string_lossy().into_owned();
+        store.save_source_catalog(&catalog, None).unwrap();
+        fs::remove_dir(&disappearing).unwrap();
+        let loaded = store.load();
+        assert_eq!(loaded.status, LoadStatus::Valid);
+        assert_eq!(loaded.effective.sources[0].id, "legacy-claude");
+        assert_eq!(loaded.effective.sources[0].root, disappearing);
+        assert!(loaded
+            .validation
+            .iter()
+            .any(
+                |diagnostic| diagnostic.field.as_deref() == Some("sources.legacy-claude.root")
+                    && !diagnostic.blocking
+            ));
+        assert!(store
+            .validate_source_catalog(&catalog)
+            .iter()
+            .any(|diagnostic| diagnostic.blocking));
     }
 }

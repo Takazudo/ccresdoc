@@ -16,7 +16,9 @@ use html5ever::tokenizer::{
 };
 use html5ever::{local_name, ns};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -239,6 +241,478 @@ pub fn remove_exact(path: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Persisted ownership for generated source mounts in the writable workspace.
+/// It is never copied into a document route or search payload.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct SourceOwnershipManifest {
+    version: u32,
+    mounts: BTreeMap<String, OwnedMount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OwnedMount {
+    source_id: String,
+    files: BTreeMap<String, String>,
+}
+
+#[derive(Debug)]
+pub struct ManagedSourceJournal {
+    docs_dir: PathBuf,
+    backup_dir: PathBuf,
+    manifest_path: PathBuf,
+    manifest_before: Option<Vec<u8>>,
+    promoted: Vec<String>,
+    backed_up: Vec<String>,
+}
+
+const LEGACY_GENERATED_NAMESPACES: &[&str] = &[
+    "claude",
+    "claude-md",
+    "claude-commands",
+    "claude-skills",
+    "claude-agents",
+    "codex",
+    "codex-agents-md",
+    "codex-config",
+    "codex-agents",
+    "codex-hooks",
+    "codex-rules",
+    "codex-skills",
+];
+
+impl ManagedSourceJournal {
+    /// Atomically replace only source-ID-owned mounts. Existing owned bytes
+    /// must match their recorded hashes, including absence of extra files.
+    /// A new mount colliding with any unrelated path is rejected.
+    pub fn promote(
+        docs_dir: &Path,
+        candidate_dir: &Path,
+        backup_dir: &Path,
+        manifest_path: &Path,
+        sources: &BTreeMap<String, String>, // source ID -> mount
+    ) -> std::io::Result<Self> {
+        if std::fs::symlink_metadata(manifest_path)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "source manifest symlink is forbidden",
+            ));
+        }
+        let manifest_before = match std::fs::read(manifest_path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        let previous = match &manifest_before {
+            Some(bytes) => serde_json::from_slice::<SourceOwnershipManifest>(bytes)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
+            None => SourceOwnershipManifest::default(),
+        };
+        if previous.version != 0 && previous.version != 1 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "unsupported source ownership manifest",
+            ));
+        }
+        let mut legacy = Vec::new();
+        if manifest_before.is_none() {
+            for name in LEGACY_GENERATED_NAMESPACES {
+                let path = docs_dir.join(name);
+                if path.exists() {
+                    if !is_legacy_generated_tree(&path, name)? {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::AlreadyExists,
+                            format!(
+                                "legacy namespace '{name}' contains unrecognized or edited files"
+                            ),
+                        ));
+                    }
+                    legacy.push((*name).to_owned());
+                }
+            }
+        }
+        let mut next = SourceOwnershipManifest {
+            version: 1,
+            mounts: BTreeMap::new(),
+        };
+        let mut names = BTreeSet::new();
+        for (source_id, mount) in sources {
+            if !safe_mount_name(mount) || !names.insert(mount.clone()) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "invalid or duplicate source mount",
+                ));
+            }
+            let path = candidate_dir.join(mount);
+            let files = digest_tree(&path)?;
+            next.mounts.insert(
+                mount.clone(),
+                OwnedMount {
+                    source_id: source_id.clone(),
+                    files,
+                },
+            );
+        }
+        for (mount, owned) in &previous.mounts {
+            if !safe_mount_name(mount) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "unsafe recorded mount",
+                ));
+            }
+            let live = docs_dir.join(mount);
+            let current = digest_tree(&live)?;
+            if current != owned.files {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!("generated mount '{mount}' was edited outside CCResDoc"),
+                ));
+            }
+        }
+        for mount in next.mounts.keys() {
+            if !previous.mounts.contains_key(mount)
+                && !legacy.contains(mount)
+                && docs_dir.join(mount).exists()
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!("mount '{mount}' collides with an unrelated document"),
+                ));
+            }
+        }
+        std::fs::create_dir_all(docs_dir)?;
+        remove_exact(backup_dir)?;
+        std::fs::create_dir_all(backup_dir)?;
+        let mut journal = Self {
+            docs_dir: docs_dir.to_path_buf(),
+            backup_dir: backup_dir.to_path_buf(),
+            manifest_path: manifest_path.to_path_buf(),
+            manifest_before,
+            promoted: Vec::new(),
+            backed_up: Vec::new(),
+        };
+        let transition = (|| {
+            for name in &legacy {
+                std::fs::rename(docs_dir.join(name), backup_dir.join(name))?;
+                journal.backed_up.push(name.clone());
+            }
+            for mount in previous.mounts.keys() {
+                std::fs::rename(docs_dir.join(mount), backup_dir.join(mount))?;
+                journal.backed_up.push(mount.clone());
+            }
+            for mount in next.mounts.keys() {
+                std::fs::rename(candidate_dir.join(mount), docs_dir.join(mount))?;
+                journal.promoted.push(mount.clone());
+            }
+            write_ownership_manifest(manifest_path, &next)?;
+            Ok(())
+        })();
+        if let Err(error) = transition {
+            let rollback = journal.rollback();
+            return Err(rollback.err().unwrap_or(error));
+        }
+        Ok(journal)
+    }
+
+    pub fn rollback(mut self) -> std::io::Result<()> {
+        let mut first = None;
+        for mount in self.promoted.drain(..).rev() {
+            if let Err(error) = remove_exact(&self.docs_dir.join(mount)) {
+                first.get_or_insert(error);
+            }
+        }
+        for mount in self.backed_up.drain(..).rev() {
+            if let Err(error) =
+                std::fs::rename(self.backup_dir.join(&mount), self.docs_dir.join(&mount))
+            {
+                first.get_or_insert(error);
+            }
+        }
+        let manifest = match &self.manifest_before {
+            Some(bytes) => write_manifest_bytes(&self.manifest_path, bytes),
+            None => remove_exact(&self.manifest_path),
+        };
+        if let Err(error) = manifest {
+            first.get_or_insert(error);
+        }
+        if let Err(error) = remove_exact(&self.backup_dir) {
+            first.get_or_insert(error);
+        }
+        first.map_or(Ok(()), Err)
+    }
+
+    pub fn commit(self) -> std::io::Result<()> {
+        remove_exact(&self.backup_dir)
+    }
+}
+
+fn is_legacy_generated_tree(root: &Path, name: &str) -> std::io::Result<bool> {
+    let metadata = std::fs::symlink_metadata(root)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Ok(false);
+    }
+    fn visit(at: &Path, name: &str) -> std::io::Result<bool> {
+        for entry in std::fs::read_dir(at)? {
+            let entry = entry?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_symlink() {
+                return Ok(false);
+            }
+            if metadata.is_dir() {
+                if !visit(&path, name)? {
+                    return Ok(false);
+                }
+                continue;
+            }
+            if !metadata.is_file() || path.extension().is_none_or(|ext| ext != "mdx") {
+                return Ok(false);
+            }
+            let text = std::fs::read_to_string(&path)?;
+            let is_generated = text
+                .lines()
+                .take(12)
+                .any(|line| line.trim() == "generated: true");
+            let is_old_overview = matches!(name, "claude" | "codex")
+                && path.file_name().is_some_and(|file| file == "index.mdx")
+                && (text.contains("data-ccresdoc-resource=")
+                    || text.contains("<CategoryNav categories="));
+            if !is_generated && !is_old_overview {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+    visit(root, name)
+}
+
+fn safe_mount_name(mount: &str) -> bool {
+    !mount.is_empty()
+        && mount != "ccresdoc"
+        && mount != "index"
+        && mount != "welcome"
+        && mount.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && mount
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
+}
+
+fn digest_tree(root: &Path) -> std::io::Result<BTreeMap<String, String>> {
+    let mut files = BTreeMap::new();
+    let root_metadata = std::fs::symlink_metadata(root)?;
+    if !root_metadata.is_dir() || root_metadata.file_type().is_symlink() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "owned mount is not a real directory",
+        ));
+    }
+    fn visit(root: &Path, at: &Path, files: &mut BTreeMap<String, String>) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(at)? {
+            let entry = entry?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_symlink() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "symlink inside owned mount",
+                ));
+            }
+            if metadata.is_dir() {
+                visit(root, &path, files)?;
+                continue;
+            }
+            if !metadata.is_file() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "non-file inside owned mount",
+                ));
+            }
+            let relative = path
+                .strip_prefix(root)
+                .expect("visited path under mount")
+                .to_string_lossy()
+                .replace('\\', "/");
+            let bytes = std::fs::read(&path)?;
+            files.insert(relative, format!("{:x}", Sha256::digest(bytes)));
+        }
+        Ok(())
+    }
+    visit(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn write_ownership_manifest(
+    path: &Path,
+    manifest: &SourceOwnershipManifest,
+) -> std::io::Result<()> {
+    let bytes = serde_json::to_vec_pretty(manifest).map_err(std::io::Error::other)?;
+    write_manifest_bytes(path, &bytes)
+}
+
+fn write_manifest_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "manifest has no parent")
+    })?;
+    std::fs::create_dir_all(parent)?;
+    let temporary = parent.join(format!(
+        ".ccresdoc-source-manifest-{}.tmp",
+        std::process::id()
+    ));
+    std::fs::write(&temporary, bytes)?;
+    std::fs::rename(&temporary, path)
+}
+
+pub fn owned_source_mounts(manifest_path: &Path) -> std::io::Result<BTreeMap<String, String>> {
+    let metadata = match std::fs::symlink_metadata(manifest_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(error) => return Err(error),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "source manifest must be a regular file",
+        ));
+    }
+    let bytes = std::fs::read(manifest_path)?;
+    let manifest: SourceOwnershipManifest = serde_json::from_slice(&bytes)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    if manifest.version != 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "unsupported source manifest version",
+        ));
+    }
+    let mut sources = BTreeMap::new();
+    for (mount, owned) in manifest.mounts {
+        if !safe_mount_name(&mount)
+            || owned.source_id.is_empty()
+            || sources.insert(owned.source_id, mount).is_some()
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid source ownership entry",
+            ));
+        }
+    }
+    Ok(sources)
+}
+
+#[cfg(test)]
+mod source_journal_tests {
+    use super::*;
+
+    #[test]
+    fn source_manifest_rejects_manual_edits_and_unrelated_mounts() {
+        let root = tempfile::tempdir().unwrap();
+        let docs = root.path().join("docs");
+        let candidate = root.path().join("candidate");
+        let backup = root.path().join("backup");
+        let manifest = root.path().join(".ccresdoc-owned-sources.json");
+        std::fs::create_dir_all(candidate.join("notes")).unwrap();
+        std::fs::write(candidate.join("notes/index.mdx"), "generated").unwrap();
+        let sources = BTreeMap::from([("source-a".into(), "notes".into())]);
+        ManagedSourceJournal::promote(&docs, &candidate, &backup, &manifest, &sources)
+            .unwrap()
+            .commit()
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(docs.join("notes/index.mdx")).unwrap(),
+            "generated"
+        );
+        std::fs::write(docs.join("notes/index.mdx"), "manual edit").unwrap();
+        let empty = root.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        assert_eq!(
+            ManagedSourceJournal::promote(&docs, &empty, &backup, &manifest, &BTreeMap::new())
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(
+            std::fs::read_to_string(docs.join("notes/index.mdx")).unwrap(),
+            "manual edit"
+        );
+        std::fs::create_dir_all(docs.join("ccresdoc")).unwrap();
+        std::fs::write(docs.join("ccresdoc/index.mdx"), "manager").unwrap();
+        assert_eq!(
+            ManagedSourceJournal::promote(
+                &docs,
+                &empty,
+                &backup,
+                &manifest,
+                &BTreeMap::from([("new".into(), "ccresdoc".into())])
+            )
+            .unwrap_err()
+            .kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn source_manifest_rollback_restores_old_mount_and_manifest() {
+        let root = tempfile::tempdir().unwrap();
+        let docs = root.path().join("docs");
+        let backup = root.path().join("backup");
+        let manifest = root.path().join(".ccresdoc-owned-sources.json");
+        let sources = BTreeMap::from([("source-a".into(), "notes".into())]);
+        let old = root.path().join("old");
+        std::fs::create_dir_all(old.join("notes")).unwrap();
+        std::fs::write(old.join("notes/index.mdx"), "old").unwrap();
+        ManagedSourceJournal::promote(&docs, &old, &backup, &manifest, &sources)
+            .unwrap()
+            .commit()
+            .unwrap();
+        let manifest_before = std::fs::read(&manifest).unwrap();
+        let new = root.path().join("new");
+        std::fs::create_dir_all(new.join("notes")).unwrap();
+        std::fs::write(new.join("notes/index.mdx"), "new").unwrap();
+        ManagedSourceJournal::promote(&docs, &new, &backup, &manifest, &sources)
+            .unwrap()
+            .rollback()
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(docs.join("notes/index.mdx")).unwrap(),
+            "old"
+        );
+        assert_eq!(std::fs::read(&manifest).unwrap(), manifest_before);
+    }
+
+    #[test]
+    fn first_source_publication_prunes_only_verified_legacy_namespaces() {
+        let root = tempfile::tempdir().unwrap();
+        let docs = root.path().join("docs");
+        let candidate = root.path().join("candidate");
+        let backup = root.path().join("backup");
+        let manifest = root.path().join(".ccresdoc-owned-sources.json");
+        std::fs::create_dir_all(docs.join("claude-md")).unwrap();
+        std::fs::write(
+            docs.join("claude-md/global.mdx"),
+            "---\ntitle: Old\ngenerated: true\n---\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(docs.join("ccresdoc")).unwrap();
+        std::fs::write(docs.join("ccresdoc/document-sources.mdx"), "manager").unwrap();
+        std::fs::create_dir_all(candidate.join("claude")).unwrap();
+        std::fs::write(candidate.join("claude/index.mdx"), "new").unwrap();
+        let sources = BTreeMap::from([("legacy-claude".into(), "claude".into())]);
+        ManagedSourceJournal::promote(&docs, &candidate, &backup, &manifest, &sources)
+            .unwrap()
+            .commit()
+            .unwrap();
+        assert!(!docs.join("claude-md").exists());
+        assert_eq!(
+            std::fs::read_to_string(docs.join("ccresdoc/document-sources.mdx")).unwrap(),
+            "manager"
+        );
+        assert_eq!(
+            std::fs::read_to_string(docs.join("claude/index.mdx")).unwrap(),
+            "new"
+        );
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimePhase {
@@ -262,6 +736,8 @@ pub struct RuntimeSnapshot {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceCounts {
+    #[serde(default)]
+    pub source_pages: BTreeMap<String, usize>,
     pub claude_md: usize,
     pub claude_commands: usize,
     pub claude_skills: usize,
@@ -734,6 +1210,63 @@ pub fn probe_resource_readiness(
     ReadinessState::Ready
 }
 
+/// Probe the normal shell and the source-independent manager route, then each
+/// active source landing for the candidate marker. A failed source does not
+/// make the manager itself dependent on generated user content.
+pub fn probe_source_readiness(
+    port: u16,
+    mounts: &[String],
+    marker: &str,
+    io_timeout: Duration,
+) -> ReadinessState {
+    let Ok((status, shell)) = probe_path(port, DOCS_PATH, io_timeout) else {
+        return ReadinessState::HttpUnavailable;
+    };
+    if status != 200 || !shell.contains(SHELL_MARKER) {
+        return if status == 200 {
+            ReadinessState::StaleContent
+        } else {
+            ReadinessState::HttpUnavailable
+        };
+    }
+    let scripts = scan_module_scripts(&shell, port);
+    if scripts.over_probe_cap || (scripts.has_island_markers && scripts.paths.is_empty()) {
+        return ReadinessState::StaleContent;
+    }
+    for path in scripts.paths {
+        match probe_status(port, &path, io_timeout) {
+            Ok(200) => {}
+            Ok(_) => return ReadinessState::StaleContent,
+            Err(_) => return ReadinessState::HttpUnavailable,
+        }
+    }
+    match probe_status(port, "/docs/ccresdoc/document-sources/", io_timeout) {
+        Ok(200) => {}
+        Ok(_) => return ReadinessState::StaleContent,
+        Err(_) => return ReadinessState::HttpUnavailable,
+    }
+    for mount in mounts {
+        if !safe_mount_name(mount) {
+            return ReadinessState::StaleContent;
+        }
+        let path = format!("/docs/{mount}/");
+        let Ok((status, body)) = probe_path(port, &path, io_timeout) else {
+            return ReadinessState::HttpUnavailable;
+        };
+        if status != 200
+            || !body.contains(marker)
+            || !body.contains(&format!("data-ccresdoc-source="))
+        {
+            return if status == 200 {
+                ReadinessState::StaleContent
+            } else {
+                ReadinessState::HttpUnavailable
+            };
+        }
+    }
+    ReadinessState::Ready
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadyResult {
     Ready,
@@ -848,6 +1381,37 @@ impl ApplyCoordinator {
         let mut state = lock_unpoisoned(&self.state);
         if state.generation == generation {
             state.generated = Some(generated);
+        }
+    }
+
+    pub fn publish_watch_failure(&self, message: String, generation: u64) {
+        let mut state = lock_unpoisoned(&self.state);
+        if state.generation != generation {
+            return;
+        }
+        state.diagnostic = Some(RuntimeDiagnostic {
+            kind: RuntimeDiagnosticKind::WatchFailed,
+            preferred_port: state.authored.effective.preferred_port,
+            attempted_port: state.active.as_ref().map(|active| active.effective_port),
+            message,
+        });
+        if state.active.is_none() {
+            state.phase = RuntimePhase::SavedNotActive;
+        }
+    }
+
+    pub fn clear_watch_failure(&self, generation: u64) {
+        let mut state = lock_unpoisoned(&self.state);
+        if state.generation == generation
+            && state
+                .diagnostic
+                .as_ref()
+                .is_some_and(|diagnostic| diagnostic.kind == RuntimeDiagnosticKind::WatchFailed)
+        {
+            state.diagnostic = None;
+            if state.active.is_some() {
+                state.phase = RuntimePhase::Ready;
+            }
         }
     }
 
@@ -1003,6 +1567,7 @@ mod tests {
             effective_port: port,
             fallback_to_free_port: true,
             shortcuts: SettingsDraft::defaults().shortcuts,
+            sources: Vec::new(),
         };
         SettingsSnapshot {
             config_path: PathBuf::from("/tmp/config.toml"),
@@ -1011,6 +1576,7 @@ mod tests {
             revision: None,
             raw_content: None,
             authored: SettingsDraft::defaults(),
+            source_catalog: crate::settings::SourceCatalog::defaults(),
             effective: effective.clone(),
             active: ActiveState {
                 uses_authored_settings: true,

@@ -122,6 +122,115 @@ pub fn escape_for_mdx(content: &str) -> String {
     out
 }
 
+/// Imported files are untrusted. MDX's raw HTML, JSX and top-level ESM are
+/// executable, so convert them to text before the compatibility escaping pass.
+/// Fenced code remains literal source code, not active MDX.
+pub fn escape_untrusted_mdx(content: &str) -> String {
+    let (with_placeholders, blocks) = extract_code_blocks(content);
+    let mut guarded = String::new();
+    for segment in split_placeholders(&with_placeholders, CODE_PLACEHOLDER) {
+        match segment {
+            Segment::Placeholder { idx, raw } => {
+                guarded.push_str(blocks.get(idx).map(String::as_str).unwrap_or(raw))
+            }
+            Segment::Text(text) => {
+                let (without_inline, inline_codes) = extract_inline_code(text);
+                let autolinks = rewrite_angle_autolinks(&without_inline)
+                    .replace("](<", "](")
+                    .replace(">)", ")");
+                let mut text = autolinks.replace('<', "&lt;").replace('>', "&gt;");
+                text = block_unsafe_links(&text);
+                for (idx, code) in inline_codes.iter().enumerate() {
+                    text = text.replace(&format!("{INLINE_PLACEHOLDER}{idx}\u{0}"), code);
+                }
+                for line in text.split_inclusive('\n') {
+                    let trimmed = line.trim_start();
+                    if starts_mdx_esm(trimmed) {
+                        guarded.push('\\');
+                    }
+                    guarded.push_str(line);
+                }
+            }
+        }
+    }
+    escape_for_mdx(&guarded)
+}
+
+fn block_unsafe_links(content: &str) -> String {
+    let mut output = String::with_capacity(content.len());
+    let mut remaining = content;
+    while let Some(start) = remaining.find("](") {
+        let (before, after_open) = remaining.split_at(start + 2);
+        output.push_str(before);
+        let Some(end) = after_open.find(')') else {
+            remaining = after_open;
+            break;
+        };
+        let (destination, rest) = after_open.split_at(end);
+        if !safe_markdown_destination(destination) {
+            output.push_str("#blocked-link");
+        } else {
+            output.push_str(destination);
+        }
+        output.push(')');
+        remaining = &rest[1..];
+    }
+    output.push_str(remaining);
+    output
+}
+
+fn starts_mdx_esm(line: &str) -> bool {
+    ["import", "export"].iter().any(|keyword| {
+        line.strip_prefix(keyword).is_some_and(|rest| {
+            rest.chars().next().is_some_and(|next| {
+                next.is_ascii_whitespace() || matches!(next, '{' | '*' | '(' | '/')
+            })
+        })
+    })
+}
+
+fn safe_markdown_destination(raw: &str) -> bool {
+    let raw = raw.trim_start_matches([' ', '\t', '<']);
+    if raw.contains(['\t', '\r', '\n']) {
+        return false;
+    }
+    let destination = raw
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('>');
+    if destination.is_empty() || destination.chars().any(char::is_control) {
+        return false;
+    }
+    let lower = destination.to_ascii_lowercase();
+    if lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("mailto:")
+    {
+        return true;
+    }
+    let prefix = lower.split(['/', '?', '#']).next().unwrap_or("");
+    !prefix.contains(':') && !prefix.contains('&') && !prefix.contains('%')
+}
+
+#[cfg(test)]
+mod untrusted_tests {
+    use super::escape_untrusted_mdx;
+
+    #[test]
+    fn imported_html_jsx_esm_and_unsafe_links_are_inert() {
+        let input = "<script>alert(1)</script>\n<img src=x onerror=alert(1)>\n{globalThis.evil()}\nimport { x } from './evil.js'\nexport const y = 1\n[go](javascript:alert(1)) [data](data:text/html,x)\n[entity](javascript&#58;alert) [percent](javascript%3Aalert) [tab](java\tscript:alert)\nimport/*comment*/'./evil.js'\n";
+        let safe = escape_untrusted_mdx(input);
+        assert!(!safe.contains("<script>"));
+        assert!(!safe.contains("<img"));
+        assert!(!safe.contains("{globalThis"));
+        assert!(!safe.contains("\nimport "));
+        assert!(!safe.contains("\nexport "));
+        assert!(!safe.contains("](javascript:"));
+        assert!(!safe.contains("](data:"));
+        assert_eq!(safe.matches("#blocked-link").count(), 5);
+        assert!(!safe.contains("\nimport/*comment*/"));
+    }
+}
+
 const CODE_PLACEHOLDER: &str = "\u{0}CODEBLOCK_";
 const INLINE_PLACEHOLDER: &str = "\u{0}INLINE_";
 

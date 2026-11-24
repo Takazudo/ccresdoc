@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::error::{GenerateError, Result};
-use crate::escape::escape_for_mdx;
+use crate::escape::escape_untrusted_mdx;
 use crate::walk::{self, AgentItem, ClaudeMdItem, CommandItem, SkillItem};
 use crate::Config;
 
@@ -396,7 +396,7 @@ fn generate_claudemd_docs(items: &[ClaudeMdItem], docs_dir: &Path) -> Result<usi
             position,
             escape_title(&item.rel_path),
             item.rel_path,
-            escape_for_mdx(&downgrade_repo_relative_links(item.raw_content.trim())),
+            escape_untrusted_mdx(&downgrade_repo_relative_links(item.raw_content.trim())),
         );
         let file_name = format!("{out_name}.mdx");
         write_file(&output_dir.join(&file_name), &mdx)?;
@@ -451,7 +451,7 @@ fn generate_commands_docs(items: &[CommandItem], docs_dir: &Path) -> Result<usiz
             escape_title(&item.name),
             escape_title(&item.description),
             escape_title(&item.name),
-            escape_for_mdx(item.raw_content.trim()),
+            escape_untrusted_mdx(item.raw_content.trim()),
         );
         let file_name = format!("{}.mdx", item.name);
         write_file(&output_dir.join(&file_name), &mdx)?;
@@ -615,7 +615,7 @@ fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
         let skill_body = rewrite_skill_links(skill.raw_content.trim());
 
         let body = {
-            let escaped = escape_for_mdx(&skill_body);
+            let escaped = escape_untrusted_mdx(&skill_body);
             if file_structure_section.is_empty() {
                 escaped
             } else {
@@ -639,7 +639,7 @@ fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
             write_unlisted_sub_page(
                 &skill_output_dir.join(&file_name),
                 &r.title,
-                &escape_for_mdx(r.raw_content.trim()),
+                &escape_untrusted_mdx(r.raw_content.trim()),
             )?;
             keep_skill_files.insert(file_name);
         }
@@ -651,7 +651,7 @@ fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
             write_unlisted_sub_page(
                 &skill_output_dir.join(&file_name),
                 &title,
-                &escape_for_mdx(raw.trim()),
+                &escape_untrusted_mdx(raw.trim()),
             )?;
             keep_skill_files.insert(file_name);
         }
@@ -663,7 +663,7 @@ fn generate_skills_docs(items: &[SkillItem], docs_dir: &Path) -> Result<usize> {
             write_unlisted_sub_page(
                 &skill_output_dir.join(&file_name),
                 &title,
-                &escape_for_mdx(raw.trim()),
+                &escape_untrusted_mdx(raw.trim()),
             )?;
             keep_skill_files.insert(file_name);
         }
@@ -880,7 +880,7 @@ fn generate_agents_docs(items: &[AgentItem], docs_dir: &Path) -> Result<usize> {
             escape_title(&agent.description),
             escape_title(&agent.name),
             model_badge,
-            escape_for_mdx(agent.raw_content.trim()),
+            escape_untrusted_mdx(agent.raw_content.trim()),
         );
         let file_name = format!("{}.mdx", agent.file_slug);
         write_file(&output_dir.join(&file_name), &mdx)?;

@@ -18,7 +18,7 @@ use unicode_normalization::UnicodeNormalization;
 use walkdir::WalkDir;
 
 use crate::error::{GenerateError, Result};
-use crate::escape::escape_for_mdx;
+use crate::escape::escape_untrusted_mdx;
 use crate::generate::{downgrade_repo_relative_links, rewrite_skill_links};
 use crate::{canonical_or_absolute, validate_no_overlap};
 
@@ -512,7 +512,7 @@ fn generate_agents_md(cx: &mut Context<'_>) -> Result<usize> {
             &format!(
                 "**Path:** {}\n\n{}",
                 table_cell(Some(&rel)),
-                escape_for_mdx(&downgrade_repo_relative_links(source.trim()))
+                escape_untrusted_mdx(&downgrade_repo_relative_links(source.trim()))
             ),
         )?;
         keep.insert(format!("{slug}.mdx"));
@@ -753,7 +753,7 @@ fn generate_agents(cx: &mut Context<'_>) -> Result<usize> {
         if let Some(v) = instructions {
             parts.push(format!(
                 "## Developer instructions\n\n{}",
-                escape_for_mdx(v.trim())
+                escape_untrusted_mdx(v.trim())
             ));
         }
         parts.push(format!("## Source\n\n{}", code_fence(&source, "toml")));
@@ -1491,10 +1491,13 @@ fn openai_metadata(cx: &mut Context<'_>, package: &SkillPackage) -> String {
     let policy = yaml_optional_mapping(cx, root, "policy", &path);
     let mut lines = Vec::new();
     if let Some(v) = yaml_optional_string(cx, interface, "display_name", &path) {
-        lines.push(format!("**Display name:** {}", escape_for_mdx(v)));
+        lines.push(format!("**Display name:** {}", escape_untrusted_mdx(v)));
     }
     if let Some(v) = yaml_optional_string(cx, interface, "short_description", &path) {
-        lines.push(format!("**Short description:** {}", escape_for_mdx(v)));
+        lines.push(format!(
+            "**Short description:** {}",
+            escape_untrusted_mdx(v)
+        ));
     }
     if let Some(value) = policy.and_then(|mapping| {
         mapping.get(serde_yaml::Value::String(
@@ -1674,7 +1677,9 @@ fn generate_skills(cx: &mut Context<'_>) -> Result<usize> {
                 file_tree(&package.name_on_disk, &groups)
             ));
         }
-        parts.push(escape_for_mdx(rewrite_skill_links(body.trim()).as_str()));
+        parts.push(escape_untrusted_mdx(
+            rewrite_skill_links(body.trim()).as_str(),
+        ));
         let skill_output = ensure_managed_child(&output, &package.name_on_disk)?;
         let mut skill_keep = HashSet::from(["index.mdx".into()]);
         let mut sub_seen = HashMap::new();
@@ -1707,7 +1712,7 @@ fn generate_skills(cx: &mut Context<'_>) -> Result<usize> {
                     &format!(
                         "---\ntitle: {}\nunlisted: true\ngenerated: true\n---\n\n{}\n",
                         yaml_string(&title),
-                        escape_for_mdx(raw.trim())
+                        escape_untrusted_mdx(raw.trim())
                     ),
                 )?;
                 skill_keep.insert(format!("{slug}.mdx"));
