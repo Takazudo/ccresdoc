@@ -840,8 +840,9 @@ fn render_skill_package(
         let page = format!("---\ntitle: \"{}\"\nunlisted: true\ngenerated: true\ndoc_source: \"{}\"\ndoc_source_mapping: \"files\"\ndoc_source_path: \"{}\"\n---\n\n{}\n", yaml_scalar(title), yaml_scalar(&spec.id), yaml_scalar(&rel), escape_untrusted_mdx(&content));
         write(&target.join(&route), &page)?;
         links.push(format!(
-            "- [{}](./{slug}.mdx)",
-            escape_markdown_link_label(&inner_text)
+            "- [{}]({})",
+            escape_markdown_link_label(&inner_text),
+            relative_output_link(skill_route, &route)
         ));
     }
     names.sort();
@@ -1090,15 +1091,27 @@ fn rewrite_links_segment(
 }
 
 fn relative_output_link(from: &Path, to: &Path) -> String {
-    let from = from.parent().unwrap_or_else(|| Path::new(""));
-    let from = from
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    let to = to
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
+    // The browser resolves links from `/docs/<mount>/<slug>/`, not from the
+    // MDX file's parent directory. `index.mdx` owns its directory route.
+    let route = |output: &Path| {
+        let mut parts = output
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        if let Some(filename) = parts.pop() {
+            if filename != "index.mdx" {
+                parts.push(
+                    filename
+                        .strip_suffix(".mdx")
+                        .unwrap_or(&filename)
+                        .to_owned(),
+                );
+            }
+        }
+        parts
+    };
+    let from = route(from);
+    let to = route(to);
     let common = from
         .iter()
         .zip(&to)
@@ -1106,7 +1119,10 @@ fn relative_output_link(from: &Path, to: &Path) -> String {
         .count();
     let mut parts = vec!["..".to_owned(); from.len() - common];
     parts.extend(to.iter().skip(common).cloned());
-    let relative = parts.join("/");
+    if parts.is_empty() {
+        return "./".into();
+    }
+    let relative = format!("{}/", parts.join("/"));
     if relative.starts_with('.') {
         relative
     } else {

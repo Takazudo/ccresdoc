@@ -17,9 +17,13 @@ fn custom_source_is_mount_scoped_and_imported_mdx_cannot_run_native_calls() {
     let docs = root.path().join("docs");
     write(
         &source.join("README.md"),
-        "# Notebook\n\n[Attack](nested/attack.mdx?view=1#frag) [Attachment](manual.pdf)\n\n`[literal](nested/attack.mdx)`\n\n```md\n[code](nested/attack.mdx)\n```\n",
+        "# Notebook\n\n[Attack](nested/attack.mdx?view=1#frag) [Nested](nested/README.md?mode=1#top) [Attachment](manual.pdf)\n\n`[literal](nested/attack.mdx)`\n\n```md\n[code](nested/attack.mdx)\n```\n",
     );
-    write(&source.join("nested/attack.mdx"), "# Attack\n\n<script>window.__TAURI__.core.invoke('save_source_editor_draft')</script>\n<img onerror=\"window.__TAURI__.core.invoke('save_source_editor_draft')\">\n{window.__TAURI__.core.invoke('save_source_editor_draft')}\nimport x from './evil.js'\n[click](javascript:alert(1))\n");
+    write(&source.join("nested/attack.mdx"), "# Attack\n\n[Home](../README.md#home)\n<script>window.__TAURI__.core.invoke('save_source_editor_draft')</script>\n<img onerror=\"window.__TAURI__.core.invoke('save_source_editor_draft')\">\n{window.__TAURI__.core.invoke('save_source_editor_draft')}\nimport x from './evil.js'\n[click](javascript:alert(1))\n");
+    write(
+        &source.join("nested/README.md"),
+        "# Nested\n\n[Home](../README.md#intro)\n",
+    );
     write(&source.join("nested/ignored.bin"), "SECRET_BINARY");
     let spec = SourceSpec {
         id: "notebook".into(),
@@ -34,13 +38,14 @@ fn custom_source_is_mount_scoped_and_imported_mdx_cannot_run_native_calls() {
         },
     };
     let report = generate_source(&spec, &docs, "marker-42").unwrap();
-    assert_eq!(report.pages, 2);
+    assert_eq!(report.pages, 3);
     assert!(docs.join("notes/index.mdx").exists());
     let attack = fs::read_to_string(docs.join("notes/nested/attack.mdx")).unwrap();
     if let Ok(output) = std::env::var("CCRESDOC_MALICIOUS_FIXTURE_OUT") {
         fs::write(output, &attack).unwrap();
     }
     assert!(attack.contains("doc_source_path: \"nested/attack.mdx\""));
+    assert!(attack.contains("[Home](../../#home)"));
     assert!(!attack.contains(source.to_str().unwrap()));
     assert!(!attack.contains("<script>"));
     assert!(!attack.contains("<img"));
@@ -50,7 +55,10 @@ fn custom_source_is_mount_scoped_and_imported_mdx_cannot_run_native_calls() {
     assert!(docs.join("notes/nested/index.mdx").exists());
     let landing = fs::read_to_string(docs.join("notes/index.mdx")).unwrap();
     assert!(landing.contains("marker-42"));
-    assert!(landing.contains("[Attack](./nested/attack.mdx?view=1#frag)"));
+    assert!(landing.contains("[Attack](./nested/attack/?view=1#frag)"));
+    assert!(landing.contains("[Nested](./nested/?mode=1#top)"));
+    let nested_landing = fs::read_to_string(docs.join("notes/nested/index.mdx")).unwrap();
+    assert!(nested_landing.contains("[Home](../#intro)"));
     assert!(landing.contains("Attachment (`manual.pdf`)"));
     assert!(landing.contains("`[literal](nested/attack.mdx)`"));
     assert!(landing.contains("[code](nested/attack.mdx)"));
@@ -85,7 +93,7 @@ fn builtin_claude_retains_specialized_generation_below_mount() {
     assert!(instructions.contains("Root instructions"));
     assert!(instructions.contains("doc_source_mapping: \"instructions\""));
     assert!(instructions.contains("doc_source_path: \"CLAUDE.md\""));
-    assert!(instructions.contains("[Project](./project/index.mdx?view=1#part)"));
+    assert!(instructions.contains("[Project](./project/?view=1#part)"));
     assert!(docs.join("claude-two/commands/check.mdx").exists());
     assert!(docs.join("claude-two/commands/nested/audit.mdx").exists());
     assert!(docs.join("claude-two/commands/nested/index.mdx").exists());
@@ -274,7 +282,7 @@ fn custom_skill_renders_package_structure_metadata_and_flat_unlisted_page() {
     assert!(!skill.contains("\nname: Helpers\n"));
     assert!(skill.contains("**Display name:** Helper Display"));
     assert!(skill.contains("**Invocation:** explicit only"));
-    assert!(skill.contains("[references/guide.md](./references-guide.mdx)"));
+    assert!(skill.contains("[references/guide.md](./references-guide/)"));
     let guide = fs::read_to_string(docs.join("my-skills/helpers/references-guide.mdx")).unwrap();
     assert!(guide.contains("unlisted: true"));
     assert!(guide.contains("doc_source_path: \"helpers/references/guide.md\""));
@@ -338,8 +346,8 @@ fn custom_skill_excludes_nested_files_and_escapes_attacker_filenames() {
     let report = generate_source(&spec, &docs, "marker").unwrap();
     assert_eq!(report.pages, 5);
     let package = fs::read_to_string(docs.join("filtered/helpers/index.mdx")).unwrap();
-    assert!(package.contains("[references/public.md](./references-public.mdx)"));
-    assert!(package.contains("[references/visible.mdx](./references-visible.mdx)"));
+    assert!(package.contains("[references/public.md](./references-public/)"));
+    assert!(package.contains("[references/visible.mdx](./references-visible/)"));
     assert!(docs.join("filtered/helpers/references-public.mdx").exists());
     assert!(docs
         .join("filtered/helpers/references-visible.mdx")
@@ -360,7 +368,7 @@ fn custom_skill_excludes_nested_files_and_escapes_attacker_filenames() {
     }
     assert!(!package.contains("PRIVATE_MARKDOWN"));
     assert!(!package.contains("PRIVATE_MDX"));
-    assert!(package.contains("[references/bad\\](javascript:alert(1))&lt;Widget&gt;&#123;run&#125;.md](./references-bad-javascript-alert-1-widget-run.mdx)"));
+    assert!(package.contains("[references/bad\\](javascript:alert(1))&lt;Widget&gt;&#123;run&#125;.md](./references-bad-javascript-alert-1-widget-run/)"));
     assert!(!package.contains("[references/bad](javascript:"));
     assert!(package.contains("## File Structure\n\n````\n"));
     assert!(package.contains("\n````\n\n- ["));
@@ -394,8 +402,8 @@ fn custom_skill_broad_include_selects_package_contents_once() {
     let report = generate_source(&spec, &docs, "marker").unwrap();
     assert_eq!(report.pages, 3);
     let package = fs::read_to_string(docs.join("broad/helpers/index.mdx")).unwrap();
-    assert!(package.contains("[README.md](./readme.mdx)"));
-    assert!(package.contains("[references/guide.md](./references-guide.mdx)"));
+    assert!(package.contains("[README.md](./readme/)"));
+    assert!(package.contains("[references/guide.md](./references-guide/)"));
     assert!(!package.contains("private.md"));
     assert!(docs.join("broad/helpers/references-guide.mdx").exists());
     assert!(docs.join("broad/helpers/readme.mdx").exists());
