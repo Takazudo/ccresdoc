@@ -13,6 +13,7 @@ tauri-plugin-dialog = "2"
 # in-process. The host spawns the native `zfb dev` separately (process group),
 # so no async runtime is needed here (the watcher owns its own thread).
 ccresdoc-claude-md = { path = "../crates/ccresdoc-claude-md" }
+globset = "0.4"
 html5ever = "0.38"
 libc = "0.2"
 muda = { version = "0.19", default-features = false }

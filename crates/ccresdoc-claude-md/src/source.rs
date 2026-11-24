@@ -1218,9 +1218,9 @@ enum WatchMessage {
 }
 type SourceDebouncer = Debouncer<notify::RecommendedWatcher, FileIdMap>;
 
-/// Watches external roots and direct Codex skill-link targets discovered at
-/// startup. A link changed to a different target requires source reapply or
-/// watcher restart; target edits on the original link are observed.
+/// Watches external roots and current direct Codex skill-link targets. Link
+/// additions and retargets reconcile the external watches before publishing
+/// the change event to the host.
 pub fn watch_source<F>(
     spec: SourceSpec,
     debounce: Duration,
@@ -1231,36 +1231,7 @@ where
 {
     let (tx, rx) = mpsc::channel::<WatchMessage>();
     let callback = tx.clone();
-    let mut watched_roots = if spec.root == spec.scan_root {
-        vec![spec.root.clone()]
-    } else {
-        vec![spec.root.clone(), spec.scan_root.clone()]
-    };
-    if matches!(spec.rule, SourceRule::Codex) {
-        for skill_root in [
-            spec.root.join("skills"),
-            spec.scan_root.join(".agents/skills"),
-        ] {
-            let Ok(entries) = std::fs::read_dir(skill_root) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                if std::fs::symlink_metadata(entry.path())
-                    .is_ok_and(|meta| meta.file_type().is_symlink())
-                {
-                    if let Ok(target) = entry.path().canonicalize() {
-                        if target.is_dir() && target.join("SKILL.md").is_file() {
-                            watched_roots.push(target);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let watched_roots = watched_roots
-        .into_iter()
-        .map(|root| crate::canonical_or_absolute(&root))
-        .collect::<Vec<_>>();
+    let watched_roots = source_watch_roots(&spec);
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .map(|path| crate::canonical_or_absolute(&path));
@@ -1274,21 +1245,28 @@ where
             "source watcher root is too broad".into(),
         ));
     }
-    let event_roots = watched_roots.clone();
+    let event_roots = Arc::new(Mutex::new(watched_roots.clone()));
+    let callback_roots = event_roots.clone();
     let mut debouncer = new_debouncer(
         debounce,
         None,
         move |event: DebounceEventResult| match event {
             Ok(events)
-                if events
-                    .iter()
-                    .flat_map(|event| &event.paths)
-                    .map(|path| crate::canonical_or_absolute(path))
-                    .any(|path| {
-                        event_roots
+                if events.iter().flat_map(|event| &event.paths).any(|path| {
+                    let canonical = crate::canonical_or_absolute(path);
+                    let lexical = path
+                        .parent()
+                        .and_then(|parent| {
+                            path.file_name()
+                                .map(|name| crate::canonical_or_absolute(parent).join(name))
+                        })
+                        .unwrap_or_else(|| path.to_path_buf());
+                    callback_roots.lock().unwrap().iter().any(|root| {
+                        [canonical.as_path(), lexical.as_path()]
                             .iter()
-                            .any(|root| path.starts_with(root) || root.starts_with(&path))
-                    }) =>
+                            .any(|path| path.starts_with(root) || root.starts_with(path))
+                    })
+                }) =>
             {
                 let _ = callback.send(WatchMessage::Event(SourceWatchEvent::Changed));
             }
@@ -1312,13 +1290,15 @@ where
             match message {
                 WatchMessage::Stop => break,
                 WatchMessage::Event(event) => {
+                    let current_roots = source_watch_roots(&spec);
                     if let Err(error) = reconcile_source_watches(
                         &mut worker_debouncer.lock().unwrap(),
-                        &watched_roots,
+                        &current_roots,
                         &mut watched,
                     ) {
                         on_change(SourceWatchEvent::Error(error));
                     }
+                    *event_roots.lock().unwrap() = current_roots;
                     on_change(event);
                 }
             }
@@ -1331,36 +1311,74 @@ where
     })
 }
 
+fn source_watch_roots(spec: &SourceSpec) -> Vec<PathBuf> {
+    let mut roots = BTreeSet::from([
+        crate::canonical_or_absolute(&spec.root),
+        crate::canonical_or_absolute(&spec.scan_root),
+    ]);
+    if matches!(spec.rule, SourceRule::Codex) {
+        for skill_root in [
+            spec.root.join("skills"),
+            spec.scan_root.join(".agents/skills"),
+        ] {
+            let Ok(entries) = std::fs::read_dir(skill_root) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let link = entry.path();
+                if !std::fs::symlink_metadata(&link).is_ok_and(|meta| meta.file_type().is_symlink())
+                {
+                    continue;
+                }
+                let Ok(target) = link.canonicalize() else {
+                    continue;
+                };
+                if !target.is_dir() {
+                    continue;
+                }
+                let home = std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .map(|path| crate::canonical_or_absolute(&path));
+                if target.parent().is_none()
+                    || home
+                        .as_ref()
+                        .is_some_and(|home| target == *home || home.starts_with(&target))
+                {
+                    log::warn!(
+                        "skipping broad Codex skill-link watch target {}",
+                        target.display()
+                    );
+                    continue;
+                }
+                let skill = target.join("SKILL.md");
+                if !std::fs::symlink_metadata(skill)
+                    .is_ok_and(|meta| meta.is_file() && !meta.file_type().is_symlink())
+                {
+                    continue;
+                }
+                roots.insert(target);
+            }
+        }
+    }
+    roots.into_iter().collect()
+}
+
 fn reconcile_source_watches(
     debouncer: &mut SourceDebouncer,
     roots: &[PathBuf],
     watched: &mut BTreeMap<PathBuf, RecursiveMode>,
 ) -> Result<()> {
+    let mut desired = BTreeMap::new();
     for root in roots {
         if root.exists() {
-            if watched.get(root) != Some(&RecursiveMode::Recursive) {
-                debouncer
-                    .watcher()
-                    .watch(root, RecursiveMode::Recursive)
-                    .map_err(|error| {
-                        GenerateError::watch(format!("watch source root {root:?}"), error)
-                    })?;
-                watched.insert(root.clone(), RecursiveMode::Recursive);
-            }
+            desired.insert(root.clone(), RecursiveMode::Recursive);
             let parent = root
                 .parent()
                 .ok_or_else(|| GenerateError::InvalidConfig("source root has no parent".into()))?;
-            if !watched.contains_key(parent) {
-                debouncer
-                    .watcher()
-                    .watch(parent, RecursiveMode::NonRecursive)
-                    .map_err(|error| {
-                        GenerateError::watch(format!("watch source parent {parent:?}"), error)
-                    })?;
-                watched.insert(parent.to_path_buf(), RecursiveMode::NonRecursive);
-            }
+            desired
+                .entry(parent.to_path_buf())
+                .or_insert(RecursiveMode::NonRecursive);
         } else {
-            watched.remove(root);
             let mut anchor = root.as_path();
             while !anchor.exists() {
                 anchor = anchor.parent().ok_or_else(|| {
@@ -1372,19 +1390,39 @@ fn reconcile_source_watches(
                     "refusing broad root watcher for missing source".into(),
                 ));
             }
-            if !watched.contains_key(anchor) {
-                debouncer
-                    .watcher()
-                    .watch(anchor, RecursiveMode::NonRecursive)
-                    .map_err(|error| {
-                        GenerateError::watch(
-                            format!("watch missing-source parent {anchor:?}"),
-                            error,
-                        )
-                    })?;
-                watched.insert(anchor.to_path_buf(), RecursiveMode::NonRecursive);
-            }
+            desired
+                .entry(anchor.to_path_buf())
+                .or_insert(RecursiveMode::NonRecursive);
         }
+    }
+    for stale in watched
+        .keys()
+        .filter(|path| !desired.contains_key(*path))
+        .cloned()
+        .collect::<Vec<_>>()
+    {
+        if let Err(error) = debouncer.watcher().unwatch(&stale) {
+            log::warn!(
+                "source watcher could not unwatch stale target {}: {error}",
+                stale.display()
+            );
+        }
+        watched.remove(&stale);
+    }
+    for (path, mode) in desired {
+        if watched.get(&path) == Some(&mode) {
+            continue;
+        }
+        if watched.remove(&path).is_some() {
+            debouncer.watcher().unwatch(&path).map_err(|error| {
+                GenerateError::watch(format!("change source watch mode {path:?}"), error)
+            })?;
+        }
+        debouncer
+            .watcher()
+            .watch(&path, mode)
+            .map_err(|error| GenerateError::watch(format!("watch source path {path:?}"), error))?;
+        watched.insert(path, mode);
     }
     Ok(())
 }

@@ -157,6 +157,65 @@ fn watcher_observes_missing_root_appearance_and_nested_edit() {
     ));
 }
 
+#[cfg(unix)]
+#[test]
+fn codex_watcher_reconciles_added_and_retargeted_external_skill_links() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("codex-home");
+    let first = root.path().join("outside-first");
+    let second = root.path().join("outside-second");
+    fs::create_dir_all(source.join("skills")).unwrap();
+    write(&first.join("SKILL.md"), "# First\n");
+    write(&second.join("SKILL.md"), "# Second\n");
+    let spec = SourceSpec {
+        id: "codex-links".into(),
+        label: "Codex links".into(),
+        root: source.clone(),
+        scan_root: source.clone(),
+        mount: "codex-links".into(),
+        rule: SourceRule::Codex,
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let _watch = watch_source(spec, std::time::Duration::from_millis(75), move |event| {
+        let _ = tx.send(event);
+    })
+    .unwrap();
+    let link = source.join("skills/linked");
+    symlink(&first, &link).unwrap();
+    assert!(matches!(
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+        SourceWatchEvent::Changed
+    ));
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    while rx.try_recv().is_ok() {}
+    write(&first.join("SKILL.md"), "# First updated\n");
+    assert!(matches!(
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+        SourceWatchEvent::Changed
+    ));
+    fs::remove_file(&link).unwrap();
+    symlink(&second, &link).unwrap();
+    assert!(matches!(
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+        SourceWatchEvent::Changed
+    ));
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    while rx.try_recv().is_ok() {}
+    write(&second.join("SKILL.md"), "# Second updated\n");
+    assert!(matches!(
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+        SourceWatchEvent::Changed
+    ));
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    while rx.try_recv().is_ok() {}
+    write(&first.join("SKILL.md"), "# First stale target edit\n");
+    assert!(rx
+        .recv_timeout(std::time::Duration::from_millis(600))
+        .is_err());
+}
+
 #[test]
 fn source_id_cannot_escape_candidate_scratch() {
     let root = tempfile::tempdir().unwrap();

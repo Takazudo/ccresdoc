@@ -155,7 +155,13 @@ export function startDocumentSourcesManager(root: HTMLElement): () => void {
     busy = true; updateActions();
     try {
       await validate();
-      if (diagnostics.some((entry) => entry.blocking !== false)) { setMessage("Correct the highlighted source fields before saving.", true); return; }
+      const blocking = diagnostics.find((entry) => entry.blocking !== false);
+      if (blocking) {
+        const presetId = blocking.field?.startsWith("presets.") ? blocking.field.split(".")[1] : null;
+        const preset = presetId ? draft.presets.find((entry) => entry.id === presetId) : null;
+        setMessage(preset ? `Preset ${preset.name}: ${blocking.message}` : "Correct the highlighted source fields before saving.", true);
+        return;
+      }
       const submitted = cloneCatalog(draft);
       const next = rebase && snapshot.revision
         ? await api.rebase(submitted, baseCatalog, snapshot.revision, snapshot.runtimeGeneration)

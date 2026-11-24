@@ -289,6 +289,7 @@ version = "0.4.0"
 dependencies = [
  "ccresdoc-claude-md",
  "filetime",
+ "globset",
  "html5ever",
  "libc",
  "muda",
@@ -329,6 +330,7 @@ name = "ccresdoc-host-domain"
 version = "0.0.0"
 dependencies = [
  "filetime",
+ "globset",
  "html5ever",
  "serde",
  "serde_json",

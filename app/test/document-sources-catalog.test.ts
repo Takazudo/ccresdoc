@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyPresetRules, duplicateSource, saveRulesAsPreset, sourceFromPreset, type Catalog, type Preset } from "../src/document-sources/catalog";
+import { applyPresetRules, duplicateSource, localCatalogErrors, saveRulesAsPreset, sourceFromPreset, type Catalog, type Preset } from "../src/document-sources/catalog";
 
 const markdown: Preset = { id: "builtin-markdown", name: "Markdown", description: "", version: 1, rules: { kind: "custom", definition_version: 1, format: "markdown", include: ["**/*.md"], exclude: [] } };
 
@@ -38,5 +38,13 @@ describe("source and preset drafts", () => {
     expect(linked.rules).toEqual(source.rules);
     expect(linked.origin_preset?.id).toBe("mine");
     expect(preset).not.toHaveProperty("root");
+  });
+
+  it("does not require a hidden scan root for custom rules", () => {
+    const source = sourceFromPreset({ sources: [], presets: [] }, markdown, "one");
+    source.enabled = true;
+    source.root = "/tmp/documents";
+    source.scan_root = { kind: "separate", path: "" };
+    expect(localCatalogErrors({ sources: [source], presets: [] })).toEqual([]);
   });
 });

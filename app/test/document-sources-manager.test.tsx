@@ -86,4 +86,37 @@ describe("document source preset dialog", () => {
       stop();
     }
   });
+
+  it("reports invalid preset globs before saving the catalog", async () => {
+    const invoke = vi.fn(async (command: string, args?: { catalog?: Catalog }) => {
+      if (command === "get_source_editor_snapshot") return {
+        catalog: { sources: [], presets: [] }, builtinPresets: [], revision: "initial",
+        loadStatus: "valid", validation: [], runtimePhase: "ready", runtimeGeneration: 1,
+        activeSourceIds: [], runtimeError: null, pendingApply: false,
+      };
+      if (command === "validate_source_editor_draft") return [{
+        field: `presets.${args?.catalog?.presets[0].id}.rules.include`,
+        message: "invalid glob pattern: unclosed character class", blocking: true,
+      }];
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    vi.stubGlobal("__TAURI__", { core: { invoke } });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const stop = startDocumentSourcesManager(root);
+    try {
+      await vi.waitFor(() => expect(root.querySelector("[data-action='new-preset']")).not.toBeNull());
+      root.querySelector<HTMLButtonElement>("[data-action='new-preset']")!.click();
+      const dialog = document.querySelector<HTMLDialogElement>("dialog.ccresdoc-source-manager__dialog")!;
+      const form = dialog.querySelector("form")!;
+      (form.elements.namedItem("name") as HTMLInputElement).value = "Broken";
+      (form.elements.namedItem("include") as HTMLTextAreaElement).value = "[";
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      root.querySelector<HTMLButtonElement>("[data-action='save']")!.click();
+      await vi.waitFor(() => expect(root.querySelector("[data-manager-status]")?.textContent).toContain("Preset Broken: invalid glob pattern"));
+      expect(invoke.mock.calls.some(([command]) => command === "save_source_editor_draft")).toBe(false);
+    } finally {
+      stop();
+    }
+  });
 });

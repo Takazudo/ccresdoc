@@ -62,7 +62,7 @@ export function localCatalogErrors(catalog: Catalog): Array<{ field: string; mes
     if (mounts.has(source.mount)) errors.push({ field: `sources.${source.id}.mount`, message: "Another source already uses this URL name." });
     mounts.add(source.mount);
     if (source.enabled && !source.root.trim()) errors.push({ field: `sources.${source.id}.root`, message: "Choose a folder or disable this source." });
-    if (source.enabled && source.scan_root.kind === "separate" && !source.scan_root.path.trim()) errors.push({ field: `sources.${source.id}.scan_root`, message: "Choose the instructions folder." });
+    if (source.enabled && source.rules.kind !== "custom" && source.scan_root.kind === "separate" && !source.scan_root.path.trim()) errors.push({ field: `sources.${source.id}.scan_root`, message: "Choose the instructions folder." });
     if (source.rules.kind === "custom" && source.rules.include.length === 0) errors.push({ field: `sources.${source.id}.rules.include`, message: "Enter at least one include pattern." });
   }
   return errors;

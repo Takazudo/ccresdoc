@@ -4,6 +4,7 @@
 //! window can share the serializable domain types without coupling storage to
 //! a window or application lifecycle.
 
+use globset::{Glob, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1030,30 +1031,12 @@ impl SettingsStore {
                 include, exclude, ..
             } = &source.rules
             {
-                for (kind, patterns) in [("include", include), ("exclude", exclude)] {
-                    for pattern in patterns {
-                        if pattern.trim().is_empty()
-                            || pattern.starts_with('/')
-                            || pattern.contains("..")
-                            || pattern.contains('\\')
-                        {
-                            diagnostics.push(diagnostic(
-                                DiagnosticKind::InvalidType,
-                                Some(&format!("{field}.rules.{kind}")),
-                                "patterns must be relative and cannot traverse folders".into(),
-                                true,
-                            ));
-                        }
-                    }
-                }
-                if include.is_empty() {
-                    diagnostics.push(diagnostic(
-                        DiagnosticKind::InvalidType,
-                        Some(&format!("{field}.rules.include")),
-                        "at least one include pattern is required".into(),
-                        true,
-                    ));
-                }
+                validate_custom_patterns(
+                    &format!("{field}.rules"),
+                    include,
+                    exclude,
+                    &mut diagnostics,
+                );
             }
             if !source.enabled {
                 continue;
@@ -1066,9 +1049,9 @@ impl SettingsStore {
             ) else {
                 continue;
             };
-            let scan_root = match &source.scan_root {
-                ScanRootChoice::Same => root.clone(),
-                ScanRootChoice::Separate { path } => {
+            let scan_root = match (&source.rules, &source.scan_root) {
+                (RuleSnapshot::Custom { .. }, _) | (_, ScanRootChoice::Same) => root.clone(),
+                (_, ScanRootChoice::Separate { path }) => {
                     let Some(scan_root) = self.project_catalog_path(
                         path,
                         strict_paths,
@@ -1103,6 +1086,17 @@ impl SettingsStore {
                     "preset needs a unique non-built-in ID, name and positive version".into(),
                     true,
                 ));
+            }
+            if let RuleSnapshot::Custom {
+                include, exclude, ..
+            } = &preset.rules
+            {
+                validate_custom_patterns(
+                    &format!("presets.{}.rules", preset.id),
+                    include,
+                    exclude,
+                    &mut diagnostics,
+                );
             }
         }
         (result, diagnostics)
@@ -2273,6 +2267,60 @@ fn merge_fields(doc: &mut DocumentMut, draft: &SettingsDraft, fields: &BTreeSet<
     }
     if fields.contains(&SettingField::Shortcuts) {
         merge_shortcuts(doc, &draft.shortcuts);
+    }
+}
+
+fn validate_custom_patterns(
+    field_prefix: &str,
+    include: &[String],
+    exclude: &[String],
+    diagnostics: &mut Vec<SettingsDiagnostic>,
+) {
+    if include.is_empty() {
+        diagnostics.push(diagnostic(
+            DiagnosticKind::InvalidType,
+            Some(&format!("{field_prefix}.include")),
+            "at least one include pattern is required".into(),
+            true,
+        ));
+    }
+    for (kind, patterns) in [("include", include), ("exclude", exclude)] {
+        let field = format!("{field_prefix}.{kind}");
+        let mut globs = GlobSetBuilder::new();
+        for pattern in patterns {
+            if pattern.trim().is_empty()
+                || pattern.starts_with('/')
+                || pattern.contains("..")
+                || pattern.contains('\\')
+            {
+                diagnostics.push(diagnostic(
+                    DiagnosticKind::InvalidType,
+                    Some(&field),
+                    "patterns must be relative and cannot traverse folders".into(),
+                    true,
+                ));
+                continue;
+            }
+            match Glob::new(pattern) {
+                Ok(glob) => {
+                    globs.add(glob);
+                }
+                Err(error) => diagnostics.push(diagnostic(
+                    DiagnosticKind::InvalidType,
+                    Some(&field),
+                    format!("invalid glob pattern: {error}"),
+                    true,
+                )),
+            }
+        }
+        if let Err(error) = globs.build() {
+            diagnostics.push(diagnostic(
+                DiagnosticKind::InvalidType,
+                Some(&field),
+                format!("invalid glob pattern set: {error}"),
+                true,
+            ));
+        }
     }
 }
 
@@ -4163,6 +4211,69 @@ mod tests {
             .validate_source_catalog(&catalog)
             .iter()
             .any(|diagnostic| diagnostic.blocking));
+    }
+
+    #[test]
+    fn custom_rules_ignore_hidden_separate_scan_root() {
+        let (root, store) = fixture();
+        let mut catalog = SourceCatalog::defaults();
+        catalog.sources[0].scan_root = ScanRootChoice::Separate {
+            path: root
+                .path()
+                .join("missing-scan-root")
+                .to_string_lossy()
+                .into_owned(),
+        };
+        catalog.sources[0].rules = RuleSnapshot::Custom {
+            definition_version: 1,
+            format: PublicFormat::Markdown,
+            include: vec!["**/*.md".into()],
+            exclude: vec![],
+        };
+        assert!(store.validate_source_catalog(&catalog).is_empty());
+        let saved = store.save_source_catalog(&catalog, None).unwrap().snapshot;
+        assert_eq!(
+            saved.source_catalog.sources[0].scan_root,
+            catalog.sources[0].scan_root
+        );
+        assert_eq!(
+            saved.effective.sources[0].scan_root,
+            saved.effective.sources[0].root
+        );
+    }
+
+    #[test]
+    fn invalid_custom_globs_are_rejected_before_persisting() {
+        let (_root, store) = fixture();
+        let mut catalog = SourceCatalog::defaults();
+        catalog.sources[0].rules = RuleSnapshot::Custom {
+            definition_version: 1,
+            format: PublicFormat::Markdown,
+            include: vec!["[".into()],
+            exclude: vec![],
+        };
+        catalog.presets.push(UserPreset {
+            id: "broken-preset".into(),
+            name: "Broken".into(),
+            description: String::new(),
+            version: 1,
+            rules: RuleSnapshot::Custom {
+                definition_version: 1,
+                format: PublicFormat::Skill,
+                include: vec!["**/*.md".into()],
+                exclude: vec!["[".into()],
+            },
+        });
+        let fields: BTreeSet<_> = store
+            .validate_source_catalog(&catalog)
+            .into_iter()
+            .filter(|diagnostic| diagnostic.blocking)
+            .filter_map(|diagnostic| diagnostic.field)
+            .collect();
+        assert!(fields.contains("sources.legacy-claude.rules.include"));
+        assert!(fields.contains("presets.broken-preset.rules.exclude"));
+        assert!(store.save_source_catalog(&catalog, None).is_err());
+        assert!(!store.path().exists());
     }
 
     #[test]
