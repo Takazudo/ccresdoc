@@ -41,6 +41,24 @@ describe("CCResDoc browser adapter", () => {
     stop();
   });
 
+  it("keeps a cross-page fragment push from being reversed as a traversal", () => {
+    history.replaceState({ index: 1 }, "", "/docs/a/");
+    const go = vi.spyOn(history, "go").mockImplementation(() => undefined);
+    const adapter = new CCResDocBrowserAdapter(testWindow);
+    const stop = adapter.start();
+    try {
+      const preparation = Object.assign(new Event("zfb:before-preparation"), { navigationType: "push" });
+      document.dispatchEvent(preparation);
+      history.pushState({ index: 2 }, "", "/docs/b/#section");
+      window.dispatchEvent(new PopStateEvent("popstate", { state: { index: 2 } }));
+      expect(go).not.toHaveBeenCalled();
+      document.dispatchEvent(new Event("zfb:page-load"));
+      expect(adapter.getSnapshot()).toMatchObject({ stablePath: "/docs/b/", canGoBack: true, canGoForward: false });
+    } finally {
+      stop();
+    }
+  });
+
   it("waits for Tauri bootstrap, skips native-owned keys, and deduplicates native envelopes", async () => {
     const callbacks = new Map<string, (event: { payload: unknown }) => void>();
     const search = document.createElement("site-search");

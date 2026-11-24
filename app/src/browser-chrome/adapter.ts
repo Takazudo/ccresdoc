@@ -191,6 +191,12 @@ export class CCResDocBrowserAdapter implements BrowserToolbarAdapter {
       this.refresh();
     }) as EventListener);
     on(this.root, "popstate", ((event: PopStateEvent) => {
+      // WebKit emits popstate for a zfb push to a cross-page fragment before
+      // page-load settles the new index. It is still a push, not a traversal.
+      if (this.pendingNavigationType === "push" && this.root.location.hash) {
+        this.refresh(false);
+        return;
+      }
       this.pendingNavigationType = "traverse";
       this.historyController?.onPopState(event.state);
       this.refresh(false);
