@@ -15,17 +15,11 @@ packaged result from the Linux browser harness.
 
 ## Fresh-bundle procedure
 
-Build a fresh bundle and run the existing package/runtime checks first:
-
-```sh
-bash scripts/build-macos-release.sh
-APP_PATH=/absolute/path/to/the/fresh/CCResDoc.app
-bash scripts/test-macos-package.sh --existing-bundle "$APP_PATH"
-```
-
-Run the following against that exact fresh `.app`, with an isolated temporary
-settings/source fixture where a check needs generated content. Record the app
-path, macOS version, arm64 host, date, and result beside the marker.
+Use the [retained app-only build procedure](verification-matrix.md#build-once-and-verify-the-retained-bundle-on-mac).
+Run the package, Settings and launch controls smokes sequentially on that
+exact bundle. Keep its absolute path, source SHA, executable hashes,
+runtime-workspace token and digest, and dated macOS arm64 results.
+Use synthetic settings and sources for any follow-up on the same bundle.
 
 ## Required native checks
 
@@ -56,8 +50,9 @@ path, macOS version, arm64 host, date, and result beside the marker.
    hosted service. Confirm the ordinary page has no Tauri bridge and that
    Settings, Reload Documentation, and Open in Default Browser are unavailable.
 
-The existing `scripts/test-launch.sh --controls` and
-`pnpm run test:macos-settings` helpers can supply bounded packaged smoke and
-Settings evidence, but they do not replace this checklist's native
-once-only-arbitration and fresh-bundle result. Attach the native result to the
-PR/release record; the Linux worker must report the marker as pending.
+The bounded launch smoke uses
+`bash scripts/test-launch.sh --bundle "$app_path" --controls`. Its observed
+interactions cover ThemeToggle, native menu/Settings shortcuts, hide and
+reactivate, Search result navigation, and Find controls. The Settings smoke
+covers packaged configuration and runtime recovery. The broader checklist
+above requires its own native results before changing the marker.

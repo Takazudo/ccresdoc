@@ -2,9 +2,12 @@
 -- It inspects the application menu before sending the real ⌘H shortcut,
 -- then proves the same process can be reactivated with Settings still hidden.
 
-tell application "System Events"
-  if not (exists process "CCResDoc") then error "CCResDoc is not running"
-  tell process "CCResDoc"
+on run argv
+  if (count of argv) is not 1 then error "Expected the probe-owned app PID"
+  set targetPID to (item 1 of argv) as integer
+  tell application "System Events"
+  if not (exists (application process whose unix id is targetPID)) then error "Probe-owned CCResDoc is not running"
+  tell (first application process whose unix id is targetPID)
     set frontmost to true
     if (count of windows) = 0 then error "CCResDoc has no window"
     set pidBeforeHide to unix id
@@ -131,6 +134,7 @@ tell application "System Events"
 
     -- Create the Settings window, then close it through the native Escape path.
     -- The app's lifecycle handler hides this window instead of destroying it.
+    if not frontmost then error "Probe-owned CCResDoc lost keyboard focus"
     keystroke "," using command down
     set settingsOpenedAndFocused to false
     repeat with attempt from 1 to 100
@@ -150,6 +154,7 @@ tell application "System Events"
     end repeat
     if not settingsOpenedAndFocused then error "Command-comma did not expose CCResDoc Settings as the front window"
     delay 0.2
+    if not frontmost then error "Probe-owned CCResDoc lost keyboard focus"
     key code 53
     set settingsClosed to false
     repeat with attempt from 1 to 100
@@ -179,6 +184,7 @@ tell application "System Events"
     end repeat
     if not appFrontmost then error "CCResDoc did not become frontmost before Command-H"
     delay 0.2
+    if not frontmost then error "Probe-owned CCResDoc lost keyboard focus"
     keystroke "h" using command down
     set appHidden to false
     repeat with attempt from 1 to 100
@@ -192,7 +198,8 @@ tell application "System Events"
     end repeat
     if not appHidden then error "Command-H did not hide CCResDoc"
 
-    tell application id "com.takazudo.ccresdoc" to activate
+    set visible to true
+    set frontmost to true
     set appVisibleAgain to false
     repeat with attempt from 1 to 100
       try
@@ -227,3 +234,4 @@ tell application "System Events"
     return "CCResDoc native menu/Command-H hide: app menu, Window, View, PID " & pidBeforeHide & " verified; app reactivated with Settings hidden"
   end tell
 end tell
+end run

@@ -12,6 +12,7 @@ EOF
 }
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$REPO_ROOT/scripts/lib/macos-probe.sh"
 FIXTURES_ONLY=0
 for arg in "$@"; do
   case "$arg" in
@@ -25,11 +26,12 @@ done
 tmp_root="$(printenv TMPDIR || true)"
 if [[ -z "$tmp_root" ]]; then tmp_root=/tmp; fi
 PROBE_DIR="$(mktemp -d "$tmp_root/ccresdoc-settings-smoke.XXXXXX")"
+PROBE_DIR="$(cd "$PROBE_DIR" && pwd -P)"
 PROBE_HOME="$PROBE_DIR/home"
 DEFAULT_SOURCE="$PROBE_HOME/.claude"
 AUTHORED_SOURCE="$PROBE_DIR/isolated-source"
 CONFIG_PATH="$PROBE_DIR/config.toml"
-XDG_CONFIG_HOME="$PROBE_DIR/xdg"
+PROBE_XDG="$PROBE_DIR/xdg"
 FOREIGN_INFO="$PROBE_DIR/foreign.json"
 APP_PATH="$(printenv CCRESDOC_SETTINGS_APP || true)"
 APP_OPEN_PID=""
@@ -59,7 +61,7 @@ make_skill() {
 make_fixtures() {
   local slug
   slug="$(basename "$PROBE_DIR" | tr -cd '[:alnum:]-')"
-  mkdir -p "$DEFAULT_SOURCE" "$AUTHORED_SOURCE" "$XDG_CONFIG_HOME"
+  mkdir -p "$DEFAULT_SOURCE" "$AUTHORED_SOURCE" "$PROBE_XDG"
   printf '# default settings fixture\n' > "$DEFAULT_SOURCE/CLAUDE.md"
   printf '# authored settings fixture\n' > "$AUTHORED_SOURCE/CLAUDE.md"
   make_skill "$DEFAULT_SOURCE" "settings-default-$slug" "Settings default source" "Default settings source fixture."
@@ -157,35 +159,23 @@ stop_foreign() {
   FOREIGN_PORT=""
 }
 
-quit_app() {
-  [[ -n "$APP_OPEN_PID" ]] || return 0
-  osascript -e 'tell application id "com.takazudo.ccresdoc" to quit' >/dev/null 2>&1 || true
-  for _ in $(seq 1 120); do
-    kill -0 "$APP_OPEN_PID" 2>/dev/null || break
-    sleep 0.25
-  done
-  if kill -0 "$APP_OPEN_PID" 2>/dev/null; then
-    echo "error: LaunchServices waiter did not observe quit" >&2
-    return 1
-  fi
-  wait "$APP_OPEN_PID" 2>/dev/null || true
-  APP_OPEN_PID=""
-}
-
 cleanup() {
   local status=$?
   local cleanup_failed=0
-  trap - EXIT INT TERM
-  if ! quit_app; then cleanup_failed=1; fi
+  trap - EXIT
+  trap '' INT TERM
+  if ! probe_quit; then cleanup_failed=1; fi
   if ! stop_foreign; then cleanup_failed=1; fi
-  case "$PROBE_DIR" in
-    "$tmp_root"/ccresdoc-settings-smoke.*) rm -rf "$PROBE_DIR" ;;
-    *) echo "error: refusing to remove unexpected probe path: $PROBE_DIR" >&2; cleanup_failed=1 ;;
-  esac
+  if [[ "$FIXTURES_ONLY" != 1 && -n "$APP_LOG" ]]; then
+    HOST_LOG="$APP_LOG" probe_save_logs settings || cleanup_failed=1
+  fi
+  probe_remove_directory || cleanup_failed=1
   if [[ "$status" -eq 0 && "$cleanup_failed" -ne 0 ]]; then status=1; fi
   exit "$status"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 fixture_contract() {
   make_fixtures
@@ -217,14 +207,13 @@ if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   exit 2
 fi
 
+probe_host_version
+probe_bundle "$APP_PATH"
+probe_preflight
 make_fixtures
 static_guards
-bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Contents/Info.plist")"
-test "$bundle_id" = com.takazudo.ccresdoc
-if [[ "$(osascript -e 'application id "com.takazudo.ccresdoc" is running' 2>/dev/null || true)" = true ]]; then
-  echo "error: quit the existing CCResDoc instance before the isolated package smoke" >&2
-  exit 1
-fi
+APP_LOG="$PROBE_HOME/Library/Application Support/com.takazudo.ccresdoc/ccresdoc.log"
+HOST_LOG="$APP_LOG"
 if find "$APP_PATH/Contents/Resources" -type f \( -name test-macos-settings.sh -o -name '*fixture-claude*' \) -print -quit | grep -q .; then
   echo "production bundle contains test fixture" >&2
   exit 1
@@ -246,12 +235,14 @@ launch_app() {
   local path
   path="$(find_log 2>/dev/null || true)"
   [[ -z "$path" ]] || LOG_START="$(wc -l < "$path" | tr -d ' ')"
-  open -n -W \
-    --env "HOME=$PROBE_HOME" --env "TMPDIR=$PROBE_DIR" \
-    --env "XDG_CONFIG_HOME=$XDG_CONFIG_HOME" --env "CCRESDOC_CONFIG=$CONFIG_PATH" \
-    --env "CCRESDOC_EPHEMERAL_WEBVIEW=1" \
-    "$APP_PATH" >/dev/null 2>&1 &
-  APP_OPEN_PID=$!
+  probe_launch
+  for _ in $(seq 1 100); do
+    if probe_find_host; then probe_host_isolated; return; fi
+    probe_live "$APP_OPEN_PID" || break
+    sleep 0.1
+  done
+  echo "error: no unambiguous probe-owned Settings host appeared" >&2
+  return 1
 }
 new_port() {
   log_since | sed -n 's/.*spawn_zfb_dev:.* port=\([0-9][0-9]*\).*/\1/p' | tail -n 1
@@ -296,7 +287,7 @@ released() {
   ! lsof -nP -tiTCP:"$1" -sTCP:LISTEN 2>/dev/null | grep -q '[0-9]'
 }
 quit_released() {
-  quit_app
+  probe_quit
   for _ in $(seq 1 40); do released "$1" && return 0; sleep 0.25; done
   echo "error: app-owned port $1 survived quit" >&2
   return 1
@@ -342,7 +333,7 @@ wait_reason preferred_port_occupied
 grep -Fq 'schema_version = 3' "$CONFIG_PATH"
 assert_config "$AUTHORED_SOURCE" "$FOREIGN_PORT" false
 foreign_alive
-quit_app
+probe_quit
 
 write_config "$PROBE_DIR/missing-source" "$FOREIGN_PORT" true
 launch_app
@@ -378,7 +369,7 @@ test "$(shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')" = "$future_hash"
 quit_released 4892
 foreign_alive
 
-node --input-type=module - "$CONFIG_PATH" "$AUTHORED_SOURCE" "$PROBE_HOME" "$PROBE_DIR" "$XDG_CONFIG_HOME" "$FOREIGN_PORT" "$FALLBACK_EFFECTIVE" "$SECOND_EFFECTIVE" <<'NODE'
+node --input-type=module - "$CONFIG_PATH" "$AUTHORED_SOURCE" "$PROBE_HOME" "$PROBE_DIR" "$PROBE_XDG" "$FOREIGN_PORT" "$FALLBACK_EFFECTIVE" "$SECOND_EFFECTIVE" <<'NODE'
 const [configPath, source, home, tempDir, xdgConfigHome, preferred, effective, secondEffective] = process.argv.slice(2);
 console.log(JSON.stringify({
   status: "passed",

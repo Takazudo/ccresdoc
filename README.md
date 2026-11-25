@@ -80,25 +80,16 @@ cargo test --manifest-path src-tauri/Cargo.toml
 pnpm run b4push
 ```
 
-After a fresh macOS arm64 bundle is built, the bounded package smoke helper
-receives only temporary paths and the production bundle identity:
-
-```sh
-CCRESDOC_SETTINGS_APP=/path/to/CCResDoc.app pnpm run test:macos-settings
-```
-
-The helper launches through LaunchServices with a unique temporary `HOME`,
-`TMPDIR`, `XDG_CONFIG_HOME`, and `CCRESDOC_CONFIG`. It checks missing-file
-defaults, authored source selection, preferred/effective fallback ports,
-strict occupied-port and bad-source recovery, malformed-byte preservation,
-semantic docs readiness across relaunch, and exact app-owned child cleanup while
-the foreign fixture listener remains alive. It does not use a broad process kill or access
-the tester's real `~/.claude`. The packaged Computer Use walkthrough remains a
-manager/release step for Settings window focus, picker/save/relaunch,
-appearance preview/cancel/persistence, external-edit rebase, and visual
-first-paint confirmation. Package smoke also opts both WebViews into Tauri's
-nonpersistent data store and refuses to run while another CCResDoc instance is
-open, so it cannot reuse or terminate a developer session.
+The [retained app-only acceptance workflow](docs/architecture/verification-matrix.md#build-once-and-verify-the-retained-bundle-on-mac)
+uses one fresh bundle for package, Settings and launch controls. It records
+the revision, bundle identity and logs in a caller-owned directory. Each
+smoke launches via LaunchServices with isolated `HOME`, `TMPDIR`,
+`XDG_CONFIG_HOME` and `CCRESDOC_CONFIG` and uses nonpersistent WebViews.
+The Settings probe checks synthetic schema-v2 migration, readiness, recovery
+and cleanup while its foreign listener survives. The launch probe observes
+bounded native controls and verifies search and watcher freshness at a
+variable mount. The broader native menu, Settings and visual walkthroughs
+remain release acceptance items.
 
 ### Packaging privacy
 
@@ -165,9 +156,10 @@ the direct package-root native carrier and the selected zero-plugin config,
 the app-owned source-management article, and generated theme assets. It
 omits build `dist`, generated resource detail/status pages, frontend test/build
 tooling, non-host zfb binaries, and disabled Node-plugin dependencies. Validate
-it with `pnpm run probe:runtime-package`; on macOS arm64,
-run `scripts/test-macos-package.sh` for the separately mandatory packaged
-app/WebView counterpart. Tauri runs build hooks from the project root, and no
+it with `pnpm run probe:runtime-package`. For macOS 27+ arm64 acceptance, use
+the [retained bundle workflow](docs/architecture/verification-matrix.md#build-once-and-verify-the-retained-bundle-on-mac).
+The default standalone `scripts/test-macos-package.sh` prints its temporary bundle path,
+which it removes on exit. Tauri runs build hooks from the project root, and no
 global `zfb` on PATH is required.
 Cargo's target directory may be configured outside the repository; resolve it
 with `cargo metadata` instead of assuming `src-tauri/target/`.
@@ -265,7 +257,5 @@ navigation. Install the browser once with
 webkit2gtk/gtk3 is unavailable, so a passing b4push does not cover that crate
 beyond the settings, appearance and runtime-policy tests run through
 `ccresdoc-host-domain`. A release
-still requires the separate `scripts/test-macos-package.sh` macOS-arm64
-packaged app/WebView gate and the real-WebView visual checks listed in the
-verification matrix. A Linux run may validate staged static inputs and the
-native probe, but it does not execute or pass the macOS app/WebView launch.
+still requires the retained-bundle macOS acceptance and the real-WebView
+visual checks in the verification matrix.
