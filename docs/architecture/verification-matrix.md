@@ -1,39 +1,21 @@
 # CCResDoc architecture and verification contract
 
-This is the consolidated integration record for the current `@takazudo/zfb`
-6.0.1 / `@takazudo/zudo-doc` 10.0.2 application. CCResDoc is a native viewer
-for selected Claude and Codex resources. The generated `/docs/` document is the
-sole product landing surface; `/` is its exact server-rendered alias. The
-product keeps permanent Claude and Codex top-level header categories.
+CCResDoc uses the published zfb 7.2.0 family and `@takazudo/zudo-doc` 14.0.0.
+The main WebView serves documentation for the active source catalog.
 
 ## Landing and readiness
 
-- `GET /` and `GET /docs/` return the same generated document shell. The logo
-  is a direct `href="/docs/"` link and the header navigation keeps the
-  permanent Claude and Codex category entries.
-- The Tauri loading page remains visible until `GET /docs/` is HTTP 200 and
-  contains the current `CCResDoc` shell marker plus Claude and Codex overview
-  markers for the same transition generation. A generic 200 or a stale
-  checked-in shell cannot release the loading page.
-- Initial launch, Retry, and the View → Refresh menu all use the same
-  generation-guarded boot path: resolve a writable workspace, generate from
-  the canonical settings-selected sources (Claude on at `~/.claude`, Codex off
-  at `~/.codex` by default), start the enabled Rust watcher(s), spawn the native
-  zfb binary, wait for semantic readiness, then navigate to `/docs/`.
-  A failed attempt emits the loading-page error state; a subsequent attempt
-  tears down only its tracked sidecar and selects the preferred or fallback
-  loopback port without touching a foreign listener.
-- `$HOME` is never passed as the generator project root. The generator is
-  scoped to the validated configured source. An unset or empty home is an
-  explicit launch error when no absolute source override is available.
-  `ZFB_DEV_BOOT_LAZY` is removed from the sidecar environment.
-
-The host contract is exercised by `src-tauri` unit tests and by the staged and
-packaged probes. The packaged probe creates a unique, valid-frontmatter
-synthetic HOME fixture, waits for that fixture title in the *first accepted*
-`/docs/` response, requests its generated route, launches twice, and checks
-that quit frees port 4892. The fixture is created only after the bundle privacy
-audit has completed.
+- `GET /` and `GET /docs/` serve the same generated document. The logo
+  links to `/docs/` and navigation reflects the current mounts.
+- The host checks the docs shell and current generation markers for the
+  app-owned manager and every active source mount. Same-origin island entry
+  bundles referenced by readiness pages must also be available. A generic 200
+  or a stale shell cannot release the loading screen.
+- Initial launch, Retry and View → Refresh use generation-guarded workspace,
+  source publication, watcher, and native zfb startup. Each attempt owns its
+  sidecar. An occupied loopback port can select a free fallback.
+- The host reads only validated configured source and instructions scan roots.
+  It removes `ZFB_DEV_BOOT_LAZY` from the sidecar environment.
 
 ## Generated theme assets and catalog
 
@@ -68,8 +50,7 @@ shell and browse-all loads the current catalog lazily.
   owns a 16px hitbox, 192–448px clamp, separator ARIA state, pointer/keyboard
   feedback, and width persistence. CCResDoc does not fork package CSS or
   navigation behavior.
-- The Rust `ccresdoc-claude-md` generators/watchers own selected Claude- and
-  Codex-resource generation in-process. This is intentional: it avoids a Node
+- The Rust `ccresdoc-claude-md` generators/watchers own mounted document-source generation in-process. This is intentional: it avoids a Node
   plugin host and keeps the packaged runtime node-free.
 - Tauri owns find-in-page through the WebView/native host contract. It is not
   replaced by a Node plugin. The zfb config ends with `plugins: []`; the host
@@ -84,7 +65,8 @@ shell and browse-all loads the current catalog lazily.
 
 The settings store resolves `CCRESDOC_CONFIG`, then
 `XDG_CONFIG_HOME/ccresdoc/config.toml`, then `HOME/.config/ccresdoc/config.toml`.
-Missing files use schema-version-2 defaults without creating TOML. A
+Missing files use schema-v3 defaults without creating TOML. Valid v2 files
+migrate atomically and idempotently. A
 recognized schema-v1 file is retired once at startup (rechecked before
 removal); malformed, unreadable, unrecognized and future files are protected. Authored
 source/preferred-port values are reported separately from canonical effective
@@ -98,9 +80,11 @@ The bounded fixture gate is deterministic and isolated:
 
 ```sh
 bash scripts/test-macos-settings.sh --fixtures-only
-CCRESDOC_SETTINGS_APP=/path/to/CCResDoc.app pnpm run test:macos-settings
+node --test scripts/macos-acceptance.test.mjs
+CCRESDOC_SETTINGS_APP=/absolute/path/to/CCResDoc.app pnpm run test:macos-settings
 ```
 
+The Settings smoke exercises schema-v2 migration with synthetic v2 inputs.
 Package mode passes a unique temporary `HOME`, `TMPDIR`, `XDG_CONFIG_HOME`, and
 `CCRESDOC_CONFIG` through LaunchServices, creates a temporary source tree and
 one exact foreign listener, and verifies docs readiness across relaunches,
@@ -108,43 +92,34 @@ fallback/effective ports, strict and bad-source recovery, malformed-byte
 preservation, and app-owned child cleanup while the foreign listener remains
 alive. It uses nonpersistent WebViews and refuses to run beside a preexisting
 CCResDoc process. Production capabilities, generated permissions, bundle identity, native
-driver hooks, and
-fixture paths are statically guarded against test-only leakage. The manager's
-packaged Computer Use pass verifies Settings focus/close/reopen,
-picker/save/relaunch, appearance preview/cancel/persistence, external-edit
-Reload/Reapply, caller/navigation denial, and visual no-flash behavior.
+driver hooks, and fixture paths are statically guarded against test-only
+leakage. The separate manual Settings walkthrough covers picker/save/relaunch,
+appearance preview/cancel/persistence, external-edit Reload/Reapply,
+caller/navigation denial, and visual first-paint behavior.
 
-## Resource selection, generation, and package privacy
+## Source catalog, generation, and package privacy
 
-Schema version 2 has a `[resources]` table (`claude`, `codex`) and a `[source]`
-table (`claude_dir`, `codex_dir`). The compatibility defaults are Claude on and
-Codex off, but Claude-only, Codex-only, both-on, and both-off are all valid.
-The coordinator always keeps the permanent top-level headers at positions 899
-(Claude) and 904 (Codex). Claude details occupy 900–903 (`CLAUDE.md`, commands,
-skills, agents); Codex details occupy 905–910 (`AGENTS.md`, config, agents,
-hooks, rules, skills). Disabled sources publish a stable disabled overview and
-prune their detail namespaces.
+Schema v3 stores `[[document_sources]]` and reusable `[[user_presets]]`.
+Each source has a stable ID, unique mount, configured root, optional separate
+instructions scan root, and a versioned built-in or custom rule snapshot.
+Presets carry reusable reading rules without user paths. The initial catalog
+enables Claude Code at `~/.claude` and leaves Codex at `~/.codex` disabled.
+The app-owned article at `/docs/ccresdoc/document-sources/` remains available
+with zero enabled sources or after first-launch source generation failure.
 
-The Codex parser accepts root/project `AGENTS.md`, `config.toml`, agent TOML,
-`hooks.json`, rules, and skill packages. It refuses broad roots, does not follow
-arbitrary links, and permits only a direct symlink entry under `skills/` to
-escape its configured directory. Managed output directories are real, scoped
-directories under the docs root. Claude and Codex use disjoint detail
-namespaces; the coordinator owns overview/status pages, candidate promotion,
-rollback, stale-output pruning, and the readiness handshake. Each enabled
-source owns one debounced watcher, and a transition is visible only when the
-neutral shell and both overview markers agree on the current generation.
+Each enabled source owns a watcher. A private manifest scopes transactional
+promotion, rollback, stale output pruning and search. Generated routes are
+scoped to the source mount. The search index associates each entry with a
+source ID and route. Authored paths and catalog state stay in the trusted
+native/editor boundary. Built-in Codex rules recognize instructions, config,
+agents, hooks, rules and skill packages, including the narrow direct skill
+symlink case. Custom rule snapshots define Markdown, code or skill input.
 
-The runtime stage is a privacy boundary, not a copy of the developer checkout.
-`scripts/stage-runtime-workspace.mjs` admits an explicit file-level source
-allowlist, the generated theme catalog/assets, and no build `dist` tree. It
-rejects every `claude-*`/`codex-*` detail/status namespace and `.ccresdoc-*`
-transition namespace before copying; staged text is audited for synthetic
-fixture sentinels and checkout/configured-root paths. The manifest records the
-admitted inventory, excluded Node-only packages, direct native carrier, tree
-digest/token, and privacy audit. The verifier, Linux native probe (including
-rendered shell/404/HMR responses), and final macOS package script assert the
-same contract over staged/final artifacts.
+`scripts/stage-runtime-workspace.mjs` copies explicitly allowed app files and
+generated theme assets. The build `dist`, generated source namespaces,
+and private transition state are excluded. Staged text and served output are
+checked for synthetic fixture and authored-root leakage. The manifest carries
+the admitted inventory, excluded packages, native carrier and digest/token.
 
 ## Automated gates
 
@@ -220,25 +195,65 @@ released between attempts. Its static checks also recompute the SHA-256 tree
 `sha256-tree-v1` digest and refresh token, verify the direct package-root native
 carrier against canonical package facts, and reject forbidden runtime packages.
 
-The packaged macOS arm64 gate is a separate mandatory host-only check. It uses an
-explicit fresh target directory and exact bundle shape, then launches the real
-app/WebView twice with generated fixture content, HMR, a failing Node sentinel,
-and port cleanup. The script prints both paths on success:
+## Build once and verify the retained bundle on Mac
 
-```sh
-scripts/test-macos-package.sh
-# $CARGO_TARGET_DIR/release/bundle/macos/CCResDoc.app
+Use macOS 27 or newer on arm64, a logged-in GUI session, the repository tool
+pins, and a terminal with Accessibility and System Events UI scripting access.
+Close any existing CCResDoc instance. Run from a clean checkout at the exact
+candidate SHA. The app-only build stays in the caller-owned Cargo target
+directory so every probe can use the same bundle.
+
+```bash
+set -euo pipefail
+task_dir="$(mktemp -d "${TMPDIR:-/tmp}/ccresdoc-acceptance.XXXXXX")"
+task_dir="$(cd "$task_dir" && pwd -P)"
+export CARGO_TARGET_DIR="$task_dir/cargo-target"
+evidence_dir="$task_dir/evidence"
+
+{
+  git rev-parse HEAD
+  node --version
+  pnpm --version
+  rustc --version
+  cargo tauri --version
+} | tee "$task_dir/build-input.txt"
+pnpm --dir app install --frozen-lockfile
+cargo tauri build --bundles app 2>&1 | tee "$task_dir/build.log"
+app_path="$CARGO_TARGET_DIR/release/bundle/macos/CCResDoc.app"
+bash scripts/test-macos-acceptance.sh "$app_path" "$evidence_dir"
 ```
 
-It must be run on macOS arm64 and must not be pointed at an installed app. On
-Linux the script reports the host-gate skip; Linux can run the staged native
-probe and static package assertions but cannot claim the Tauri/WebView launch.
-The additional native browser-chrome acceptance items (once-only primary and
-alternate accelerator arbitration, Settings capture suspension/restoration,
-full menu/action coverage, and ordinary-browser lifetime) are recorded in the
-[`macOS browser-navigation checklist`](macos-browser-navigation.md). Its
-`macos-arm64-browser-chrome-native` marker remains `PENDING` until a fresh
-macOS arm64 release-machine result replaces it.
+The runner records the source SHA, host and tool versions, absolute bundle
+path, executables, full contents fingerprint, and runtime workspace token and
+digest. It runs these commands in order and compares bundle identity after
+each checker, including a failed checker.
+
+```bash
+bash scripts/test-macos-package.sh --existing-bundle "$app_path"
+CCRESDOC_SETTINGS_APP="$app_path" pnpm run test:macos-settings
+bash scripts/test-launch.sh --bundle "$app_path" --controls
+```
+
+The package smoke audits the staged bundle and launches the real app twice.
+It verifies an authored synthetic route, the Node sentinel, and sidecar
+shutdown. Settings exercises migration, recovery and port ownership. The
+launch smoke checks the owned app, manager, a synthetic source at a variable
+mount, and the live search index. Its Accessibility pass observes ThemeToggle,
+the menus and Settings shortcut, Command-H, and Command-K/Command-F. It also
+adds and removes a synthetic skill and checks both search-index transitions.
+The probes inject isolated LaunchServices paths and a nonpersistent WebView
+setting. A missing native capability yields SKIP or BLOCKED evidence.
+
+The default `bash scripts/test-macos-package.sh` builds an ephemeral app, whose
+printed path is removed on exit. Use the retained workflow for follow-up
+checks. Keep the evidence directory, build inputs and build log with the result, including
+failure details and any retained runtime directory.
+
+Portable/unit checks, actual-key Chromium, and the staged native runtime
+probe cover different parts of the contract. The bounded macOS smoke leaves
+the broader [native browser-navigation checklist](macos-browser-navigation.md),
+historical viewport walkthrough, and cold-compilation cancellation matrix
+pending until their respective acceptance records are complete.
 
 ## Residual visual handoff
 

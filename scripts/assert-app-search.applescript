@@ -7,18 +7,20 @@
 -- DOM-only match markup belongs to the browser harness in issue #199.
 
 on run argv
-  if (count of argv) < 1 then error "search smoke requires a non-empty indexed term"
-  set searchTerm to item 1 of argv
+  if (count of argv) is not 2 then error "Expected the probe-owned app PID and an indexed term"
+  set targetPID to (item 1 of argv) as integer
+  set searchTerm to item 2 of argv
   if searchTerm is "" then error "search smoke requires a non-empty indexed term"
 
   tell application "System Events"
-    if not (exists process "CCResDoc") then error "CCResDoc is not running"
-    tell process "CCResDoc"
+    if not (exists (application process whose unix id is targetPID)) then error "Probe-owned CCResDoc is not running"
+    tell (first application process whose unix id is targetPID)
       set frontmost to true
       if (count of windows) = 0 then error "CCResDoc has no window"
 
       -- ⌘K must be dispatched by AppKit/WebKit, rather than by clicking the
       -- header button.  The bounded wait also covers a cold WebView AX tree.
+      if not frontmost then error "Probe-owned CCResDoc lost keyboard focus"
       keystroke "k" using command down
       set searchDialog to my wait_for_search_dialog(front window, 150)
       if searchDialog is missing value then error "Command-K did not expose the Search dialog in Accessibility"
@@ -28,7 +30,9 @@ on run argv
       set searchInput to my wait_for_search_input(searchDialog, 150)
       if searchInput is missing value then error "Search dialog did not expose its text field in Accessibility"
       click searchInput
+      if not frontmost then error "Probe-owned CCResDoc lost keyboard focus"
       keystroke "a" using command down
+      if not frontmost then error "Probe-owned CCResDoc lost keyboard focus"
       keystroke searchTerm
 
       set resultLink to my wait_for_result_link(front window, searchTerm, 200)
@@ -40,13 +44,14 @@ on run argv
 
       -- The result click must close the modal before the next native shortcut.
       -- wait_for_navigation includes the closed-dialog assertion.
-      set findInput to my open_find_bar_with_retry(front window)
+      set findInput to my open_find_bar_with_retry(front window, targetPID)
       if findInput is missing value then error "Command-F did not expose the Find in page field in Accessibility"
       set controlsState to my wait_for_find_controls(front window, 100)
       if controlsState is "" then error "Find in page controls were not all visible in Accessibility"
 
       -- Escape is the shipped find-bar close path.  Confirm that the visible
       -- input is gone so a later invocation cannot inherit a stale surface.
+      if not frontmost then error "Probe-owned CCResDoc lost keyboard focus"
       key code 53
       set findClosed to false
       repeat with attempt from 1 to 100
@@ -224,30 +229,16 @@ on wait_for_search_input(dialogElement, attempts)
 end wait_for_search_input
 
 on find_result_link(dialogElement, term)
-  set fallbackLink to missing value
   set candidates to my all_accessible_elements(dialogElement)
   repeat with candidate in candidates
     set candidate to contents of candidate
     if (my ui_role(candidate)) is "AXLink" and my ui_visible(candidate) then
-      -- WebKit exposes result links' accessible titles reliably but may reject
-      -- AXURL reads. Prefer a label containing the requested term, then retain
-      -- the first labeled result as a bounded fallback.
-      set labelText to my ui_label(candidate)
-      if labelText is not "" then
-        ignoring case
-          if labelText contains term then return candidate
-        end ignoring
-        try
-          if fallbackLink is missing value then set fallbackLink to candidate
-        end try
-      end if
+      ignoring case
+        if (my ui_label(candidate)) contains term then return candidate
+      end ignoring
     end if
   end repeat
-  try
-    return fallbackLink
-  on error
-    return missing value
-  end try
+  return missing value
 end find_result_link
 
 on wait_for_result_link(windowElement, term, attempts)
@@ -315,15 +306,16 @@ on wait_for_find_input(windowElement, attempts)
   return missing value
 end wait_for_find_input
 
-on open_find_bar_with_retry(windowElement)
+on open_find_bar_with_retry(windowElement, targetPID)
   tell application "System Events"
-    tell process "CCResDoc"
+    tell (first application process whose unix id is targetPID)
       -- A post-HMR FindInPage remount can briefly lack its document listener.
       -- Check before every attempt so Cmd-F is never sent after observing an
       -- already-open field (which would toggle the successful bar closed).
       repeat with attempt from 1 to 3
         set alreadyOpen to my find_in_page_input(windowElement)
         if alreadyOpen is not missing value then return alreadyOpen
+        if not frontmost then error "Probe-owned CCResDoc lost keyboard focus"
         keystroke "f" using command down
         set candidate to my wait_for_find_input(windowElement, 40)
         if candidate is not missing value then return candidate

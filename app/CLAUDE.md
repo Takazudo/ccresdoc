@@ -9,8 +9,7 @@ app options and protected recovery. The checked-in docs home and manager are
 the release-owned content. Rust generates every enabled source under its
 validated unique mount, including the initial Claude and Codex mounts.
 Source paths and the catalog stay in trusted native/editor state, not SSR
-documents, frontmatter or search payloads. Any older fixed Claude/Codex
-landing-shell description below is historical and must not guide new changes.
+documents, frontmatter or search payloads. The app-owned manager and docs home define the release content surface.
 
 ## Architecture
 
@@ -100,10 +99,10 @@ app/
       settings.ts         — shared typed settings for config and host routes
     content/
       docs/               — MDX content root
-        index.mdx         — routed resource-category landing page
+        index.mdx         — app-owned docs landing page
         welcome.mdx       — placeholder page (draft: true; excluded from build)
-        claude*/          — selected Claude detail/status MDX (gitignored)
-        codex*/           — selected Codex detail/status MDX (gitignored)
+        ccresdoc/         — app-owned source manager article
+        <mount>/          — runtime-generated source namespace
     styles/
       global.css          — package CSS imports + CCResDoc accessibility overrides
 ```
@@ -125,47 +124,12 @@ pending. Browser checks wait for every selector in
 
 ## MDX Content Contract
 
-The Rust generator (`crates/ccresdoc-claude-md`) writes selected MDX to
-`src/content/docs/claude*/` and `src/content/docs/codex*/`. These detail/status
-directories are **gitignored** — they are rebuilt on every app launch by the
-Tauri host (`src-tauri/`) running the generator and coordinator in-process.
-The checked-in `claude/index.mdx` and `codex/index.mdx` files are permanent
-generic landing shells; they contain no user content and are the only resource
-inputs admitted to the packaged workspace.
-
-### Directory layout
-
-```
-src/content/docs/
-  claude/                    ← overview category (no route)
-    index.mdx                 ← permanent landing shell, sidebar_position: 899
-  claude-md/                 ← CLAUDE.md category
-    index.mdx                ← category_no_page: true, sidebar_position: 900
-    global.mdx               ← ~/.claude/CLAUDE.md
-    project-<name>.mdx       ← per-project CLAUDE.md
-  claude-commands/           ← commands category
-    index.mdx                ← category_no_page: true, sidebar_position: 901
-    <command-name>.mdx       ← one file per command
-  claude-skills/             ← skills category
-    index.mdx                ← category_no_page: true, sidebar_position: 902
-    <skill-name>.mdx         ← one file per skill
-  claude-agents/             ← agents category
-    index.mdx                ← category_no_page: true, sidebar_position: 903
-    <agent-name>.mdx         ← one file per agent
-  codex/                     ← permanent overview category (routed)
-  codex-agents-md/           ← AGENTS.md hierarchy, position 905
-  codex-config/              ← config.toml, position 906
-  codex-agents/              ← agent TOML definitions, position 907
-  codex-hooks/               ← hooks.json and readable hook files, position 908
-  codex-rules/               ← *.rules files, position 909
-  codex-skills/              ← skills and controlled direct package links, position 910
-```
-
-The permanent top-level header categories are `Claude` at position 899 and
-`Codex` at position 904. Claude detail categories occupy 900–903; Codex detail
-categories occupy 905–910. The overview shells are always present so all four
-selection states have a stable navigation surface; disabled sources publish a
-coordinator-owned disabled marker and no detail namespace.
+Rust writes generated MDX beneath `src/content/docs/<mount>/` in the
+runtime workspace. Mount names come from the schema-v3 catalog. Built-in
+rule sets keep their specialized format and category handling under each
+mount. The released content contains the docs home and manager article. The
+host scopes generation, watcher updates, and search entries with its private
+ownership manifest.
 
 ### Frontmatter fields
 
@@ -188,25 +152,6 @@ Category `index.mdx` files use `category_no_page: true` so the sidebar
 renders them as non-linked headers (no route is built for them). The
 path is NOT emitted as a docs page.
 
-### Coordinator overview pages
-
-The checked-in routed `docs/index.mdx` includes a `<CategoryNav>` component
-that renders category cards. The coordinator-owned `claude/index.mdx` and
-`codex/index.mdx` shells are routed overview pages; generated detail category
-`index.mdx` files remain `category_no_page` metadata and do not emit routes:
-
-```mdx
----
-title: Claude Resources
-description: Browse selected Claude resources.
----
-
-<CategoryNav categories={["claude-md", "claude-commands", "claude-skills", "claude-agents"]} />
-```
-
-The wrapper produced by zudo-doc's MDX factory resolves those slug strings
-against the current package-owned navigation tree.
-
 Codex source formats are intentionally narrow: root/project `AGENTS.md`,
 `config.toml`, agent TOML, `hooks.json`, rules, and skill packages. The walker
 does not follow arbitrary links. A symlink is accepted only when it is the
@@ -215,15 +160,13 @@ is then copied into generated MDX under the selected Codex namespace. Managed
 output directories and generated files are never symlinks and must remain
 inside the docs root.
 
-The host generates only enabled sources, prunes stale detail output, and
-publishes one candidate transactionally. A failed generation or watcher
-transition rolls back the previous selected tree; readiness waits for the
-neutral shell plus both Claude/Codex overview markers for the same generation.
+The host publishes one candidate transactionally. Failed generation or
+watcher startup rolls back the previous published tree. Readiness checks the
+manager and active mounts before navigating the WebView.
 
 The packaged runtime is privacy-scoped. `scripts/stage-runtime-workspace.mjs`
 copies an explicit file allowlist and generated theme assets, omits the build
-`dist` tree, rejects all `claude-*`/`codex-*` detail/status paths and
-`.ccresdoc-*` transition state, and audits staged text for synthetic fixture
+`dist` tree, rejects generated source namespaces and private transition state, and audits staged text for synthetic fixture
 sentinels and checkout paths. Node-only packages, `.bin` wrappers, and
 non-host native carriers remain excluded; the direct native zfb binary is the
 only runtime launcher.

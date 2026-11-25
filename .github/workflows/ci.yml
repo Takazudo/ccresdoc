@@ -47,6 +47,9 @@ jobs:
       - name: Browser harness helpers
         run: pnpm run test:browser-harness
 
+      - name: Packaged smoke portable contracts
+        run: node --test scripts/macos-acceptance.test.mjs
+
       - name: Install app dependencies (frozen)
         run: pnpm --dir app install --frozen-lockfile
 

@@ -3,9 +3,12 @@
 -- and requires the label to change.  That is an interaction assertion, not a
 -- network or livereload wait: the caller invokes it only after /docs/ is ready.
 
-tell application "System Events"
-  if not (exists process "CCResDoc") then error "CCResDoc is not running"
-  tell process "CCResDoc"
+on run argv
+  if (count of argv) is not 1 then error "Expected the probe-owned app PID"
+  set targetPID to (item 1 of argv) as integer
+  tell application "System Events"
+  if not (exists (application process whose unix id is targetPID)) then error "Probe-owned CCResDoc is not running"
+  tell (first application process whose unix id is targetPID)
     set frontmost to true
     if (count of windows) = 0 then error "CCResDoc has no window"
     set targetButton to missing value
@@ -58,6 +61,7 @@ tell application "System Events"
     return "ThemeToggle interactive: " & beforeLabel & " -> " & afterLabel & " -> " & restoredLabel & " (restored)"
   end tell
 end tell
+end run
 
 on find_theme_toggle(windowElement)
   tell application "System Events"

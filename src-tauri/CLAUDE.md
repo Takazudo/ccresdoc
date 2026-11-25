@@ -12,8 +12,7 @@ editor article against the main window, active loopback origin and runtime
 generation; Settings keeps its separate app-only commands. `main.rs` uses a
 private ownership manifest for variable source publication, rollback,
 watchers, readiness and search. The manager route remains available when no
-source is enabled or first-launch generation fails. Older fixed-two-resource
-descriptions below are historical and should not guide new changes.
+source is enabled or first-launch generation fails.
 
 ## Quick start
 
@@ -35,19 +34,18 @@ main() ──► setup()
               └─ spawn launch() thread:
                    1. resolve_workspace()  →  writable app-project root
                    2. resolve_zfb_binary() →  native zfb (NOT .bin/zfb wrapper)
-                   3. settings snapshot   →  canonical selected sources (Claude on, Codex off)
-                   4. generate enabled Claude/Codex sources into disjoint MDX
+                   3. settings snapshot   →  active source catalog
+                   4. generate enabled sources under validated mounts
                       namespaces; start one watcher per enabled source
                    5. choose preferred/fallback loopback port and spawn `zfb dev`
                       (process group, cwd=workspace)
-                   6. wait_for_ready(/docs/ + shell/overview markers, 300s)
+                   6. wait_for_ready(/docs/ + manager + active mount markers, 300s)
                    7. navigate WebView → http://localhost:<effective>/docs/
 on main Destroyed ──► drop WatchHandle + SIGTERM→SIGKILL sidecar group
 ```
 
-The Rust generators write selected MDX into disjoint `src/content/docs/claude*/`
-and `codex*/` namespaces; the coordinator owns permanent overviews and
-transactional publication. `zfb dev`'s content-watch HMRs the result. (`zfb`'s
+The Rust generators write mounted MDX into `src/content/docs/<mount>/`.
+The coordinator owns transactional publication. `zfb dev`'s content-watch HMRs the result. (`zfb`'s
 `extraWatchPaths` does NOT re-run `preBuild`, so generation + watch live in
 Rust.)
 
@@ -66,7 +64,7 @@ Rust.)
 ## Writable workspace resolution
 
 `.app` Resources are read-only, but `zfb dev` writes `dist/`, `.zfb/`,
-`.zfb-build/`, and selected generated `claude*/`/`codex*/` MDX. So:
+`.zfb-build/`, and mounted source MDX. So:
 
 | Context | Workspace root |
 | --- | --- |
@@ -125,14 +123,12 @@ require Node at runtime, defeating the node-free goal.
 `settings::resolve_config_path()` resolves a non-empty `CCRESDOC_CONFIG`
 override, then `XDG_CONFIG_HOME/ccresdoc/config.toml`, then
 `HOME/.config/ccresdoc/config.toml`. A missing file is read as safe defaults and
-is never created by discovery. The effective source is canonicalized from the
-authored `source.claude_dir`/`source.codex_dir`; the enabled generator receives
-that source as both its source and `project_root` — **never `$HOME`**, since it
-rejects `project_root == $HOME` (`GenerateError::ProjectRootTooBroad`, scoped-
-walk safety). Schema-v2 defaults are `[resources] claude = true, codex = false`
-with `~/.claude` and `~/.codex` source paths. Both-off is valid and still
-publishes stable disabled overview markers. Explicit temporary sources are used
-by package verification.
+is never created by discovery. Schema v3 keeps a catalog of stable source
+IDs, canonical roots, optional separate instructions scan roots, unique
+mounts, and reusable rule presets. Defaults enable Claude Code at
+`~/.claude` and leave Codex at `~/.codex` disabled. Valid v2 settings migrate
+atomically. The host scopes walks to validated configured roots, and the
+manager remains available with zero enabled sources.
 
 ## Sidecar lifecycle & restart-race guard
 
@@ -151,29 +147,16 @@ by package verification.
 
 ## Readiness & cold first build
 
-Readiness polls `GET /docs/` (NOT the old `/___ready`) with a **300s** window and
-accepts only a 200 body containing the current `CCResDoc` shell marker, the
-matching Claude/Codex overview transition markers, and every same-origin island
-entry bundle referenced by the served HTML (each bundle must return 200). This
-prevents a staged or boot-lazy response from releasing the loading screen before
-current selected resources and their hydration entry are rendered. The cold first
-launch must walk the enabled Claude and Codex sources and let `zfb dev` build the
-whole site once. The loading page stays informative (spinner; a "still building"
-hint appears after 20s). `wait_for_ready` also checks sidecar liveness each tick,
-so a crashed `zfb dev` surfaces an error in ~1s rather than burning the full
-timeout.
+The 300s readiness window covers the docs shell, the manager, and every
+active mount. The host verifies their current generation markers and
+same-origin island entry bundles. A first-launch source failure can still
+expose the manager for recovery. A dead sidecar surfaces promptly while the
+loading view shows startup progress.
 
-### Selected resource contract
-
-Claude's permanent overview is position 899; its generated detail categories
-are 900–903. Codex's permanent overview is position 904; its generated detail
-categories are 905–910. The coordinator owns both overview/status pages and a
-single candidate-promotion journal. It starts exactly one debounced watcher per
-enabled source, prunes stale detail namespaces, and rolls back the previous
-published tree when generation, promotion, or watcher startup fails. Claude
-and Codex namespaces never overlap. Codex accepts `AGENTS.md`, `config.toml`,
-agent TOML, `hooks.json`, rules, and skills; only a direct symlink entry under
-the configured skills directory is allowed to resolve outside that directory.
+The coordinator scopes each mount's generated tree, watchers, search, and
+rollback with a private ownership manifest. Each enabled source owns one
+debounced watcher. Codex rules accept instructions, config, agents, hooks,
+rules and skills, with a narrow exception for direct skill symlinks.
 
 Packaging privacy is structural: `scripts/stage-runtime-workspace.mjs` copies
 only release-owned source files and generated theme assets, does not copy
@@ -277,7 +260,7 @@ hydrates, while Cancel uses only the Settings window's narrow
 
 The config path is resolved as `CCRESDOC_CONFIG` (non-empty override), then
 `XDG_CONFIG_HOME/ccresdoc/config.toml`, then `HOME/.config/ccresdoc/config.toml`.
-The default document is schema version 2 with Claude enabled at `~/.claude` and
+The default document is schema version 3 with Claude enabled at `~/.claude` and
 Codex disabled at `~/.codex`, system/classic appearance, preferred port 4892,
 and `fallback_to_free_port = true`. A missing document is read as defaults and
 is never created by discovery. Authored source and preferred port are retained
@@ -297,7 +280,7 @@ preferred-port, and fallback changes perform one serialized runtime transition.
 A failed transition is `saved_not_active`, with Settings left available for
 recovery.
 
-Schema v2 is a clean break with no migration. Before the first load, `main()`
+Valid schema-v2 files migrate atomically and idempotently to v3. Before the first load, `main()`
 calls `SettingsStore::retire_recognized_v1()`. It removes the file at the
 active config path only when the bytes are valid UTF-8 TOML with an integer
 `schema_version = 1` and only the known v1 tables, and only after renaming it
@@ -332,11 +315,9 @@ cargo test --manifest-path src-tauri/Cargo.toml
 pnpm run b4push
 ```
 
-The final macOS arm64 package command is:
-
-```sh
-CCRESDOC_SETTINGS_APP=/path/to/CCResDoc.app pnpm run test:macos-settings
-```
+The [retained app-only procedure](../docs/architecture/verification-matrix.md#build-once-and-verify-the-retained-bundle-on-mac)
+runs package, Settings and bounded native controls sequentially on the exact
+same bundle. Settings still uses synthetic v2 migration inputs.
 
 That helper is a deterministic package smoke gate, not a replacement for the
 manager's native Computer Use walkthrough. The remaining native checks are

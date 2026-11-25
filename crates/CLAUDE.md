@@ -18,8 +18,7 @@ crates/
 The current source API includes `source.rs` for mounted built-in and custom
 markdown/code/skill generation. Source IDs and a private manifest in the host
 scope owned output and search publication. The specialized Claude and Codex
-generators remain available behind built-in snapshots. Older fixed-two-source
-descriptions below document historical behavior and must not guide new code.
+generators remain available behind built-in snapshots. Each source receives a validated mount and its own output ownership.
 
 > History: Waves 1-2 replaced the old three-crate pipeline
 > (`ccresdoc-resources` walker, `ccresdoc-renderer`, `ccresdoc-server`) with the
@@ -31,7 +30,7 @@ descriptions below document historical behavior and must not guide new code.
 
 ### ccresdoc-claude-md
 
-Walks the selected Claude and Codex roots and emits **zudo-doc-compatible MDX**,
+Walks configured source roots and emits **zudo-doc-compatible MDX**,
 then watches each enabled source for changes and regenerates. This is the live
 engine: Rust writes MDX →
 `zfb dev` content-watch → HMR. (`zfb`'s `extraWatchPaths` does NOT re-run
@@ -58,27 +57,20 @@ Key invariants:
   (`GenerateError::ProjectRootTooBroad`, zudolab/zudo-doc#2115).
 - `followSymlinks = false` (skills contain symlinks).
 - Files lacking frontmatter are skipped (matches the JS generator).
-- Output filenames/positions follow the current contract: overview 899,
-  CLAUDE.md 900, commands 901, skills 902, agents 903; CLAUDE.md pages are
-  `global.mdx` / `project-<slug>.mdx`.
-- Codex output occupies the disjoint positions 904–910: its coordinator-owned
-  overview is 904 and detail categories are AGENTS.md, config, agents, hooks,
-  rules, and skills. Its walker accepts only those formats, never follows
-  arbitrary links, and allows only a direct symlink entry under `skills/` to
-  resolve outside the configured Codex root.
-- Skill pages use zudo-doc's hierarchical resource layout:
-  `claude-skills/<dir>/index.mdx` with unlisted reference/script/asset pages as
-  siblings. This keeps relative Markdown links aligned with zfb's route-aware
-  link resolver without explicit `slug` overrides.
-- The Tauri coordinator owns the permanent Claude/Codex overviews, selected
-  generation/pruning, composite watcher readiness, candidate promotion, and
-  rollback; this crate owns source-specific generation and watchers.
+- Built-in rule snapshots preserve specialized Claude Code and Codex
+  generators. Their results are relocated to the configured mount
+  for publication. Skill pages retain the nested
+  `<mount>/skills/<dir>/index.mdx` layout and relative Markdown links.
+- Codex accepts instructions, config, agents, hooks, rules, and skills.
+  The direct entry under `skills/` can resolve outside the configured root.
+- Tauri owns the private source manifest, candidate promotion, rollback and
+  source-aware readiness. This crate owns source-specific generation and watchers.
 
 ### ccresdoc-host-domain
 
 Compiles the real `src-tauri/src/settings.rs`, `src-tauri/src/appearance.rs`
 and `src-tauri/src/runtime.rs` through `#[path]` modules, without Tauri or
-WebKitGTK, so their unit tests (the schema-v2 store, recognized-v1 retirement,
+WebKitGTK, so their unit tests (the schema-v3 store, v2 migration, recognized-v1 retirement,
 appearance resolution, the `src-tauri/fixtures/appearance-transitions.json`
 parity table, and the runtime policy: loopback port choice, origin/navigation
 checks, semantic readiness, generation supersession and serialized apply) run
